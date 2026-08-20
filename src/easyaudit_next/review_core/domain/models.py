@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -207,13 +208,15 @@ type ActivitySubject = (
 
 @dataclass(frozen=True, slots=True)
 class Activity:
+    """Shallow-frozen domain fact; persistence supplies the append-only guarantee."""
+
     id: ActivityId
     organization_id: OrganizationId
     subject: ActivitySubject
     event_type: str
     actor_id: UserId | None
     occurred_at: datetime
-    metadata: dict[str, object] = field(default_factory=dict)
+    metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 class SubmissionPurpose(StrEnum):
@@ -225,10 +228,12 @@ class SubmissionPurpose(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Submission:
+    """Shallow-frozen formal submission snapshot."""
+
     id: SubmissionId
     case_id: ReviewCaseId
     finding_id: FindingId | None
     purpose: SubmissionPurpose
     submitted_by: UserId
     submitted_at: datetime
-    payload: dict[str, object] = field(default_factory=dict)
+    payload: Mapping[str, object] = field(default_factory=dict)

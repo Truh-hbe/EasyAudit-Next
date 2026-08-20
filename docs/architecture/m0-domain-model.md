@@ -14,7 +14,7 @@ flowchart TD
   RC --> CM[CaseMember<br/>案例级参与关系]
   F --> FP[FindingParticipant<br/>发现级参与主体]
   RC --> S[Submission<br/>正式提交快照]
-  RC --> A[Activity<br/>不可变活动记录]
+  RC --> A[Activity<br/>append-only 活动记录]
 ```
 
 ## 核心概念职责
@@ -29,7 +29,7 @@ flowchart TD
 | ActionAssignee | 建立 User/Department 与 ActionItem 的主责或协作关系 | 充当平台 RBAC |
 | CaseMember | 建立用户与 ReviewCase 的业务角色关系 | 充当平台 RBAC |
 | FindingParticipant | 建立 User/Department 与 Finding 的责任或协作关系 | 继承全部案例权限 |
-| Activity | 保存可审计、不可变的事实事件 | 保存可反复编辑的表单草稿 |
+| Activity | 表达可审计事实；持久化记录 append-only | 承诺嵌套 metadata 在 Python 内存中深度不可变 |
 | Submission | 保存一次正式提交的原始表达与业务目的 | 取代结构化领域状态 |
 
 ## 已冻结不变量
@@ -44,7 +44,11 @@ flowchart TD
 8. 平台角色只保留 `system_admin` 与 `ordinary_user`；案例和发现中的业务身份由关系实体表达。
 9. `Activity` 与 `Submission` 分离：前者记录事实，后者保留正式用户表达。
 
-## Activity 的持久化边界
+## Activity 的不变性与持久化边界
+
+`@dataclass(frozen=True)` 只提供浅层冻结：不能重新赋值 Activity 字段，但 `metadata` 或其嵌套值仍可能引用可变对象。领域模型不承诺复杂的深度不可变 JSON 结构。
+
+真正的审计不变性由持久化层保证：Activity 写入后为 append-only，不允许业务路径执行 UPDATE 或 DELETE；更正只能追加新的纠正事件，不得覆写历史记录。M1 必须通过 repository 接口、授权规则与自动化测试落实这一约束，并评估是否增加数据库级保护。
 
 领域层使用 `ReviewCaseActivitySubject`、`FindingActivitySubject`、`ActionItemActivitySubject`、`SubmissionActivitySubject` 表达事件目标。这是一个封闭、类型化的领域联合类型，不是数据库 Generic Reference。
 

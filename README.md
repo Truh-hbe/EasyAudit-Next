@@ -6,12 +6,12 @@ EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Cor
 
 M0.1 保留 M0 的领域成果，并完成合并前架构校正：
 
-- 正式确定后端技术栈为 Python 3.12、FastAPI、SQLAlchemy 2、PostgreSQL 与 Alembic；TypeScript 留给前端，不建立双后端领域模型。
+- 正式确定后端技术栈为 Python 3.12、FastAPI、SQLAlchemy 2 synchronous Session、psycopg 3、PostgreSQL 与 Alembic；TypeScript 留给前端，不建立双后端领域模型。
 - 冻结 `Scenario`、`ReviewPlan`、`ReviewCase`、`Finding`、`ActionItem`、`CaseMember`、`FindingParticipant`、`ActionAssignee`、`Activity`、`Submission` 的职责边界。
 - Scenario Registry 按 `(scenario_key, scenario_version)` 保存和寻址，不允许新版覆盖历史版本。
 - ReviewPlan 是跨 Scenario 的策划容器；Scenario 及其版本属于 ReviewCase。
 - FindingParticipant 与 ActionAssignee 支持 User、Department，并允许主责与协作主体并存。
-- Activity 使用类型化领域 Subject；未来数据库必须使用强外键，不得照搬 Generic FK。
+- Activity 使用类型化领域 Subject；未来数据库必须使用强外键和 append-only 写入，不得照搬 Generic FK。
 - 提供 FastAPI、运行时 OpenAPI、SQLAlchemy、Alembic、PostgreSQL Compose、容器、测试与 CI 底座。
 
 M0.1 不包含账号登录、首批正式领域表、完整状态流转或业务页面，也不引入万能低代码、BPMN、数据库动态状态机、复杂督办实体、知识图谱或无来源 AI 总结。

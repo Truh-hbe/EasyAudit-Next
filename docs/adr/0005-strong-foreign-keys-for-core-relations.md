@@ -17,3 +17,25 @@ Generic FK 便于快速扩展，但数据库无法验证目标存在、级联规
 - M1 可选用类型化可空外键加 Check Constraint，或按目标类型建立关联表。
 - FindingParticipant 与 ActionAssignee 的 User/Department 主体必须分别对应受约束外键。
 - 仅非关键辅助关系可在单独 ADR 论证后采用通用引用。
+
+## M1 组织边界完整性验收
+
+外键只能证明目标存在，不能单独证明目标与 ReviewCase 属于同一 Organization。M1 必须拒绝以下关系中的跨组织主体：
+
+```text
+CaseMember.user.organization_id
+  = CaseMember.review_case.organization_id
+
+FindingParticipant.user_or_department.organization_id
+  = FindingParticipant.finding.review_case.organization_id
+
+ActionAssignee.user_or_department.organization_id
+  = ActionAssignee.action_item.finding.review_case.organization_id
+```
+
+具体实现可在 M1 模型设计时从应用服务校验、组合外键、Check/Trigger 或其组合中选择，但必须满足：
+
+- 所有写入入口执行同一组织边界规则。
+- User 与 Department 两种主体均有正向和跨组织拒绝测试。
+- 直接 repository 写入与批量操作不得绕过边界。
+- 跨组织引用测试必须进入 CI，未满足时 M1 不得验收。
