@@ -1,5 +1,5 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 from unittest import TestCase
 
 from easyaudit_next.review_core.domain.models import Scenario, ScenarioKey, ScenarioVersion
