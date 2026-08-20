@@ -1,44 +1,71 @@
 # EasyAudit-Next
 
-EasyAudit-Next 是面向跨部门协作的通用审查平台。它以审查领域核心为中心，通过 Scenario 承载“过程审查”等不同业务场景；旧版 `EasyAudit_Project` 继续独立维护，本仓库不承担其内部架构兼容义务。
+EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Core 为中心，通过版本化 Scenario 承载“过程审查”等不同业务场景；旧版 `EasyAudit_Project` 继续独立维护，本仓库不承担其内部架构兼容义务。
 
-## M0 Bootstrap
+## M0.1 Bootstrap
 
-当前仓库完成的是 M0 工程底座：
+M0.1 保留 M0 的领域成果，并完成合并前架构校正：
 
-- 冻结九个核心概念的职责边界：`Scenario`、`ReviewPlan`、`ReviewCase`、`Finding`、`ActionItem`、`CaseMember`、`FindingParticipant`、`Activity`、`Submission`。
-- 建立 Platform、Review Core、Scenario 三层边界。
-- 用可执行契约和测试固定跨场景不变量。
-- 提供无外部依赖的最小 API，用于健康检查和工程验证。
-- 建立架构决策记录、CI 与贡献约定。
+- 正式确定后端技术栈为 Python 3.12、FastAPI、SQLAlchemy 2、PostgreSQL 与 Alembic；TypeScript 留给前端，不建立双后端领域模型。
+- 冻结 `Scenario`、`ReviewPlan`、`ReviewCase`、`Finding`、`ActionItem`、`CaseMember`、`FindingParticipant`、`ActionAssignee`、`Activity`、`Submission` 的职责边界。
+- Scenario Registry 按 `(scenario_key, scenario_version)` 保存和寻址，不允许新版覆盖历史版本。
+- ReviewPlan 是跨 Scenario 的策划容器；Scenario 及其版本属于 ReviewCase。
+- FindingParticipant 与 ActionAssignee 支持 User、Department，并允许主责与协作主体并存。
+- Activity 使用类型化领域 Subject；未来数据库必须使用强外键，不得照搬 Generic FK。
+- 提供 FastAPI、运行时 OpenAPI、SQLAlchemy、Alembic、PostgreSQL Compose、容器、测试与 CI 底座。
 
-M0 不包含账号登录、持久化、完整状态流转、业务页面，也不引入万能低代码、BPMN、数据库动态状态机、复杂督办实体、知识图谱或无来源 AI 总结。
+M0.1 不包含账号登录、首批正式领域表、完整状态流转或业务页面，也不引入万能低代码、BPMN、数据库动态状态机、复杂督办实体、知识图谱或无来源 AI 总结。
 
 ## 快速开始
 
-要求 Node.js 24+。M0 不需要安装第三方依赖。
+要求 Python 3.12+ 与 Docker Compose。
 
 ```bash
-npm run check
-npm run start:api
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+docker compose up -d db
+alembic upgrade head
+uvicorn easyaudit_next.main:app --reload
+```
+
+Windows PowerShell 激活虚拟环境：
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+验证：
+
+```bash
+ruff check .
+mypy
+python scripts/check_architecture.py
+python scripts/check_openapi.py
+pytest
 ```
 
 API 启动后：
 
 - `GET /health`：存活检查。
-- `GET /api/v1/meta/domain-model`：M0 核心概念清单。
+- `GET /api/v1/meta/domain-model`：M0.1 核心概念清单。
+- `GET /docs`：Swagger UI。
+- `GET /openapi.json`：FastAPI 生成的 OpenAPI 3.1 契约。
 
 ## 目录
 
 ```text
-apps/api/              最小 HTTP 入口；后续承载应用层适配
-packages/domain/       无框架、无数据库依赖的 Review Core
-docs/architecture/     领域边界与路线说明
-docs/adr/              架构决策记录
-scripts/               架构护栏
+src/easyaudit_next/api/                 HTTP 适配与 API 契约
+src/easyaudit_next/platform/            身份、组织等平台能力的边界
+src/easyaudit_next/review_core/domain/  无框架、无 ORM 依赖的 Review Core
+src/easyaudit_next/infrastructure/      SQLAlchemy 与外部基础设施适配
+alembic/                                数据库 migration 链
+openapi/                                稳定操作契约基线
+docs/                                   领域模型、路线与 ADR
+tests/                                  API 与领域边界测试
 ```
 
-下一阶段是 M1：Identity & Organization、PostgreSQL 持久化、应用服务与正式 API 契约。
+下一阶段是 M1：Identity & Organization、首批 PostgreSQL 领域表、应用服务与正式授权策略。
 
 ## License
 

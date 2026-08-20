@@ -1,7 +1,14 @@
-node_modules/
-.pnpm-store/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+.coverage
+htmlcov/
 dist/
-coverage/
+build/
+*.egg-info/
 .env
 .env.*
 !.env.example

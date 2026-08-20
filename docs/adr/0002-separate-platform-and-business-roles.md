@@ -5,7 +5,7 @@
 
 ## 决策
 
-平台账号只表达 `system_admin` 与 `ordinary_user`。牵头人、审查员、整改责任人、验证人等业务角色分别记录在 `CaseMember` 和 `FindingParticipant`。
+平台账号只表达 `system_admin` 与 `ordinary_user`。牵头人、审查员、整改责任人、验证人等业务角色分别记录在 `CaseMember`、`FindingParticipant` 和 `ActionAssignee`。
 
 ## 理由
 
@@ -14,5 +14,6 @@
 ## 后果
 
 - 后续授权判定必须同时考虑平台权限、组织边界和资源级关系。
+- Finding 与 Action 的参与主体允许是 User 或 Department，并通过受约束关系表达。
 - Magic Link 或其他认证方式不能隐式授予业务角色。
 - 所有业务角色变更需要留下 Activity。
