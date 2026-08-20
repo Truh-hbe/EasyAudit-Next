@@ -1,0 +1,20 @@
+import re
+from typing import NewType
+
+OrganizationId = NewType("OrganizationId", str)
+DepartmentId = NewType("DepartmentId", str)
+UserId = NewType("UserId", str)
+ReviewPlanId = NewType("ReviewPlanId", str)
+ReviewCaseId = NewType("ReviewCaseId", str)
+FindingId = NewType("FindingId", str)
+ActionItemId = NewType("ActionItemId", str)
+ActivityId = NewType("ActivityId", str)
+SubmissionId = NewType("SubmissionId", str)
+
+_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
+
+
+def validate_id(value: str) -> str:
+    if not _ID_PATTERN.fullmatch(value):
+        raise ValueError(f"Invalid identifier: {value}")
+    return value

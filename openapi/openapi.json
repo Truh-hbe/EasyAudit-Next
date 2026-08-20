@@ -1,0 +1,21 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EasyAudit-Next API",
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": ["system"]
+      }
+    },
+    "/api/v1/meta/domain-model": {
+      "get": {
+        "operationId": "getDomainModel",
+        "tags": ["meta"]
+      }
+    }
+  }
+}

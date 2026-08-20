@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: easyaudit
+          POSTGRES_USER: easyaudit
+          POSTGRES_PASSWORD: easyaudit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U easyaudit -d easyaudit"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://easyaudit:easyaudit@localhost:5432/easyaudit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check .
+      - run: mypy
+      - run: python scripts/check_architecture.py
+      - run: python scripts/check_openapi.py
+      - run: alembic upgrade head
+      - run: pytest
