@@ -2,7 +2,7 @@
 
 EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Core 为中心，通过版本化 Scenario 承载“过程审查”等不同业务场景；旧版 `EasyAudit_Project` 继续独立维护，本仓库不承担其内部架构兼容义务。
 
-## M1.2 Platform Foundation
+## M1.4 Platform Foundation
 
 M0.1 保留 M0 的领域成果，并完成合并前架构校正：
 
@@ -36,6 +36,17 @@ M1.2 在独立的认证边界中新增：
 - `system_admin` 平台管理 API；`ordinary_user` 不获得任何永久业务管理身份。
 - 独立、append-only 的 `platform_audit_events`，不与 Review Activity 混用。
 - 无默认账号/密码的首次管理员 Bootstrap CLI。
+
+M1.3 将组织启用的 Scenario 与不可变版本持久化，但 ScenarioPolicy 行为继续由代码
+Registry 解释。
+
+M1.4 将 ReviewPlan、ReviewCase、Finding、ActionItem、Submission、Activity 与三类参与关系
+落入 PostgreSQL：
+
+- 组合外键直接拒绝跨 Organization 的业务对象、User 与 Department 关系。
+- FindingParticipant 与 ActionAssignee 使用 User/Department exactly-one XOR。
+- Activity 使用真实类型化外键并由数据库禁止 UPDATE/DELETE。
+- Review Core 仅开放 repository 与持久化集成测试；业务 API 仍属于 M2。
 
 ## 快速开始
 
@@ -97,7 +108,7 @@ docs/                                   领域模型、路线与 ADR
 tests/                                  API 与领域边界测试
 ```
 
-下一阶段是 M1.3：Scenario Persistence。
+下一节点是 M1 Final Review；过程审查闭环仍从 M2 开始。
 
 ## License
 

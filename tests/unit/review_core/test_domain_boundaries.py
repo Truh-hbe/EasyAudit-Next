@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from unittest import TestCase
+from uuid import UUID, uuid4
 
 from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
@@ -31,13 +32,13 @@ from easyaudit_next.review_core.domain.models import (
 )
 
 NOW = datetime(2026, 8, 21, tzinfo=UTC)
-ORG_ID = OrganizationId("org-demo")
-USER_ID = UserId("user-owner")
-PLAN_ID = ReviewPlanId("plan-2027")
+ORG_ID = OrganizationId(uuid4())
+USER_ID = UserId(uuid4())
+PLAN_ID = ReviewPlanId(uuid4())
 
 
 def make_case(
-    case_id: str,
+    case_id: UUID,
     scenario_key: str,
     scenario_version: int,
 ) -> ReviewCase:
@@ -47,7 +48,7 @@ def make_case(
         plan_id=PLAN_ID,
         scenario_key=ScenarioKey(scenario_key),
         scenario_version=ScenarioVersion(scenario_version),
-        title=case_id,
+        title=str(case_id),
         lifecycle=ReviewCaseLifecycle.DRAFT,
         created_by=USER_ID,
         created_at=NOW,
@@ -64,8 +65,8 @@ class DomainBoundaryTest(TestCase):
             planned_end_at=None,
             created_by=USER_ID,
         )
-        process_case = make_case("case-process", "process_review", 1)
-        access_case = make_case("case-access", "it_access_review", 3)
+        process_case = make_case(uuid4(), "process_review", 1)
+        access_case = make_case(uuid4(), "it_access_review", 3)
 
         assert_plan_contains_case(plan, process_case)
         assert_plan_contains_case(plan, access_case)
@@ -73,28 +74,32 @@ class DomainBoundaryTest(TestCase):
 
     def test_action_item_has_many_typed_assignees_instead_of_owner_id(self) -> None:
         action_item = ActionItem(
-            id=ActionItemId("action-001"),
-            finding_id=FindingId("finding-001"),
+            id=ActionItemId(uuid4()),
+            organization_id=ORG_ID,
+            finding_id=FindingId(uuid4()),
             title="修正权限配置",
             lifecycle=ActionItemLifecycle.TODO,
             due_at=None,
         )
         assignees = [
             ActionAssignee(
+                organization_id=ORG_ID,
                 action_item_id=action_item.id,
-                actor=DepartmentActor(DepartmentId("department-it")),
+                actor=DepartmentActor(DepartmentId(uuid4())),
                 role=AssignmentRole.PRIMARY,
                 assigned_at=NOW,
             ),
             ActionAssignee(
+                organization_id=ORG_ID,
                 action_item_id=action_item.id,
-                actor=UserActor(UserId("user-zhang")),
+                actor=UserActor(UserId(uuid4())),
                 role=AssignmentRole.PRIMARY,
                 assigned_at=NOW,
             ),
             ActionAssignee(
+                organization_id=ORG_ID,
                 action_item_id=action_item.id,
-                actor=UserActor(UserId("user-li")),
+                actor=UserActor(UserId(uuid4())),
                 role=AssignmentRole.COLLABORATOR,
                 assigned_at=NOW,
             ),
@@ -106,14 +111,16 @@ class DomainBoundaryTest(TestCase):
     def test_finding_participant_supports_department_and_user(self) -> None:
         participants = [
             FindingParticipant(
-                finding_id=FindingId("finding-001"),
-                actor=DepartmentActor(DepartmentId("department-it")),
+                organization_id=ORG_ID,
+                finding_id=FindingId(uuid4()),
+                actor=DepartmentActor(DepartmentId(uuid4())),
                 role_key="responsible_department",
                 assigned_at=NOW,
             ),
             FindingParticipant(
-                finding_id=FindingId("finding-001"),
-                actor=UserActor(UserId("user-zhang")),
+                organization_id=ORG_ID,
+                finding_id=FindingId(uuid4()),
+                actor=UserActor(UserId(uuid4())),
                 role_key="primary_owner",
                 assigned_at=NOW,
             ),

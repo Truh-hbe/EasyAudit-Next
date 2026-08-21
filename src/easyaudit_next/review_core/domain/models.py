@@ -121,6 +121,7 @@ class FindingSeverity(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Finding:
     id: FindingId
+    organization_id: OrganizationId
     case_id: ReviewCaseId
     title: str
     description: str | None
@@ -140,6 +141,7 @@ class ActionItemLifecycle(StrEnum):
 @dataclass(frozen=True, slots=True)
 class ActionItem:
     id: ActionItemId
+    organization_id: OrganizationId
     finding_id: FindingId
     title: str
     lifecycle: ActionItemLifecycle
@@ -166,6 +168,7 @@ class AssignmentRole(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ActionAssignee:
+    organization_id: OrganizationId
     action_item_id: ActionItemId
     actor: ParticipantActor
     role: AssignmentRole
@@ -174,6 +177,7 @@ class ActionAssignee:
 
 @dataclass(frozen=True, slots=True)
 class CaseMember:
+    organization_id: OrganizationId
     case_id: ReviewCaseId
     user_id: UserId
     role_key: str
@@ -182,6 +186,7 @@ class CaseMember:
 
 @dataclass(frozen=True, slots=True)
 class FindingParticipant:
+    organization_id: OrganizationId
     finding_id: FindingId
     actor: ParticipantActor
     role_key: str
@@ -241,6 +246,7 @@ class Submission:
     """Shallow-frozen formal submission snapshot."""
 
     id: SubmissionId
+    organization_id: OrganizationId
     case_id: ReviewCaseId
     finding_id: FindingId | None
     purpose: SubmissionPurpose

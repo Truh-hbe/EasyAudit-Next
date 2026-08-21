@@ -3,6 +3,7 @@ from uuid import UUID
 
 from easyaudit_next.review_core.domain.models import (
     ActionAssignee,
+    AssignmentRole,
     DepartmentActor,
     Finding,
     FindingParticipant,
@@ -22,6 +23,8 @@ def assert_plan_contains_case(plan: ReviewPlan, review_case: ReviewCase) -> None
 def assert_finding_belongs_to_case(finding: Finding, review_case: ReviewCase) -> None:
     if finding.case_id != review_case.id:
         raise ValueError("Finding does not belong to ReviewCase")
+    if finding.organization_id != review_case.organization_id:
+        raise ValueError("Finding and ReviewCase must belong to the same organization")
 
 
 def _actor_key(actor: UserActor | DepartmentActor) -> tuple[str, UUID]:
@@ -33,7 +36,7 @@ def _actor_key(actor: UserActor | DepartmentActor) -> tuple[str, UUID]:
 def assert_unique_finding_participants(
     participants: Iterable[FindingParticipant],
 ) -> None:
-    keys: set[tuple[str, str, UUID, str]] = set()
+    keys: set[tuple[UUID, str, UUID, str]] = set()
     for participant in participants:
         actor_type, actor_id = _actor_key(participant.actor)
         key = (participant.finding_id, actor_type, actor_id, participant.role_key)
@@ -43,7 +46,7 @@ def assert_unique_finding_participants(
 
 
 def assert_unique_action_assignees(assignees: Iterable[ActionAssignee]) -> None:
-    keys: set[tuple[str, str, UUID, str]] = set()
+    keys: set[tuple[UUID, str, UUID, AssignmentRole]] = set()
     for assignee in assignees:
         actor_type, actor_id = _actor_key(assignee.actor)
         key = (assignee.action_item_id, actor_type, actor_id, assignee.role)
