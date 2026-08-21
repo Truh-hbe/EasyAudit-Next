@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOMAIN_DIRECTORIES = (
     ROOT / "src" / "easyaudit_next" / "platform" / "domain",
     ROOT / "src" / "easyaudit_next" / "review_core" / "domain",
+    ROOT / "src" / "easyaudit_next" / "scenarios",
 )
 FORBIDDEN_IMPORT_PREFIXES = (
     "alembic",
@@ -13,6 +14,9 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "sqlalchemy",
     "easyaudit_next.api",
     "easyaudit_next.infrastructure",
+    "easyaudit_next.platform.application",
+    "easyaudit_next.review_core.application",
+    "easyaudit_next.review_core.persistence",
 )
 
 
@@ -27,7 +31,9 @@ def imported_modules(tree: ast.AST) -> list[str]:
 
 
 def main() -> None:
-    files = sorted(path for directory in DOMAIN_DIRECTORIES for path in directory.glob("*.py"))
+    files = sorted(
+        path for directory in DOMAIN_DIRECTORIES for path in directory.rglob("*.py")
+    )
     if not files:
         raise SystemExit("No domain files found")
 
@@ -35,9 +41,12 @@ def main() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for module in imported_modules(tree):
             if module.startswith(FORBIDDEN_IMPORT_PREFIXES):
-                raise SystemExit(f"Domain layer imports infrastructure: {path}: {module}")
+                raise SystemExit(f"Domain layer imports infrastructure/application: {path}: {module}")
 
-    print(f"Architecture check passed ({len(files)} domain files across platform and review core).")
+    print(
+        "Architecture check passed "
+        f"({len(files)} domain/scenario files across platform, review core, and scenarios)."
+    )
 
 
 if __name__ == "__main__":
