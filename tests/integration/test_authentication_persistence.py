@@ -9,6 +9,7 @@ from sqlalchemy import Engine, create_engine, delete, inspect, select, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
+from easyaudit_next.cli import bootstrap_admin_in_session
 from easyaudit_next.platform.application.authentication import (
     AuthenticationService,
     InvalidSessionError,
@@ -56,6 +57,48 @@ def test_migration_creates_authentication_and_audit_tables(postgres_engine: Engi
     assert {"local_credentials", "auth_sessions", "platform_audit_events"} <= set(
         inspect(postgres_engine).get_table_names()
     )
+
+
+def test_bootstrap_creates_first_admin_without_defaults_and_rejects_repeat(
+    session: Session,
+) -> None:
+    bootstrap_admin_in_session(
+        session,
+        "Bootstrap Organization",
+        "Bootstrap Administrator",
+        "bootstrap-admin",
+        "bootstrap-secret-password",
+        now=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+
+    organization = session.scalar(
+        select(OrganizationRecord).where(OrganizationRecord.name == "Bootstrap Organization")
+    )
+    assert organization is not None
+    admin = session.scalar(select(UserRecord).where(UserRecord.organization_id == organization.id))
+    assert admin is not None
+    assert admin.platform_role == "system_admin"
+    credential = session.get(LocalCredentialRecord, admin.id)
+    assert credential is not None
+    assert credential.login_name == "bootstrap-admin"
+    assert credential.password_hash.startswith("$argon2id$")
+    assert (
+        session.scalar(
+            select(PlatformAuditEventRecord).where(
+                PlatformAuditEventRecord.event_type == "bootstrap.system_admin_created"
+            )
+        )
+        is not None
+    )
+
+    with pytest.raises(RuntimeError, match="Bootstrap refused"):
+        bootstrap_admin_in_session(
+            session,
+            "Second Organization",
+            "Second Administrator",
+            "second-admin",
+            "another-secret-password",
+        )
 
 
 def create_local_user(session: Session, login_name: str = "m12-admin") -> tuple[User, str]:

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from pwdlib import PasswordHash
+from sqlalchemy.orm import Session
 
 from easyaudit_next.infrastructure.database import (
     create_database_engine,
@@ -27,50 +28,71 @@ from easyaudit_next.platform.persistence.repositories import (
 )
 
 
+def _ensure_bootstrap_available(session: Session) -> None:
+    if SqlAlchemyOrganizationRepository(session).list_all():
+        raise RuntimeError("Bootstrap refused: an Organization already exists")
+
+
+def bootstrap_admin_in_session(
+    session: Session,
+    organization_name: str,
+    admin_name: str,
+    login_name: str,
+    password: str,
+    *,
+    now: datetime | None = None,
+) -> None:
+    _ensure_bootstrap_available(session)
+    if len(password) < 12:
+        raise PasswordPolicyError("Password must contain at least 12 characters")
+    organizations = SqlAlchemyOrganizationRepository(session)
+    departments = SqlAlchemyDepartmentRepository(session)
+    users = SqlAlchemyUserRepository(session)
+    identity = IdentityOrganizationService(organizations, departments, users)
+    organization = identity.create_organization(organization_name)
+    admin = identity.create_user(
+        organization.id,
+        admin_name,
+        platform_role=PlatformRole.SYSTEM_ADMIN,
+    )
+    occurred_at = now or datetime.now(UTC)
+    SqlAlchemyLocalCredentialRepository(session).add(
+        LocalCredential(
+            user_id=admin.id,
+            organization_id=organization.id,
+            login_name=login_name.strip().lower(),
+            password_hash=PasswordHash.recommended().hash(password),
+            password_changed_at=occurred_at,
+        )
+    )
+    SqlAlchemyPlatformAuditRepository(session).add(
+        PlatformAuditEvent(
+            id=PlatformAuditEventId(uuid4()),
+            organization_id=organization.id,
+            actor_user_id=admin.id,
+            target_user_id=admin.id,
+            event_type="bootstrap.system_admin_created",
+            occurred_at=occurred_at,
+        )
+    )
+
+
 def bootstrap_admin(organization_name: str, admin_name: str, login_name: str) -> None:
     engine = create_database_engine()
     factory = create_session_factory(engine)
     try:
         with session_scope(factory) as session:
-            organizations = SqlAlchemyOrganizationRepository(session)
-            departments = SqlAlchemyDepartmentRepository(session)
-            users = SqlAlchemyUserRepository(session)
-            if organizations.list_all():
-                raise RuntimeError("Bootstrap refused: an Organization already exists")
-
+            _ensure_bootstrap_available(session)
             password = getpass.getpass("Initial admin password: ")
             confirmation = getpass.getpass("Confirm password: ")
             if password != confirmation:
                 raise PasswordPolicyError("Password confirmation does not match")
-            if len(password) < 12:
-                raise PasswordPolicyError("Password must contain at least 12 characters")
-
-            identity = IdentityOrganizationService(organizations, departments, users)
-            organization = identity.create_organization(organization_name)
-            admin = identity.create_user(
-                organization.id,
+            bootstrap_admin_in_session(
+                session,
+                organization_name,
                 admin_name,
-                platform_role=PlatformRole.SYSTEM_ADMIN,
-            )
-            now = datetime.now(UTC)
-            SqlAlchemyLocalCredentialRepository(session).add(
-                LocalCredential(
-                    user_id=admin.id,
-                    organization_id=organization.id,
-                    login_name=login_name.strip().lower(),
-                    password_hash=PasswordHash.recommended().hash(password),
-                    password_changed_at=now,
-                )
-            )
-            SqlAlchemyPlatformAuditRepository(session).add(
-                PlatformAuditEvent(
-                    id=PlatformAuditEventId(uuid4()),
-                    organization_id=organization.id,
-                    actor_user_id=admin.id,
-                    target_user_id=admin.id,
-                    event_type="bootstrap.system_admin_created",
-                    occurred_at=now,
-                )
+                login_name,
+                password,
             )
     finally:
         engine.dispose()

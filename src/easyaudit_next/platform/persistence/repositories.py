@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import (
@@ -157,6 +157,18 @@ class SqlAlchemyUserRepository:
             .order_by(UserRecord.display_name)
         )
         return tuple(self._to_domain(record) for record in records)
+
+    def count_active_system_admins(self, organization_id: OrganizationId) -> int:
+        count = self._session.scalar(
+            select(func.count())
+            .select_from(UserRecord)
+            .where(
+                UserRecord.organization_id == organization_id,
+                UserRecord.is_active.is_(True),
+                UserRecord.platform_role == PlatformRole.SYSTEM_ADMIN.value,
+            )
+        )
+        return int(count or 0)
 
     @staticmethod
     def _to_domain(record: UserRecord) -> User:

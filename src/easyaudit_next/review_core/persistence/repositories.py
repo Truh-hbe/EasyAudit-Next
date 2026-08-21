@@ -126,6 +126,44 @@ class SqlAlchemyScenarioCatalogRepository:
             published_at=record.published_at,
         )
 
+    def list_for_organization(
+        self, organization_id: OrganizationId
+    ) -> tuple[ScenarioDefinition, ...]:
+        records = self._session.scalars(
+            select(ScenarioRecord)
+            .where(ScenarioRecord.organization_id == organization_id)
+            .order_by(ScenarioRecord.key)
+        )
+        return tuple(
+            ScenarioDefinition(
+                id=ScenarioDefinitionId(record.id),
+                organization_id=OrganizationId(record.organization_id),
+                key=ScenarioKey(record.key),
+                name=record.name,
+                is_active=record.is_active,
+            )
+            for record in records
+        )
+
+    def list_versions(
+        self, scenario_id: ScenarioDefinitionId
+    ) -> tuple[ScenarioVersionPublication, ...]:
+        records = self._session.scalars(
+            select(ScenarioVersionRecord)
+            .where(ScenarioVersionRecord.scenario_id == scenario_id)
+            .order_by(ScenarioVersionRecord.version)
+        )
+        return tuple(
+            ScenarioVersionPublication(
+                id=ScenarioVersionId(record.id),
+                scenario_id=ScenarioDefinitionId(record.scenario_id),
+                organization_id=OrganizationId(record.organization_id),
+                version=ScenarioVersion(record.version),
+                published_at=record.published_at,
+            )
+            for record in records
+        )
+
 
 class SqlAlchemyReviewCoreRepository:
     def __init__(self, session: Session) -> None:

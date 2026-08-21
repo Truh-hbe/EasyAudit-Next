@@ -15,3 +15,5 @@ M1.4 maps the M0 Review Core relationships into PostgreSQL without opening M2 bu
 
 The stage exposes repositories and persistence integration tests only. ReviewCase, Finding,
 ActionItem, Submission, and Activity workflow endpoints remain M2 scope.
+
+Final Review evidence is recorded in `m1-final-review.md`.

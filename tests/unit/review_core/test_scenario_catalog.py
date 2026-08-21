@@ -58,6 +58,24 @@ class FakeScenarioCatalogRepository:
     ) -> ScenarioVersionPublication | None:
         return self.versions.get((scenario_id, version))
 
+    def list_for_organization(
+        self, organization_id: OrganizationId
+    ) -> tuple[ScenarioDefinition, ...]:
+        return tuple(
+            scenario
+            for scenario in self.scenarios.values()
+            if scenario.organization_id == organization_id
+        )
+
+    def list_versions(
+        self, scenario_id: ScenarioDefinitionId
+    ) -> tuple[ScenarioVersionPublication, ...]:
+        return tuple(
+            publication
+            for (stored_scenario_id, _), publication in self.versions.items()
+            if stored_scenario_id == scenario_id
+        )
+
 
 def make_policy(version: int) -> Policy:
     return Policy(

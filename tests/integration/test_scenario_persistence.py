@@ -82,6 +82,8 @@ def test_repository_round_trip_preserves_historical_version(session: Session) ->
     )
 
     assert repository.get_version(scenario.id, ScenarioVersion(1)) == v1
+    assert repository.list_for_organization(organization_id) == (scenario,)
+    assert [item.version for item in repository.list_versions(scenario.id)] == [1, 2]
 
 
 def test_database_rejects_cross_organization_scenario_version(session: Session) -> None:

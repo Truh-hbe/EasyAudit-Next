@@ -31,5 +31,10 @@ def test_openapi_contract_has_stable_operation_ids() -> None:
     assert schema["paths"]["/api/v1/meta/domain-model"]["get"]["operationId"] == "getDomainModel"
     assert schema["paths"]["/api/v1/auth/login"]["post"]["operationId"] == "login"
     assert schema["paths"]["/api/v1/admin/users"]["post"]["operationId"] == "createAdminUser"
+    assert schema["paths"]["/api/v1/admin/scenarios"]["get"]["operationId"] == "listAdminScenarios"
+    assert (
+        schema["paths"]["/api/v1/admin/scenarios/{key}/versions"]["get"]["operationId"]
+        == "listAdminScenarioVersions"
+    )
     assert "/api/v1/review-cases" not in schema["paths"]
     assert "/api/v1/findings" not in schema["paths"]

@@ -91,3 +91,18 @@ class UserPatchRequest(BaseModel):
     platform_role: PlatformRole | None = None
     primary_department_id: UUID | None = None
     is_active: bool | None = None
+
+
+class ScenarioResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    key: str
+    name: str
+    is_active: bool
+
+
+class ScenarioVersionResponse(BaseModel):
+    id: UUID
+    scenario_id: UUID
+    version: int
+    published_at: datetime

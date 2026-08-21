@@ -44,6 +44,14 @@ class ScenarioCatalogRepository(Protocol):
         version: ScenarioVersion,
     ) -> ScenarioVersionPublication | None: ...
 
+    def list_for_organization(
+        self, organization_id: OrganizationId
+    ) -> tuple[ScenarioDefinition, ...]: ...
+
+    def list_versions(
+        self, scenario_id: ScenarioDefinitionId
+    ) -> tuple[ScenarioVersionPublication, ...]: ...
+
 
 class ReviewCoreRepository(Protocol):
     def add_plan(self, plan: ReviewPlan) -> None: ...

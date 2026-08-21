@@ -62,6 +62,14 @@ class FakeUserRepository:
             item for item in self.items.values() if item.organization_id == organization_id
         )
 
+    def count_active_system_admins(self, organization_id: OrganizationId) -> int:
+        return sum(
+            item.organization_id == organization_id
+            and item.is_active
+            and item.platform_role is PlatformRole.SYSTEM_ADMIN
+            for item in self.items.values()
+        )
+
 
 def make_service() -> IdentityOrganizationService:
     return IdentityOrganizationService(

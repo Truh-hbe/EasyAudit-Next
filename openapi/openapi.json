@@ -49,6 +49,12 @@
     "/api/v1/admin/users/{user_id}": {
       "get": {"operationId": "getAdminUser", "tags": ["admin"]},
       "patch": {"operationId": "updateAdminUser", "tags": ["admin"]}
+    },
+    "/api/v1/admin/scenarios": {
+      "get": {"operationId": "listAdminScenarios", "tags": ["admin"]}
+    },
+    "/api/v1/admin/scenarios/{key}/versions": {
+      "get": {"operationId": "listAdminScenarioVersions", "tags": ["admin"]}
     }
   }
 }

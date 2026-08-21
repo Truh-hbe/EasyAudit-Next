@@ -26,6 +26,10 @@ class PasswordPolicyError(ValueError):
     """A local password does not meet the initial M1.2 policy."""
 
 
+class LastSystemAdminError(ValueError):
+    """The final active system administrator cannot be disabled or demoted."""
+
+
 class PlatformAdministrationService:
     def __init__(
         self,
@@ -114,6 +118,16 @@ class PlatformAdministrationService:
             platform_role=platform_role if platform_role is not None else user.platform_role,
             is_active=is_active if is_active is not None else user.is_active,
         )
+        removes_active_admin = (
+            user.is_active
+            and user.platform_role is PlatformRole.SYSTEM_ADMIN
+            and (not updated.is_active or updated.platform_role is not PlatformRole.SYSTEM_ADMIN)
+        )
+        if (
+            removes_active_admin
+            and self._users.count_active_system_admins(user.organization_id) <= 1
+        ):
+            raise LastSystemAdminError("Cannot disable or demote the last active system_admin")
         if set_primary_department and primary_department_id is not None:
             department = self._departments.get(primary_department_id)
             if department is None or department.organization_id != actor.organization_id:
