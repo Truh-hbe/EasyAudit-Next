@@ -7,7 +7,9 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemWorkflowPolicy,
     AuthorizationPolicy,
     FindingWorkflowPolicy,
+    ReviewCaseCreationPolicy,
     ReviewCaseWorkflowPolicy,
+    RoleSpecification,
     SubmissionPolicy,
 )
 
@@ -17,10 +19,16 @@ class ScenarioPolicy(Protocol):
     def scenario(self) -> Scenario: ...
 
     @property
-    def case_role_keys(self) -> tuple[str, ...]: ...
+    def case_role_specs(self) -> tuple[RoleSpecification, ...]: ...
 
     @property
-    def finding_participant_role_keys(self) -> tuple[str, ...]: ...
+    def finding_participant_role_specs(self) -> tuple[RoleSpecification, ...]: ...
+
+    @property
+    def action_assignee_role_specs(self) -> tuple[RoleSpecification, ...]: ...
+
+    @property
+    def case_creation(self) -> ReviewCaseCreationPolicy: ...
 
     @property
     def case_workflow(self) -> ReviewCaseWorkflowPolicy: ...
