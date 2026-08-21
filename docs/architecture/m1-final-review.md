@@ -22,3 +22,16 @@ HTTP writes remain M2 scope.
 
 The supported merge order is M1.1, M1.2, M1.3, then M1.4/Final Polish. After that sequence lands,
 the next implementation milestone is M2 Process Review.
+
+## M2 entry gates
+
+These items do not block the M1 persistence foundation, but must be completed before Review Core
+business HTTP APIs are opened:
+
+1. Make `must_change_password` enforceable through a restricted first-login session and password
+   change flow, or stop presenting the flag as an enforced control until that flow exists.
+2. Make Review Core repository reads Organization-scoped by default, for example
+   `get_case(organization_id, case_id)`, before handlers can return those records.
+
+M2 should also introduce a stable API error contract: detailed SQLAlchemy/PostgreSQL integrity
+errors remain in internal logs, while clients receive bounded business error codes and messages.
