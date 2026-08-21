@@ -14,9 +14,14 @@ from easyaudit_next.review_core.domain.models import (
 )
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemTransitionContext,
+    ActionItemWorkflowPolicy,
     AuthorizationContext,
+    AuthorizationPolicy,
     FindingTransitionContext,
+    FindingWorkflowPolicy,
     ReviewCaseTransitionContext,
+    ReviewCaseWorkflowPolicy,
+    SubmissionPolicy,
     WorkflowTransitionError,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
@@ -65,7 +70,11 @@ def _has_reason(reason: str | None) -> bool:
     return reason is not None and bool(reason.strip())
 
 
-def _invalid_transition(entity: str, lifecycle: StrEnum, action: StrEnum) -> WorkflowTransitionError:
+def _invalid_transition(
+    entity: str,
+    lifecycle: StrEnum,
+    action: StrEnum,
+) -> WorkflowTransitionError:
     return WorkflowTransitionError(
         f"{entity} cannot perform {action.value!r} from lifecycle {lifecycle.value!r}"
     )
@@ -98,16 +107,25 @@ class ProcessReviewCaseWorkflow:
         except ValueError as exc:
             raise WorkflowTransitionError(f"Unknown ReviewCase action: {action!r}") from exc
 
-        if lifecycle is ReviewCaseLifecycle.DRAFT and operation is ProcessReviewCaseAction.SCHEDULE:
+        if (
+            lifecycle is ReviewCaseLifecycle.DRAFT
+            and operation is ProcessReviewCaseAction.SCHEDULE
+        ):
             return ReviewCaseLifecycle.SCHEDULED
-        if lifecycle is ReviewCaseLifecycle.SCHEDULED and operation is ProcessReviewCaseAction.START:
+        if (
+            lifecycle is ReviewCaseLifecycle.SCHEDULED
+            and operation is ProcessReviewCaseAction.START
+        ):
             return ReviewCaseLifecycle.IN_PROGRESS
         if (
             lifecycle is ReviewCaseLifecycle.IN_PROGRESS
             and operation is ProcessReviewCaseAction.FINISH_FIELDWORK
         ):
             return ReviewCaseLifecycle.AWAITING_CLOSURE
-        if lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE and operation is ProcessReviewCaseAction.CLOSE:
+        if (
+            lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE
+            and operation is ProcessReviewCaseAction.CLOSE
+        ):
             if not context.all_findings_terminal:
                 raise WorkflowTransitionError(
                     "ReviewCase cannot close until every Finding is closed or voided"
@@ -155,13 +173,22 @@ class ProcessReviewFindingWorkflow:
                     "Every non-cancelled ActionItem must be done before verification"
                 )
             return FindingLifecycle.VERIFYING
-        if lifecycle is FindingLifecycle.VERIFYING and operation is ProcessReviewFindingAction.APPROVE:
+        if (
+            lifecycle is FindingLifecycle.VERIFYING
+            and operation is ProcessReviewFindingAction.APPROVE
+        ):
             return FindingLifecycle.CLOSED
-        if lifecycle is FindingLifecycle.VERIFYING and operation is ProcessReviewFindingAction.REJECT:
+        if (
+            lifecycle is FindingLifecycle.VERIFYING
+            and operation is ProcessReviewFindingAction.REJECT
+        ):
             if not _has_reason(context.reason):
                 raise WorkflowTransitionError("Rejecting a Finding requires a reason")
             return FindingLifecycle.RECTIFYING
-        if lifecycle is FindingLifecycle.CLOSED and operation is ProcessReviewFindingAction.REOPEN:
+        if (
+            lifecycle is FindingLifecycle.CLOSED
+            and operation is ProcessReviewFindingAction.REOPEN
+        ):
             if not _has_reason(context.reason):
                 raise WorkflowTransitionError("Reopening a Finding requires a reason")
             return FindingLifecycle.RECTIFYING
@@ -181,7 +208,10 @@ class ProcessReviewActionWorkflow:
         except ValueError as exc:
             raise WorkflowTransitionError(f"Unknown ActionItem action: {action!r}") from exc
 
-        if lifecycle is ActionItemLifecycle.TODO and operation is ProcessReviewActionItemAction.START:
+        if (
+            lifecycle is ActionItemLifecycle.TODO
+            and operation is ProcessReviewActionItemAction.START
+        ):
             return ActionItemLifecycle.IN_PROGRESS
         if (
             lifecycle is ActionItemLifecycle.IN_PROGRESS
@@ -195,7 +225,10 @@ class ProcessReviewActionWorkflow:
             if not _has_reason(context.reason):
                 raise WorkflowTransitionError("Cancelling an ActionItem requires a reason")
             return ActionItemLifecycle.CANCELLED
-        if lifecycle is ActionItemLifecycle.DONE and operation is ProcessReviewActionItemAction.REOPEN:
+        if (
+            lifecycle is ActionItemLifecycle.DONE
+            and operation is ProcessReviewActionItemAction.REOPEN
+        ):
             return ActionItemLifecycle.IN_PROGRESS
         raise _invalid_transition("ActionItem", lifecycle, operation)
 
@@ -213,7 +246,10 @@ class ProcessReviewAuthorizationPolicy:
         department_roles = context.department_finding_role_keys
         action_roles = context.action_assignment_roles
 
-        if requested in {ProcessReviewPermission.VIEW_CASE, ProcessReviewPermission.VIEW_FINDING}:
+        if requested in {
+            ProcessReviewPermission.VIEW_CASE,
+            ProcessReviewPermission.VIEW_FINDING,
+        }:
             return bool(
                 case_roles.intersection({"lead", "auditor", "reviewer", "observer"})
                 or finding_roles
@@ -234,7 +270,11 @@ class ProcessReviewAuthorizationPolicy:
         if requested is ProcessReviewPermission.CREATE_ACTION:
             return "owner" in finding_roles
         if requested is ProcessReviewPermission.UPDATE_ASSIGNED_ACTION:
-            return bool(action_roles.intersection({AssignmentRole.PRIMARY, AssignmentRole.COLLABORATOR}))
+            return bool(
+                action_roles.intersection(
+                    {AssignmentRole.PRIMARY, AssignmentRole.COLLABORATOR}
+                )
+            )
         if requested is ProcessReviewPermission.SUBMIT_RECTIFICATION:
             return "owner" in finding_roles
         if requested is ProcessReviewPermission.VERIFY_FINDING:
@@ -285,15 +325,11 @@ class ProcessReviewV1Policy:
         "owner",
         "collaborator",
     )
-    case_workflow: ProcessReviewCaseWorkflow = field(default_factory=ProcessReviewCaseWorkflow)
-    finding_workflow: ProcessReviewFindingWorkflow = field(default_factory=ProcessReviewFindingWorkflow)
-    action_workflow: ProcessReviewActionWorkflow = field(default_factory=ProcessReviewActionWorkflow)
-    authorization: ProcessReviewAuthorizationPolicy = field(
-        default_factory=ProcessReviewAuthorizationPolicy
-    )
-    submission_policy: ProcessReviewSubmissionPolicy = field(
-        default_factory=ProcessReviewSubmissionPolicy
-    )
+    case_workflow: ReviewCaseWorkflowPolicy = field(default_factory=ProcessReviewCaseWorkflow)
+    finding_workflow: FindingWorkflowPolicy = field(default_factory=ProcessReviewFindingWorkflow)
+    action_workflow: ActionItemWorkflowPolicy = field(default_factory=ProcessReviewActionWorkflow)
+    authorization: AuthorizationPolicy = field(default_factory=ProcessReviewAuthorizationPolicy)
+    submission_policy: SubmissionPolicy = field(default_factory=ProcessReviewSubmissionPolicy)
 
     def validate_case_input(self, payload: Mapping[str, object]) -> tuple[str, ...]:
         return _required_text_fields(payload, ("area_code", "review_type"))
