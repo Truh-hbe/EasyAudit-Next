@@ -1,10 +1,27 @@
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
-from easyaudit_next.platform.domain.models import Department, Organization, PlatformRole, User
+from easyaudit_next.platform.domain.ids import (
+    AuthSessionId,
+    DepartmentId,
+    OrganizationId,
+    UserId,
+)
+from easyaudit_next.platform.domain.models import (
+    AuthSession,
+    Department,
+    LocalCredential,
+    Organization,
+    PlatformAuditEvent,
+    PlatformRole,
+    User,
+)
 from easyaudit_next.platform.persistence.models import (
+    AuthSessionRecord,
     DepartmentRecord,
+    LocalCredentialRecord,
     OrganizationRecord,
+    PlatformAuditEventRecord,
     UserRecord,
 )
 
@@ -31,6 +48,19 @@ class SqlAlchemyOrganizationRepository:
             id=OrganizationId(record.id),
             name=record.name,
             is_active=record.is_active,
+        )
+
+    def list_all(self) -> tuple[Organization, ...]:
+        records = self._session.scalars(
+            select(OrganizationRecord).order_by(OrganizationRecord.name)
+        )
+        return tuple(
+            Organization(
+                id=OrganizationId(record.id),
+                name=record.name,
+                is_active=record.is_active,
+            )
+            for record in records
         )
 
 
@@ -65,6 +95,14 @@ class SqlAlchemyDepartmentRepository:
         record.name = department.name
         record.is_active = department.is_active
         self._session.flush()
+
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[Department, ...]:
+        records = self._session.scalars(
+            select(DepartmentRecord)
+            .where(DepartmentRecord.organization_id == organization_id)
+            .order_by(DepartmentRecord.name)
+        )
+        return tuple(self._to_domain(record) for record in records)
 
     @staticmethod
     def _to_domain(record: DepartmentRecord) -> Department:
@@ -112,6 +150,14 @@ class SqlAlchemyUserRepository:
         record.is_active = user.is_active
         self._session.flush()
 
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[User, ...]:
+        records = self._session.scalars(
+            select(UserRecord)
+            .where(UserRecord.organization_id == organization_id)
+            .order_by(UserRecord.display_name)
+        )
+        return tuple(self._to_domain(record) for record in records)
+
     @staticmethod
     def _to_domain(record: UserRecord) -> User:
         department_id = (
@@ -127,3 +173,121 @@ class SqlAlchemyUserRepository:
             primary_department_id=department_id,
             is_active=record.is_active,
         )
+
+
+class SqlAlchemyLocalCredentialRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, credential: LocalCredential) -> None:
+        self._session.add(
+            LocalCredentialRecord(
+                user_id=credential.user_id,
+                organization_id=credential.organization_id,
+                login_name=credential.login_name,
+                password_hash=credential.password_hash,
+                password_changed_at=credential.password_changed_at,
+                must_change_password=credential.must_change_password,
+            )
+        )
+        self._session.flush()
+
+    def get_by_login_name(self, login_name: str) -> LocalCredential | None:
+        record = self._session.scalar(
+            select(LocalCredentialRecord).where(
+                LocalCredentialRecord.login_name == login_name.strip().lower()
+            )
+        )
+        if record is None:
+            return None
+        return LocalCredential(
+            user_id=UserId(record.user_id),
+            organization_id=OrganizationId(record.organization_id),
+            login_name=record.login_name,
+            password_hash=record.password_hash,
+            password_changed_at=record.password_changed_at,
+            must_change_password=record.must_change_password,
+        )
+
+
+class SqlAlchemyAuthSessionRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, auth_session: AuthSession) -> None:
+        self._session.add(self._to_record(auth_session))
+        self._session.flush()
+
+    def get_by_token_hash(self, token_hash: str) -> AuthSession | None:
+        record = self._session.scalar(
+            select(AuthSessionRecord).where(AuthSessionRecord.token_hash == token_hash)
+        )
+        return self._to_domain(record) if record is not None else None
+
+    def get(self, session_id: AuthSessionId) -> AuthSession | None:
+        record = self._session.get(AuthSessionRecord, session_id)
+        return self._to_domain(record) if record is not None else None
+
+    def list_for_user(self, user_id: UserId) -> tuple[AuthSession, ...]:
+        records = self._session.scalars(
+            select(AuthSessionRecord)
+            .where(AuthSessionRecord.user_id == user_id)
+            .order_by(AuthSessionRecord.created_at.desc())
+        )
+        return tuple(self._to_domain(record) for record in records)
+
+    def update(self, auth_session: AuthSession) -> None:
+        record = self._session.get(AuthSessionRecord, auth_session.id)
+        if record is None:
+            raise LookupError(f"AuthSession {auth_session.id} does not exist")
+        record.revoked_at = auth_session.revoked_at
+        record.last_seen_at = auth_session.last_seen_at
+        record.expires_at = auth_session.expires_at
+        self._session.flush()
+
+    @staticmethod
+    def _to_record(auth_session: AuthSession) -> AuthSessionRecord:
+        return AuthSessionRecord(
+            id=auth_session.id,
+            organization_id=auth_session.organization_id,
+            user_id=auth_session.user_id,
+            token_hash=auth_session.token_hash,
+            expires_at=auth_session.expires_at,
+            revoked_at=auth_session.revoked_at,
+            last_seen_at=auth_session.last_seen_at,
+            created_at=auth_session.created_at,
+        )
+
+    @staticmethod
+    def _to_domain(record: AuthSessionRecord) -> AuthSession:
+        return AuthSession(
+            id=AuthSessionId(record.id),
+            organization_id=OrganizationId(record.organization_id),
+            user_id=UserId(record.user_id),
+            token_hash=record.token_hash,
+            expires_at=record.expires_at,
+            revoked_at=record.revoked_at,
+            last_seen_at=record.last_seen_at,
+            created_at=record.created_at,
+        )
+
+
+class SqlAlchemyPlatformAuditRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, event: PlatformAuditEvent) -> None:
+        self._session.add(
+            PlatformAuditEventRecord(
+                id=event.id,
+                organization_id=event.organization_id,
+                actor_user_id=event.actor_user_id,
+                target_user_id=event.target_user_id,
+                target_department_id=event.target_department_id,
+                target_session_id=event.target_session_id,
+                event_type=event.event_type,
+                occurred_at=event.occurred_at,
+                metadata_json=dict(event.metadata),
+            )
+        )
+        self._session.flush()

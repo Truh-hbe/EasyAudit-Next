@@ -2,7 +2,7 @@
 
 EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Core 为中心，通过版本化 Scenario 承载“过程审查”等不同业务场景；旧版 `EasyAudit_Project` 继续独立维护，本仓库不承担其内部架构兼容义务。
 
-## M1.1 Platform Foundation
+## M1.2 Platform Foundation
 
 M0.1 保留 M0 的领域成果，并完成合并前架构校正：
 
@@ -27,6 +27,16 @@ M1.1 在该基线上新增：
 
 M1.1 仍不包含登录、Credential、Session、管理 API、Scenario 持久化或 Review Core 持久化。
 
+M1.2 在独立的认证边界中新增：
+
+- `local_credentials` 与 Argon2id 密码哈希；User 不保存密码字段。
+- 数据库 `auth_sessions` 与仅保存在浏览器中的随机 Session token；数据库只保存 SHA-256
+  `token_hash`。
+- `Secure`、`HttpOnly`、`SameSite=Strict` 的 `__Host-easyaudit_session` Cookie。
+- `system_admin` 平台管理 API；`ordinary_user` 不获得任何永久业务管理身份。
+- 独立、append-only 的 `platform_audit_events`，不与 Review Activity 混用。
+- 无默认账号/密码的首次管理员 Bootstrap CLI。
+
 ## 快速开始
 
 要求 Python 3.12+ 与 Docker Compose。
@@ -39,6 +49,17 @@ docker compose up -d db
 alembic upgrade head
 uvicorn easyaudit_next.main:app --reload
 ```
+
+首次迁移完成后，交互创建唯一的首个 Organization 与 system admin：
+
+```bash
+easyaudit-next bootstrap-admin \
+  --organization-name "Example Manufacturing" \
+  --admin-name "Platform Administrator" \
+  --login-name admin
+```
+
+密码只通过终端隐藏输入读取。系统已有 Organization 时命令会拒绝再次 Bootstrap。
 
 Windows PowerShell 激活虚拟环境：
 
@@ -76,7 +97,7 @@ docs/                                   领域模型、路线与 ADR
 tests/                                  API 与领域边界测试
 ```
 
-下一阶段是 M1.2：Authentication & Platform Authorization。
+下一阶段是 M1.3：Scenario Persistence。
 
 ## License
 

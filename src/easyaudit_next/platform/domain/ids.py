@@ -4,3 +4,5 @@ from uuid import UUID
 OrganizationId = NewType("OrganizationId", UUID)
 DepartmentId = NewType("DepartmentId", UUID)
 UserId = NewType("UserId", UUID)
+AuthSessionId = NewType("AuthSessionId", UUID)
+PlatformAuditEventId = NewType("PlatformAuditEventId", UUID)

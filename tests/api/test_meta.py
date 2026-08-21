@@ -29,3 +29,5 @@ def test_openapi_contract_has_stable_operation_ids() -> None:
 
     assert schema["paths"]["/health"]["get"]["operationId"] == "getHealth"
     assert schema["paths"]["/api/v1/meta/domain-model"]["get"]["operationId"] == "getDomainModel"
+    assert schema["paths"]["/api/v1/auth/login"]["post"]["operationId"] == "login"
+    assert schema["paths"]["/api/v1/admin/users"]["post"]["operationId"] == "createAdminUser"

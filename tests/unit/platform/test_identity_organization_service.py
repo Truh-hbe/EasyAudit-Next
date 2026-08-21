@@ -21,6 +21,9 @@ class FakeOrganizationRepository:
     def get(self, organization_id: OrganizationId) -> Organization | None:
         return self.items.get(organization_id)
 
+    def list_all(self) -> tuple[Organization, ...]:
+        return tuple(self.items.values())
+
 
 class FakeDepartmentRepository:
     def __init__(self) -> None:
@@ -35,6 +38,11 @@ class FakeDepartmentRepository:
     def update(self, department: Department) -> None:
         self.items[department.id] = department
 
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[Department, ...]:
+        return tuple(
+            item for item in self.items.values() if item.organization_id == organization_id
+        )
+
 
 class FakeUserRepository:
     def __init__(self) -> None:
@@ -48,6 +56,11 @@ class FakeUserRepository:
 
     def update(self, user: User) -> None:
         self.items[user.id] = user
+
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[User, ...]:
+        return tuple(
+            item for item in self.items.values() if item.organization_id == organization_id
+        )
 
 
 def make_service() -> IdentityOrganizationService:

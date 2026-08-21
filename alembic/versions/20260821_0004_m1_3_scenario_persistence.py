@@ -1,7 +1,7 @@
 """Persist M1.3 organization Scenario catalogs and immutable versions.
 
-Revision ID: 20260821_0003
-Revises: 20260821_0002
+Revision ID: 20260821_0004
+Revises: 20260821_0003
 Create Date: 2026-08-21
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "20260821_0003"
-down_revision: str | None = "20260821_0002"
+revision: str = "20260821_0004"
+down_revision: str | None = "20260821_0003"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
