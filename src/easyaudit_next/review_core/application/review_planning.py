@@ -118,7 +118,10 @@ class ReviewPlanningService:
         errors = policy.validate_case_input(scenario_data)
         if errors:
             raise ValueError("; ".join(errors))
-        if plan_id is not None and self._repository.get_plan(actor.organization_id, plan_id) is None:
+        if (
+            plan_id is not None
+            and self._repository.get_plan(actor.organization_id, plan_id) is None
+        ):
             raise LookupError("ReviewPlan not found")
 
         decision = policy.case_creation.decision()
