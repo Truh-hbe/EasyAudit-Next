@@ -1,0 +1,359 @@
+import os
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from threading import Event
+from unittest.mock import Mock
+from uuid import uuid4
+
+import pytest
+from pwdlib import PasswordHash
+from sqlalchemy import Engine, create_engine, delete, inspect, select, update
+from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.orm import Session
+
+from easyaudit_next.cli import bootstrap_admin_in_session
+from easyaudit_next.platform.application.administration import (
+    LastSystemAdminError,
+    PlatformAdministrationService,
+)
+from easyaudit_next.platform.application.authentication import (
+    AuthenticationService,
+    InvalidSessionError,
+)
+from easyaudit_next.platform.domain.ids import OrganizationId, UserId
+from easyaudit_next.platform.domain.models import LocalCredential, PlatformRole, User
+from easyaudit_next.platform.persistence.models import (
+    LocalCredentialRecord,
+    OrganizationRecord,
+    PlatformAuditEventRecord,
+    UserRecord,
+)
+from easyaudit_next.platform.persistence.repositories import (
+    SqlAlchemyAuthSessionRepository,
+    SqlAlchemyLocalCredentialRepository,
+    SqlAlchemyOrganizationRepository,
+    SqlAlchemyPlatformAuditRepository,
+    SqlAlchemyUserRepository,
+)
+
+
+@pytest.fixture(scope="module")
+def postgres_engine() -> Iterator[Engine]:
+    if os.getenv("EASYAUDIT_RUN_POSTGRES_TESTS") != "1":
+        pytest.skip("PostgreSQL integration tests are opt-in outside CI")
+    engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def session(postgres_engine: Engine) -> Iterator[Session]:
+    connection = postgres_engine.connect()
+    transaction = connection.begin()
+    database_session = Session(bind=connection, expire_on_commit=False)
+    try:
+        yield database_session
+    finally:
+        database_session.close()
+        if transaction.is_active:
+            transaction.rollback()
+        connection.close()
+
+
+def test_migration_creates_authentication_and_audit_tables(postgres_engine: Engine) -> None:
+    assert {"local_credentials", "auth_sessions", "platform_audit_events"} <= set(
+        inspect(postgres_engine).get_table_names()
+    )
+
+
+def test_bootstrap_creates_first_admin_without_defaults_and_rejects_repeat(
+    session: Session,
+) -> None:
+    bootstrap_admin_in_session(
+        session,
+        "Bootstrap Organization",
+        "Bootstrap Administrator",
+        "bootstrap-admin",
+        "bootstrap-secret-password",
+        now=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+
+    organization = session.scalar(
+        select(OrganizationRecord).where(OrganizationRecord.name == "Bootstrap Organization")
+    )
+    assert organization is not None
+    admin = session.scalar(select(UserRecord).where(UserRecord.organization_id == organization.id))
+    assert admin is not None
+    assert admin.platform_role == "system_admin"
+    credential = session.get(LocalCredentialRecord, admin.id)
+    assert credential is not None
+    assert credential.login_name == "bootstrap-admin"
+    assert credential.password_hash.startswith("$argon2id$")
+    assert (
+        session.scalar(
+            select(PlatformAuditEventRecord).where(
+                PlatformAuditEventRecord.event_type == "bootstrap.system_admin_created"
+            )
+        )
+        is not None
+    )
+
+    with pytest.raises(RuntimeError, match="Bootstrap refused"):
+        bootstrap_admin_in_session(
+            session,
+            "Second Organization",
+            "Second Administrator",
+            "second-admin",
+            "another-secret-password",
+        )
+
+
+def create_local_user(session: Session, login_name: str = "m12-admin") -> tuple[User, str]:
+    organization_id = OrganizationId(uuid4())
+    user_id = UserId(uuid4())
+    password = "correct-horse-battery"
+    password_hash = PasswordHash.recommended().hash(password)
+    session.add(OrganizationRecord(id=organization_id, name=f"Organization {login_name}"))
+    session.flush()
+    session.add(
+        UserRecord(
+            id=user_id,
+            organization_id=organization_id,
+            display_name="M1.2 Admin",
+            platform_role="system_admin",
+        )
+    )
+    session.flush()
+    SqlAlchemyLocalCredentialRepository(session).add(
+        LocalCredential(
+            user_id=user_id,
+            organization_id=organization_id,
+            login_name=login_name,
+            password_hash=password_hash,
+            password_changed_at=datetime.now(UTC),
+        )
+    )
+    return (
+        User(
+            id=user_id,
+            organization_id=organization_id,
+            display_name="M1.2 Admin",
+            platform_role=PlatformRole.SYSTEM_ADMIN,
+        ),
+        password,
+    )
+
+
+def auth_service(session: Session) -> AuthenticationService:
+    return AuthenticationService(
+        SqlAlchemyLocalCredentialRepository(session),
+        SqlAlchemyAuthSessionRepository(session),
+        SqlAlchemyUserRepository(session),
+        SqlAlchemyPlatformAuditRepository(session),
+    )
+
+
+def test_argon2id_login_logout_and_audit_round_trip(session: Session) -> None:
+    user, password = create_local_user(session)
+    credential = session.scalar(
+        select(LocalCredentialRecord).where(LocalCredentialRecord.user_id == user.id)
+    )
+    assert credential is not None
+    assert credential.password_hash.startswith("$argon2id$")
+    assert password not in credential.password_hash
+
+    service = auth_service(session)
+    result = service.login("M12-ADMIN", password)
+    assert result.user == user
+    assert result.auth_session.token_hash == service.hash_token(result.token)
+    assert result.token != result.auth_session.token_hash
+
+    service.logout(result.auth_session, result.user)
+    with pytest.raises(InvalidSessionError):
+        service.authenticate(result.token)
+
+    event_types = set(session.scalars(select(PlatformAuditEventRecord.event_type)))
+    assert {"auth.login_succeeded", "auth.session_revoked"} <= event_types
+
+
+def test_disabled_user_cannot_reuse_existing_session(session: Session) -> None:
+    user, password = create_local_user(session, "disabled-user")
+    service = auth_service(session)
+    result = service.login("disabled-user", password)
+    SqlAlchemyUserRepository(session).update(
+        User(
+            id=user.id,
+            organization_id=user.organization_id,
+            display_name=user.display_name,
+            platform_role=user.platform_role,
+            is_active=False,
+        )
+    )
+
+    with pytest.raises(InvalidSessionError):
+        service.authenticate(result.token)
+
+
+def test_concurrent_admin_removal_preserves_one_active_system_admin(
+    postgres_engine: Engine,
+) -> None:
+    organization_id = OrganizationId(uuid4())
+    admin_a = User(
+        id=UserId(uuid4()),
+        organization_id=organization_id,
+        display_name="Concurrent Admin A",
+        platform_role=PlatformRole.SYSTEM_ADMIN,
+    )
+    admin_b = User(
+        id=UserId(uuid4()),
+        organization_id=organization_id,
+        display_name="Concurrent Admin B",
+        platform_role=PlatformRole.SYSTEM_ADMIN,
+    )
+    with Session(postgres_engine) as setup_session:
+        setup_session.add(
+            OrganizationRecord(id=organization_id, name=f"Concurrent Admin {organization_id}")
+        )
+        setup_session.add_all(
+            [
+                UserRecord(
+                    id=admin.id,
+                    organization_id=organization_id,
+                    display_name=admin.display_name,
+                    platform_role=admin.platform_role.value,
+                )
+                for admin in (admin_a, admin_b)
+            ]
+        )
+        setup_session.commit()
+
+    first_lock_acquired = Event()
+    allow_first_to_continue = Event()
+    second_started = Event()
+    second_finished = Event()
+
+    class PausingOrganizationRepository(SqlAlchemyOrganizationRepository):
+        def lock_for_update(self, locked_organization_id: OrganizationId) -> None:
+            super().lock_for_update(locked_organization_id)
+            first_lock_acquired.set()
+            if not allow_first_to_continue.wait(timeout=5):
+                raise TimeoutError("Timed out waiting to continue the first admin transaction")
+
+    def remove_admin(actor: User, *, pause_after_lock: bool = False) -> str:
+        with Session(postgres_engine, expire_on_commit=False) as transaction_session:
+            organizations = (
+                PausingOrganizationRepository(transaction_session)
+                if pause_after_lock
+                else SqlAlchemyOrganizationRepository(transaction_session)
+            )
+            users = SqlAlchemyUserRepository(transaction_session)
+            service = PlatformAdministrationService(
+                Mock(),
+                organizations,
+                Mock(),
+                users,
+                Mock(),
+                Mock(),
+                Mock(),
+            )
+            if not pause_after_lock:
+                second_started.set()
+            try:
+                service.update_user(
+                    actor,
+                    actor.id,
+                    platform_role=PlatformRole.ORDINARY_USER,
+                )
+                transaction_session.commit()
+                return "updated"
+            except LastSystemAdminError:
+                transaction_session.rollback()
+                return "rejected"
+            finally:
+                if not pause_after_lock:
+                    second_finished.set()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(remove_admin, admin_a, pause_after_lock=True)
+            assert first_lock_acquired.wait(timeout=5)
+            second = executor.submit(remove_admin, admin_b)
+            assert second_started.wait(timeout=5)
+            assert not second_finished.wait(timeout=0.25)
+            allow_first_to_continue.set()
+            assert {first.result(timeout=5), second.result(timeout=5)} == {"updated", "rejected"}
+
+        with Session(postgres_engine) as verification_session:
+            assert (
+                SqlAlchemyUserRepository(verification_session).count_active_system_admins(
+                    organization_id
+                )
+                == 1
+            )
+    finally:
+        allow_first_to_continue.set()
+        with Session(postgres_engine) as cleanup_session:
+            cleanup_session.execute(
+                delete(UserRecord).where(UserRecord.organization_id == organization_id)
+            )
+            cleanup_session.execute(
+                delete(OrganizationRecord).where(OrganizationRecord.id == organization_id)
+            )
+            cleanup_session.commit()
+
+
+def test_database_rejects_cross_organization_credential(session: Session) -> None:
+    organization_a_id = uuid4()
+    organization_b_id = uuid4()
+    user_id = uuid4()
+    session.add_all(
+        [
+            OrganizationRecord(id=organization_a_id, name="Credential Organization A"),
+            OrganizationRecord(id=organization_b_id, name="Credential Organization B"),
+        ]
+    )
+    session.flush()
+    session.add(
+        UserRecord(
+            id=user_id,
+            organization_id=organization_a_id,
+            display_name="Credential User",
+            platform_role="ordinary_user",
+        )
+    )
+    session.flush()
+    session.add(
+        LocalCredentialRecord(
+            user_id=user_id,
+            organization_id=organization_b_id,
+            login_name="cross-organization",
+            password_hash="$argon2id$invalid-but-not-plain",
+            password_changed_at=datetime.now(UTC),
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+@pytest.mark.parametrize("statement", ["update", "delete"])
+def test_platform_audit_events_are_append_only(session: Session, statement: str) -> None:
+    user, password = create_local_user(session, f"audit-{statement}")
+    auth_service(session).login(f"audit-{statement}", password)
+    event_id = session.scalar(
+        select(PlatformAuditEventRecord.id)
+        .where(PlatformAuditEventRecord.organization_id == user.organization_id)
+        .limit(1)
+    )
+    assert event_id is not None
+    command = (
+        update(PlatformAuditEventRecord)
+        .where(PlatformAuditEventRecord.id == event_id)
+        .values(event_type="tampered")
+        if statement == "update"
+        else delete(PlatformAuditEventRecord).where(PlatformAuditEventRecord.id == event_id)
+    )
+
+    with pytest.raises(DBAPIError):
+        session.execute(command)

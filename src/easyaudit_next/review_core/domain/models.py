@@ -13,6 +13,8 @@ from easyaudit_next.review_core.domain.ids import (
     OrganizationId,
     ReviewCaseId,
     ReviewPlanId,
+    ScenarioDefinitionId,
+    ScenarioVersionId,
     SubmissionId,
     UserId,
 )
@@ -29,6 +31,38 @@ class Scenario:
     version: ScenarioVersion
     name: str
     enabled: bool = True
+
+    def __post_init__(self) -> None:
+        if self.version < 1:
+            raise ValueError("Scenario version must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioDefinition:
+    """Organization-specific catalog entry; behavior remains in ScenarioPolicy."""
+
+    id: ScenarioDefinitionId
+    organization_id: OrganizationId
+    key: ScenarioKey
+    name: str
+    is_active: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.key.strip() or self.key != self.key.strip():
+            raise ValueError("Scenario key must not be blank or padded")
+        if not self.name.strip() or self.name != self.name.strip():
+            raise ValueError("Scenario name must not be blank or padded")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioVersionPublication:
+    """Immutable publication pointer to one code-defined ScenarioPolicy version."""
+
+    id: ScenarioVersionId
+    scenario_id: ScenarioDefinitionId
+    organization_id: OrganizationId
+    version: ScenarioVersion
+    published_at: datetime
 
     def __post_init__(self) -> None:
         if self.version < 1:
@@ -87,6 +121,7 @@ class FindingSeverity(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Finding:
     id: FindingId
+    organization_id: OrganizationId
     case_id: ReviewCaseId
     title: str
     description: str | None
@@ -106,6 +141,7 @@ class ActionItemLifecycle(StrEnum):
 @dataclass(frozen=True, slots=True)
 class ActionItem:
     id: ActionItemId
+    organization_id: OrganizationId
     finding_id: FindingId
     title: str
     lifecycle: ActionItemLifecycle
@@ -132,6 +168,7 @@ class AssignmentRole(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ActionAssignee:
+    organization_id: OrganizationId
     action_item_id: ActionItemId
     actor: ParticipantActor
     role: AssignmentRole
@@ -140,6 +177,7 @@ class ActionAssignee:
 
 @dataclass(frozen=True, slots=True)
 class CaseMember:
+    organization_id: OrganizationId
     case_id: ReviewCaseId
     user_id: UserId
     role_key: str
@@ -148,6 +186,7 @@ class CaseMember:
 
 @dataclass(frozen=True, slots=True)
 class FindingParticipant:
+    organization_id: OrganizationId
     finding_id: FindingId
     actor: ParticipantActor
     role_key: str
@@ -207,6 +246,7 @@ class Submission:
     """Shallow-frozen formal submission snapshot."""
 
     id: SubmissionId
+    organization_id: OrganizationId
     case_id: ReviewCaseId
     finding_id: FindingId | None
     purpose: SubmissionPurpose

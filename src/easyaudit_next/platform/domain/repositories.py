@@ -1,13 +1,24 @@
 from typing import Protocol
 
-from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
-from easyaudit_next.platform.domain.models import Department, Organization, User
+from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, OrganizationId, UserId
+from easyaudit_next.platform.domain.models import (
+    AuthSession,
+    Department,
+    LocalCredential,
+    Organization,
+    PlatformAuditEvent,
+    User,
+)
 
 
 class OrganizationRepository(Protocol):
     def add(self, organization: Organization) -> None: ...
 
     def get(self, organization_id: OrganizationId) -> Organization | None: ...
+
+    def lock_for_update(self, organization_id: OrganizationId) -> None: ...
+
+    def list_all(self) -> tuple[Organization, ...]: ...
 
 
 class DepartmentRepository(Protocol):
@@ -17,6 +28,8 @@ class DepartmentRepository(Protocol):
 
     def update(self, department: Department) -> None: ...
 
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[Department, ...]: ...
+
 
 class UserRepository(Protocol):
     def add(self, user: User) -> None: ...
@@ -24,3 +37,29 @@ class UserRepository(Protocol):
     def get(self, user_id: UserId) -> User | None: ...
 
     def update(self, user: User) -> None: ...
+
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[User, ...]: ...
+
+    def count_active_system_admins(self, organization_id: OrganizationId) -> int: ...
+
+
+class LocalCredentialRepository(Protocol):
+    def add(self, credential: LocalCredential) -> None: ...
+
+    def get_by_login_name(self, login_name: str) -> LocalCredential | None: ...
+
+
+class AuthSessionRepository(Protocol):
+    def add(self, auth_session: AuthSession) -> None: ...
+
+    def get_by_token_hash(self, token_hash: str) -> AuthSession | None: ...
+
+    def get(self, session_id: AuthSessionId) -> AuthSession | None: ...
+
+    def list_for_user(self, user_id: UserId) -> tuple[AuthSession, ...]: ...
+
+    def update(self, auth_session: AuthSession) -> None: ...
+
+
+class PlatformAuditRepository(Protocol):
+    def add(self, event: PlatformAuditEvent) -> None: ...

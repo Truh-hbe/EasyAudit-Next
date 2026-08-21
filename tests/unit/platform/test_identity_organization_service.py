@@ -21,6 +21,13 @@ class FakeOrganizationRepository:
     def get(self, organization_id: OrganizationId) -> Organization | None:
         return self.items.get(organization_id)
 
+    def lock_for_update(self, organization_id: OrganizationId) -> None:
+        if organization_id not in self.items:
+            raise LookupError(f"Organization {organization_id} does not exist")
+
+    def list_all(self) -> tuple[Organization, ...]:
+        return tuple(self.items.values())
+
 
 class FakeDepartmentRepository:
     def __init__(self) -> None:
@@ -35,6 +42,11 @@ class FakeDepartmentRepository:
     def update(self, department: Department) -> None:
         self.items[department.id] = department
 
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[Department, ...]:
+        return tuple(
+            item for item in self.items.values() if item.organization_id == organization_id
+        )
+
 
 class FakeUserRepository:
     def __init__(self) -> None:
@@ -48,6 +60,19 @@ class FakeUserRepository:
 
     def update(self, user: User) -> None:
         self.items[user.id] = user
+
+    def list_for_organization(self, organization_id: OrganizationId) -> tuple[User, ...]:
+        return tuple(
+            item for item in self.items.values() if item.organization_id == organization_id
+        )
+
+    def count_active_system_admins(self, organization_id: OrganizationId) -> int:
+        return sum(
+            item.organization_id == organization_id
+            and item.is_active
+            and item.platform_role is PlatformRole.SYSTEM_ADMIN
+            for item in self.items.values()
+        )
 
 
 def make_service() -> IdentityOrganizationService:
