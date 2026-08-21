@@ -68,7 +68,7 @@ CORE_CONCEPTS = (
     tags=["system"],
 )
 def get_health() -> HealthResponse:
-    return HealthResponse(status="ok", stage="M1.2")
+    return HealthResponse(status="ok", stage="M1.3")
 
 
 @api_router.get(
@@ -79,10 +79,10 @@ def get_health() -> HealthResponse:
 )
 def get_domain_model() -> DomainModelResponse:
     return DomainModelResponse(
-        stage="M1.2",
+        stage="M1.3",
         concepts=CORE_CONCEPTS,
         backend="Python/FastAPI",
-        next="M1.3 Scenario Persistence",
+        next="M1.4 Review Core Persistence Foundation",
     )
 
 

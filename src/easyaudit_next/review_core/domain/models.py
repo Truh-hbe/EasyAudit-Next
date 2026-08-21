@@ -13,6 +13,8 @@ from easyaudit_next.review_core.domain.ids import (
     OrganizationId,
     ReviewCaseId,
     ReviewPlanId,
+    ScenarioDefinitionId,
+    ScenarioVersionId,
     SubmissionId,
     UserId,
 )
@@ -29,6 +31,38 @@ class Scenario:
     version: ScenarioVersion
     name: str
     enabled: bool = True
+
+    def __post_init__(self) -> None:
+        if self.version < 1:
+            raise ValueError("Scenario version must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioDefinition:
+    """Organization-specific catalog entry; behavior remains in ScenarioPolicy."""
+
+    id: ScenarioDefinitionId
+    organization_id: OrganizationId
+    key: ScenarioKey
+    name: str
+    is_active: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.key.strip() or self.key != self.key.strip():
+            raise ValueError("Scenario key must not be blank or padded")
+        if not self.name.strip() or self.name != self.name.strip():
+            raise ValueError("Scenario name must not be blank or padded")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioVersionPublication:
+    """Immutable publication pointer to one code-defined ScenarioPolicy version."""
+
+    id: ScenarioVersionId
+    scenario_id: ScenarioDefinitionId
+    organization_id: OrganizationId
+    version: ScenarioVersion
+    published_at: datetime
 
     def __post_init__(self) -> None:
         if self.version < 1:

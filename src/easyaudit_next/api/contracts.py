@@ -11,13 +11,13 @@ class HealthResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     status: Literal["ok"]
-    stage: Literal["M1.2"]
+    stage: Literal["M1.3"]
 
 
 class DomainModelResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    stage: Literal["M1.2"]
+    stage: Literal["M1.3"]
     concepts: tuple[str, ...]
     backend: Literal["Python/FastAPI"]
     next: str
