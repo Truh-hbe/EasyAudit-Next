@@ -10,7 +10,12 @@ from easyaudit_next.review_core.application.review_planning import (
     ReviewAuthorizationError,
     ReviewPlanningService,
 )
-from easyaudit_next.review_core.domain.ids import ReviewCaseId, ReviewPlanId, ScenarioDefinitionId
+from easyaudit_next.review_core.domain.ids import (
+    ReviewCaseId,
+    ReviewPlanId,
+    ScenarioDefinitionId,
+    ScenarioVersionId,
+)
 from easyaudit_next.review_core.domain.models import (
     CaseMember,
     ReviewCase,
@@ -39,7 +44,9 @@ class InMemoryRepository:
         return plan if plan is not None and plan.organization_id == organization_id else None
 
     def list_plans(self, organization_id: OrganizationId) -> tuple[ReviewPlan, ...]:
-        return tuple(plan for plan in self.plans.values() if plan.organization_id == organization_id)
+        return tuple(
+            plan for plan in self.plans.values() if plan.organization_id == organization_id
+        )
 
     def add_case(self, review_case: ReviewCase) -> None:
         self.cases[review_case.id] = review_case
@@ -90,7 +97,7 @@ class Catalog:
             name="Process Review",
         )
         self.version = ScenarioVersionPublication(
-            id=uuid4(),  # type: ignore[arg-type]
+            id=ScenarioVersionId(uuid4()),
             scenario_id=self.scenario.id,
             organization_id=organization_id,
             version=ScenarioVersion(1),
