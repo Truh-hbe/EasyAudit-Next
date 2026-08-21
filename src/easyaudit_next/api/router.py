@@ -13,6 +13,8 @@ from easyaudit_next.api.contracts import (
     LoginRequest,
     LoginResponse,
     OrganizationResponse,
+    ScenarioResponse,
+    ScenarioVersionResponse,
     SessionResponse,
     UserCreateRequest,
     UserPatchRequest,
@@ -41,6 +43,10 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyUserRepository,
 )
 from easyaudit_next.platform.settings import get_settings
+from easyaudit_next.review_core.domain.models import ScenarioKey
+from easyaudit_next.review_core.persistence.repositories import (
+    SqlAlchemyScenarioCatalogRepository,
+)
 
 api_router = APIRouter()
 
@@ -68,7 +74,7 @@ CORE_CONCEPTS = (
     tags=["system"],
 )
 def get_health() -> HealthResponse:
-    return HealthResponse(status="ok", stage="M1.3")
+    return HealthResponse(status="ok", stage="M1.4")
 
 
 @api_router.get(
@@ -79,10 +85,10 @@ def get_health() -> HealthResponse:
 )
 def get_domain_model() -> DomainModelResponse:
     return DomainModelResponse(
-        stage="M1.3",
+        stage="M1.4",
         concepts=CORE_CONCEPTS,
         backend="Python/FastAPI",
-        next="M1.4 Review Core Persistence Foundation",
+        next="M1 Final Review",
     )
 
 
@@ -121,6 +127,7 @@ def _administration_service(session: Session) -> PlatformAdministrationService:
     )
     return PlatformAdministrationService(
         IdentityOrganizationService(organizations, departments, users),
+        organizations,
         departments,
         users,
         credentials,
@@ -419,3 +426,54 @@ def update_admin_user(
     except (ValueError, IntegrityError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _user_response(user)
+
+
+@api_router.get(
+    "/api/v1/admin/scenarios",
+    response_model=list[ScenarioResponse],
+    operation_id="listAdminScenarios",
+    tags=["admin"],
+)
+def list_admin_scenarios(
+    identity: SystemAdminIdentity,
+    session: DatabaseSession,
+) -> list[ScenarioResponse]:
+    scenarios = SqlAlchemyScenarioCatalogRepository(session).list_for_organization(
+        identity.user.organization_id
+    )
+    return [
+        ScenarioResponse(
+            id=scenario.id,
+            organization_id=scenario.organization_id,
+            key=scenario.key,
+            name=scenario.name,
+            is_active=scenario.is_active,
+        )
+        for scenario in scenarios
+    ]
+
+
+@api_router.get(
+    "/api/v1/admin/scenarios/{key}/versions",
+    response_model=list[ScenarioVersionResponse],
+    operation_id="listAdminScenarioVersions",
+    tags=["admin"],
+)
+def list_admin_scenario_versions(
+    key: str,
+    identity: SystemAdminIdentity,
+    session: DatabaseSession,
+) -> list[ScenarioVersionResponse]:
+    repository = SqlAlchemyScenarioCatalogRepository(session)
+    scenario = repository.get_by_key(identity.user.organization_id, ScenarioKey(key))
+    if scenario is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found")
+    return [
+        ScenarioVersionResponse(
+            id=publication.id,
+            scenario_id=publication.scenario_id,
+            version=publication.version,
+            published_at=publication.published_at,
+        )
+        for publication in repository.list_versions(scenario.id)
+    ]

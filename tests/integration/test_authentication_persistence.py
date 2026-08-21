@@ -1,6 +1,9 @@
 import os
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Event
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -9,6 +12,11 @@ from sqlalchemy import Engine, create_engine, delete, inspect, select, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
+from easyaudit_next.cli import bootstrap_admin_in_session
+from easyaudit_next.platform.application.administration import (
+    LastSystemAdminError,
+    PlatformAdministrationService,
+)
 from easyaudit_next.platform.application.authentication import (
     AuthenticationService,
     InvalidSessionError,
@@ -24,6 +32,7 @@ from easyaudit_next.platform.persistence.models import (
 from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyAuthSessionRepository,
     SqlAlchemyLocalCredentialRepository,
+    SqlAlchemyOrganizationRepository,
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
@@ -56,6 +65,48 @@ def test_migration_creates_authentication_and_audit_tables(postgres_engine: Engi
     assert {"local_credentials", "auth_sessions", "platform_audit_events"} <= set(
         inspect(postgres_engine).get_table_names()
     )
+
+
+def test_bootstrap_creates_first_admin_without_defaults_and_rejects_repeat(
+    session: Session,
+) -> None:
+    bootstrap_admin_in_session(
+        session,
+        "Bootstrap Organization",
+        "Bootstrap Administrator",
+        "bootstrap-admin",
+        "bootstrap-secret-password",
+        now=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+
+    organization = session.scalar(
+        select(OrganizationRecord).where(OrganizationRecord.name == "Bootstrap Organization")
+    )
+    assert organization is not None
+    admin = session.scalar(select(UserRecord).where(UserRecord.organization_id == organization.id))
+    assert admin is not None
+    assert admin.platform_role == "system_admin"
+    credential = session.get(LocalCredentialRecord, admin.id)
+    assert credential is not None
+    assert credential.login_name == "bootstrap-admin"
+    assert credential.password_hash.startswith("$argon2id$")
+    assert (
+        session.scalar(
+            select(PlatformAuditEventRecord).where(
+                PlatformAuditEventRecord.event_type == "bootstrap.system_admin_created"
+            )
+        )
+        is not None
+    )
+
+    with pytest.raises(RuntimeError, match="Bootstrap refused"):
+        bootstrap_admin_in_session(
+            session,
+            "Second Organization",
+            "Second Administrator",
+            "second-admin",
+            "another-secret-password",
+        )
 
 
 def create_local_user(session: Session, login_name: str = "m12-admin") -> tuple[User, str]:
@@ -142,6 +193,114 @@ def test_disabled_user_cannot_reuse_existing_session(session: Session) -> None:
 
     with pytest.raises(InvalidSessionError):
         service.authenticate(result.token)
+
+
+def test_concurrent_admin_removal_preserves_one_active_system_admin(
+    postgres_engine: Engine,
+) -> None:
+    organization_id = OrganizationId(uuid4())
+    admin_a = User(
+        id=UserId(uuid4()),
+        organization_id=organization_id,
+        display_name="Concurrent Admin A",
+        platform_role=PlatformRole.SYSTEM_ADMIN,
+    )
+    admin_b = User(
+        id=UserId(uuid4()),
+        organization_id=organization_id,
+        display_name="Concurrent Admin B",
+        platform_role=PlatformRole.SYSTEM_ADMIN,
+    )
+    with Session(postgres_engine) as setup_session:
+        setup_session.add(
+            OrganizationRecord(id=organization_id, name=f"Concurrent Admin {organization_id}")
+        )
+        setup_session.add_all(
+            [
+                UserRecord(
+                    id=admin.id,
+                    organization_id=organization_id,
+                    display_name=admin.display_name,
+                    platform_role=admin.platform_role.value,
+                )
+                for admin in (admin_a, admin_b)
+            ]
+        )
+        setup_session.commit()
+
+    first_lock_acquired = Event()
+    allow_first_to_continue = Event()
+    second_started = Event()
+    second_finished = Event()
+
+    class PausingOrganizationRepository(SqlAlchemyOrganizationRepository):
+        def lock_for_update(self, locked_organization_id: OrganizationId) -> None:
+            super().lock_for_update(locked_organization_id)
+            first_lock_acquired.set()
+            if not allow_first_to_continue.wait(timeout=5):
+                raise TimeoutError("Timed out waiting to continue the first admin transaction")
+
+    def remove_admin(actor: User, *, pause_after_lock: bool = False) -> str:
+        with Session(postgres_engine, expire_on_commit=False) as transaction_session:
+            organizations = (
+                PausingOrganizationRepository(transaction_session)
+                if pause_after_lock
+                else SqlAlchemyOrganizationRepository(transaction_session)
+            )
+            users = SqlAlchemyUserRepository(transaction_session)
+            service = PlatformAdministrationService(
+                Mock(),
+                organizations,
+                Mock(),
+                users,
+                Mock(),
+                Mock(),
+                Mock(),
+            )
+            if not pause_after_lock:
+                second_started.set()
+            try:
+                service.update_user(
+                    actor,
+                    actor.id,
+                    platform_role=PlatformRole.ORDINARY_USER,
+                )
+                transaction_session.commit()
+                return "updated"
+            except LastSystemAdminError:
+                transaction_session.rollback()
+                return "rejected"
+            finally:
+                if not pause_after_lock:
+                    second_finished.set()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(remove_admin, admin_a, pause_after_lock=True)
+            assert first_lock_acquired.wait(timeout=5)
+            second = executor.submit(remove_admin, admin_b)
+            assert second_started.wait(timeout=5)
+            assert not second_finished.wait(timeout=0.25)
+            allow_first_to_continue.set()
+            assert {first.result(timeout=5), second.result(timeout=5)} == {"updated", "rejected"}
+
+        with Session(postgres_engine) as verification_session:
+            assert (
+                SqlAlchemyUserRepository(verification_session).count_active_system_admins(
+                    organization_id
+                )
+                == 1
+            )
+    finally:
+        allow_first_to_continue.set()
+        with Session(postgres_engine) as cleanup_session:
+            cleanup_session.execute(
+                delete(UserRecord).where(UserRecord.organization_id == organization_id)
+            )
+            cleanup_session.execute(
+                delete(OrganizationRecord).where(OrganizationRecord.id == organization_id)
+            )
+            cleanup_session.commit()
 
 
 def test_database_rejects_cross_organization_credential(session: Session) -> None:

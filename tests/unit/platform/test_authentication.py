@@ -71,6 +71,13 @@ class UserRepository:
     def list_for_organization(self, organization_id: OrganizationId) -> tuple[User, ...]:
         return (self.user,) if self.user.organization_id == organization_id else ()
 
+    def count_active_system_admins(self, organization_id: OrganizationId) -> int:
+        return int(
+            self.user.organization_id == organization_id
+            and self.user.is_active
+            and self.user.platform_role is PlatformRole.SYSTEM_ADMIN
+        )
+
 
 class AuditRepository:
     def __init__(self) -> None:
