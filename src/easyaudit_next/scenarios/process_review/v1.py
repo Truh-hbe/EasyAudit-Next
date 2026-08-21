@@ -4,7 +4,6 @@ from enum import StrEnum
 
 from easyaudit_next.review_core.domain.models import (
     ActionItemLifecycle,
-    AssignmentRole,
     FindingLifecycle,
     ReviewCaseLifecycle,
     Scenario,
@@ -15,16 +14,24 @@ from easyaudit_next.review_core.domain.models import (
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemTransitionContext,
     ActionItemWorkflowPolicy,
+    ActorKind,
     AuthorizationContext,
     AuthorizationPolicy,
+    CaseCreationDecision,
     FindingTransitionContext,
     FindingWorkflowPolicy,
+    PermissionSource,
+    ReviewCaseCreationPolicy,
     ReviewCaseTransitionContext,
     ReviewCaseWorkflowPolicy,
+    RoleGrant,
+    RoleSpecification,
+    SubmissionDecision,
+    SubmissionDecisionError,
     SubmissionPolicy,
+    SubmissionRequest,
     WorkflowTransitionError,
 )
-from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
 
 
 class ProcessReviewCaseAction(StrEnum):
@@ -51,7 +58,15 @@ class ProcessReviewActionItemAction(StrEnum):
     REOPEN = "reopen"
 
 
+class ProcessReviewSubmissionAction(StrEnum):
+    SUBMIT_PLAN = "submit_plan"
+    SUBMIT_FOR_VERIFICATION = "submit_for_verification"
+    APPROVE = "approve"
+    REJECT = "reject"
+
+
 class ProcessReviewPermission(StrEnum):
+    CREATE_CASE = "create_case"
     VIEW_CASE = "view_case"
     VIEW_FINDING = "view_finding"
     MANAGE_CASE_MEMBERS = "manage_case_members"
@@ -64,6 +79,34 @@ class ProcessReviewPermission(StrEnum):
     SUBMIT_RECTIFICATION = "submit_rectification"
     VERIFY_FINDING = "verify_finding"
     REOPEN_FINDING = "reopen_finding"
+
+
+_USER_DIRECT = frozenset({ActorKind.USER})
+_DEPARTMENT_ONLY = frozenset({ActorKind.DEPARTMENT})
+_DIRECT_SOURCE = frozenset({PermissionSource.DIRECT})
+_DEPARTMENT_SOURCE = frozenset({PermissionSource.DEPARTMENT_MEMBERSHIP})
+
+PROCESS_REVIEW_CASE_ROLE_SPECS = (
+    RoleSpecification("lead", _USER_DIRECT, _DIRECT_SOURCE),
+    RoleSpecification("auditor", _USER_DIRECT, _DIRECT_SOURCE),
+    RoleSpecification("reviewer", _USER_DIRECT, _DIRECT_SOURCE),
+    RoleSpecification("observer", _USER_DIRECT, _DIRECT_SOURCE),
+)
+
+PROCESS_REVIEW_FINDING_ROLE_SPECS = (
+    RoleSpecification(
+        "responsible_department",
+        _DEPARTMENT_ONLY,
+        _DEPARTMENT_SOURCE,
+    ),
+    RoleSpecification("owner", _USER_DIRECT, _DIRECT_SOURCE),
+    RoleSpecification("collaborator", _USER_DIRECT, _DIRECT_SOURCE),
+)
+
+PROCESS_REVIEW_ACTION_ROLE_SPECS = (
+    RoleSpecification("primary", _USER_DIRECT, _DIRECT_SOURCE),
+    RoleSpecification("collaborator", _USER_DIRECT, _DIRECT_SOURCE),
+)
 
 
 def _has_reason(reason: str | None) -> bool:
@@ -92,6 +135,40 @@ def _required_text_fields(
         elif value != value.strip():
             errors.append(f"{name} must not contain surrounding whitespace")
     return tuple(errors)
+
+
+def _direct_user_role_keys(grants: frozenset[RoleGrant]) -> frozenset[str]:
+    return frozenset(
+        grant.role_key
+        for grant in grants
+        if grant.actor_kind is ActorKind.USER
+        and grant.source is PermissionSource.DIRECT
+    )
+
+
+def _department_member_role_keys(grants: frozenset[RoleGrant]) -> frozenset[str]:
+    return frozenset(
+        grant.role_key
+        for grant in grants
+        if grant.actor_kind is ActorKind.DEPARTMENT
+        and grant.source is PermissionSource.DEPARTMENT_MEMBERSHIP
+    )
+
+
+def _raise_submission_errors(errors: tuple[str, ...]) -> None:
+    if errors:
+        raise SubmissionDecisionError("; ".join(errors))
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessReviewCaseCreationPolicy:
+    def decision(self) -> CaseCreationDecision:
+        return CaseCreationDecision(
+            required_permission=ProcessReviewPermission.CREATE_CASE,
+            initial_lifecycle=ReviewCaseLifecycle.DRAFT,
+            creator_role_keys=("lead",),
+            activity_event_type="review_case.created",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,20 +318,24 @@ class ProcessReviewAuthorizationPolicy:
         except ValueError:
             return False
 
-        case_roles = context.case_role_keys
-        finding_roles = context.explicit_finding_role_keys
-        department_roles = context.department_finding_role_keys
-        action_roles = context.action_assignment_roles
+        case_roles = _direct_user_role_keys(context.case_role_grants)
+        finding_roles = _direct_user_role_keys(context.finding_role_grants)
+        department_finding_roles = _department_member_role_keys(
+            context.finding_role_grants
+        )
+        action_roles = _direct_user_role_keys(context.action_role_grants)
 
+        if requested is ProcessReviewPermission.CREATE_CASE:
+            return context.is_active_organization_user
         if requested in {
             ProcessReviewPermission.VIEW_CASE,
             ProcessReviewPermission.VIEW_FINDING,
         }:
             return bool(
                 case_roles.intersection({"lead", "auditor", "reviewer", "observer"})
-                or finding_roles
-                or department_roles
-                or action_roles
+                or finding_roles.intersection({"owner", "collaborator"})
+                or "responsible_department" in department_finding_roles
+                or action_roles.intersection({"primary", "collaborator"})
             )
         if requested in {
             ProcessReviewPermission.MANAGE_CASE_MEMBERS,
@@ -270,11 +351,7 @@ class ProcessReviewAuthorizationPolicy:
         if requested is ProcessReviewPermission.CREATE_ACTION:
             return "owner" in finding_roles
         if requested is ProcessReviewPermission.UPDATE_ASSIGNED_ACTION:
-            return bool(
-                action_roles.intersection(
-                    {AssignmentRole.PRIMARY, AssignmentRole.COLLABORATOR}
-                )
-            )
+            return bool(action_roles.intersection({"primary", "collaborator"}))
         if requested is ProcessReviewPermission.SUBMIT_RECTIFICATION:
             return "owner" in finding_roles
         if requested is ProcessReviewPermission.VERIFY_FINDING:
@@ -286,28 +363,100 @@ class ProcessReviewAuthorizationPolicy:
 
 @dataclass(frozen=True, slots=True)
 class ProcessReviewSubmissionPolicy:
-    def validate_submission(
-        self,
-        purpose: SubmissionPurpose,
-        payload: Mapping[str, object],
-    ) -> tuple[str, ...]:
-        if purpose is SubmissionPurpose.RECTIFICATION:
-            stage = payload.get("stage")
-            if stage == "plan":
-                return _required_text_fields(payload, ("root_cause",))
-            if stage == "completion":
-                return _required_text_fields(payload, ("comment",))
-            return ("rectification stage must be 'plan' or 'completion'",)
+    finding_workflow: FindingWorkflowPolicy = field(default_factory=ProcessReviewFindingWorkflow)
 
-        if purpose is SubmissionPurpose.VERIFICATION:
-            result = payload.get("result")
-            if result not in {"approved", "rejected"}:
-                return ("verification result must be 'approved' or 'rejected'",)
-            if result == "rejected":
-                return _required_text_fields(payload, ("comment",))
-            return ()
+    def decide(self, request: SubmissionRequest) -> SubmissionDecision:
+        try:
+            operation = ProcessReviewSubmissionAction(request.action)
+        except ValueError as exc:
+            raise SubmissionDecisionError(
+                f"Unknown Process Review submission action: {request.action!r}"
+            ) from exc
 
-        return (f"submission purpose {purpose.value!r} is not defined by process_review@1",)
+        if operation is ProcessReviewSubmissionAction.SUBMIT_PLAN:
+            self._require_rectification_stage(request, "plan")
+            if request.current_lifecycle is not FindingLifecycle.RECTIFYING:
+                raise SubmissionDecisionError(
+                    "Rectification plan can only be submitted while Finding is rectifying"
+                )
+            _raise_submission_errors(
+                _required_text_fields(request.payload, ("root_cause",))
+            )
+            return SubmissionDecision(
+                required_permission=ProcessReviewPermission.SUBMIT_RECTIFICATION,
+                target_lifecycle=FindingLifecycle.RECTIFYING,
+                activity_event_type="finding.rectification_plan_submitted",
+            )
+
+        if operation is ProcessReviewSubmissionAction.SUBMIT_FOR_VERIFICATION:
+            self._require_rectification_stage(request, "completion")
+            _raise_submission_errors(_required_text_fields(request.payload, ("comment",)))
+            target = self.finding_workflow.transition(
+                request.current_lifecycle,
+                ProcessReviewFindingAction.SUBMIT_FOR_VERIFICATION,
+                request.transition_context,
+            )
+            return SubmissionDecision(
+                required_permission=ProcessReviewPermission.SUBMIT_RECTIFICATION,
+                target_lifecycle=target,
+                activity_event_type="finding.submitted_for_verification",
+            )
+
+        if operation is ProcessReviewSubmissionAction.APPROVE:
+            self._require_verification_result(request, "approved")
+            target = self.finding_workflow.transition(
+                request.current_lifecycle,
+                ProcessReviewFindingAction.APPROVE,
+                FindingTransitionContext(),
+            )
+            return SubmissionDecision(
+                required_permission=ProcessReviewPermission.VERIFY_FINDING,
+                target_lifecycle=target,
+                activity_event_type="finding.approved",
+            )
+
+        self._require_verification_result(request, "rejected")
+        _raise_submission_errors(_required_text_fields(request.payload, ("comment",)))
+        comment = request.payload["comment"]
+        assert isinstance(comment, str)
+        target = self.finding_workflow.transition(
+            request.current_lifecycle,
+            ProcessReviewFindingAction.REJECT,
+            FindingTransitionContext(reason=comment),
+        )
+        return SubmissionDecision(
+            required_permission=ProcessReviewPermission.VERIFY_FINDING,
+            target_lifecycle=target,
+            activity_event_type="finding.rejected",
+        )
+
+    @staticmethod
+    def _require_rectification_stage(
+        request: SubmissionRequest,
+        stage: str,
+    ) -> None:
+        if request.purpose is not SubmissionPurpose.RECTIFICATION:
+            raise SubmissionDecisionError(
+                f"{request.action} requires rectification Submission purpose"
+            )
+        if request.payload.get("stage") != stage:
+            raise SubmissionDecisionError(
+                f"{request.action} requires rectification stage {stage!r}"
+            )
+
+    @staticmethod
+    def _require_verification_result(
+        request: SubmissionRequest,
+        result: str,
+    ) -> None:
+        if request.purpose is not SubmissionPurpose.VERIFICATION:
+            raise SubmissionDecisionError(
+                f"{request.action} requires verification Submission purpose"
+            )
+        if request.payload.get("result") != result:
+            raise SubmissionDecisionError(
+                f"{request.action} requires verification result {result!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,11 +468,15 @@ class ProcessReviewV1Policy:
             name="Process Review",
         )
     )
-    case_role_keys: tuple[str, ...] = ("lead", "auditor", "reviewer", "observer")
-    finding_participant_role_keys: tuple[str, ...] = (
-        "responsible_department",
-        "owner",
-        "collaborator",
+    case_role_specs: tuple[RoleSpecification, ...] = PROCESS_REVIEW_CASE_ROLE_SPECS
+    finding_participant_role_specs: tuple[RoleSpecification, ...] = (
+        PROCESS_REVIEW_FINDING_ROLE_SPECS
+    )
+    action_assignee_role_specs: tuple[RoleSpecification, ...] = (
+        PROCESS_REVIEW_ACTION_ROLE_SPECS
+    )
+    case_creation: ReviewCaseCreationPolicy = field(
+        default_factory=ProcessReviewCaseCreationPolicy
     )
     case_workflow: ReviewCaseWorkflowPolicy = field(default_factory=ProcessReviewCaseWorkflow)
     finding_workflow: FindingWorkflowPolicy = field(default_factory=ProcessReviewFindingWorkflow)
@@ -339,8 +492,3 @@ class ProcessReviewV1Policy:
 
 
 PROCESS_REVIEW_V1 = ProcessReviewV1Policy()
-
-
-def register_process_review_v1(registry: ScenarioRegistry) -> ProcessReviewV1Policy:
-    registry.register(PROCESS_REVIEW_V1)
-    return PROCESS_REVIEW_V1
