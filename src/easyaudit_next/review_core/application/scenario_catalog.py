@@ -48,7 +48,7 @@ class ScenarioCatalogService:
             )
             self._repository.add_scenario(scenario)
 
-        if self._repository.get_version(scenario.id, version) is not None:
+        if self._repository.get_version(organization_id, scenario.id, version) is not None:
             raise ScenarioVersionAlreadyPublishedError(
                 f"Scenario version is already published: {key}@{version}"
             )
