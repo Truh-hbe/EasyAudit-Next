@@ -16,6 +16,39 @@
         "operationId": "getDomainModel",
         "tags": ["meta"]
       }
+    },
+    "/api/v1/auth/login": {
+      "post": {"operationId": "login", "tags": ["auth"]}
+    },
+    "/api/v1/auth/logout": {
+      "post": {"operationId": "logout", "tags": ["auth"]}
+    },
+    "/api/v1/me": {
+      "get": {"operationId": "getMe", "tags": ["me"]}
+    },
+    "/api/v1/me/sessions": {
+      "get": {"operationId": "listMySessions", "tags": ["me"]}
+    },
+    "/api/v1/me/sessions/{session_id}": {
+      "delete": {"operationId": "revokeMySession", "tags": ["me"]}
+    },
+    "/api/v1/admin/organization": {
+      "get": {"operationId": "getAdminOrganization", "tags": ["admin"]}
+    },
+    "/api/v1/admin/departments": {
+      "get": {"operationId": "listAdminDepartments", "tags": ["admin"]},
+      "post": {"operationId": "createAdminDepartment", "tags": ["admin"]}
+    },
+    "/api/v1/admin/departments/{department_id}": {
+      "patch": {"operationId": "updateAdminDepartment", "tags": ["admin"]}
+    },
+    "/api/v1/admin/users": {
+      "get": {"operationId": "listAdminUsers", "tags": ["admin"]},
+      "post": {"operationId": "createAdminUser", "tags": ["admin"]}
+    },
+    "/api/v1/admin/users/{user_id}": {
+      "get": {"operationId": "getAdminUser", "tags": ["admin"]},
+      "patch": {"operationId": "updateAdminUser", "tags": ["admin"]}
     }
   }
 }
