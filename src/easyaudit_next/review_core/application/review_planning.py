@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import UserRepository
 from easyaudit_next.review_core.domain.ids import (
@@ -198,7 +199,7 @@ class ReviewPlanningService:
         self,
         actor: User,
         case_id: ReviewCaseId,
-        user_id: object,
+        user_id: UserId,
         role_key: str,
         *,
         occurred_at: datetime | None = None,
@@ -206,7 +207,7 @@ class ReviewPlanningService:
         review_case, policy, context = self._case_context(actor, case_id)
         if not policy.authorization.allows(MANAGE_CASE_MEMBERS_PERMISSION, context):
             raise ReviewAuthorizationError("lead role required to manage CaseMember")
-        target = self._users.get(user_id)  # type: ignore[arg-type]
+        target = self._users.get(user_id)
         if (
             target is None
             or target.organization_id != actor.organization_id
