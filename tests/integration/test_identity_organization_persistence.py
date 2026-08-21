@@ -80,12 +80,15 @@ def test_database_rejects_cross_organization_department_parent(session: Session)
         [
             OrganizationRecord(id=organization_a_id, name="Organization A"),
             OrganizationRecord(id=organization_b_id, name="Organization B"),
-            DepartmentRecord(
-                id=parent_id,
-                organization_id=organization_b_id,
-                name="Parent B",
-            ),
         ]
+    )
+    session.flush()
+    session.add(
+        DepartmentRecord(
+            id=parent_id,
+            organization_id=organization_b_id,
+            name="Parent B",
+        )
     )
     session.flush()
 
@@ -109,12 +112,15 @@ def test_database_rejects_cross_organization_primary_department(session: Session
         [
             OrganizationRecord(id=organization_a_id, name="Organization A"),
             OrganizationRecord(id=organization_b_id, name="Organization B"),
-            DepartmentRecord(
-                id=department_b_id,
-                organization_id=organization_b_id,
-                name="Department B",
-            ),
         ]
+    )
+    session.flush()
+    session.add(
+        DepartmentRecord(
+            id=department_b_id,
+            organization_id=organization_b_id,
+            name="Department B",
+        )
     )
     session.flush()
 
