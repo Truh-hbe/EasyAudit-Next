@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from easyaudit_next.infrastructure.database import Base
 from easyaudit_next.platform.persistence import models as _platform_models  # noqa: F401
 from easyaudit_next.platform.settings import get_settings
+from easyaudit_next.review_core.persistence import models as _review_core_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
