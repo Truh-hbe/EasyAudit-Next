@@ -1,7 +1,7 @@
 import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import Engine, create_engine, func, inspect, select
@@ -203,11 +203,11 @@ def test_case_creation_rolls_back_case_and_lead_when_activity_insert_fails(
     organization_id, creator_id, _ = _seed_process_review(postgres_engine)
     title = f"Atomic rollback {uuid4()}"
 
-    with Session(postgres_engine) as session:
-        creator = SqlAlchemyUserRepository(session).get(creator_id)
-        assert creator is not None
-        repository = _RejectCreatedActivityRepository(session)
-        with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError):
+        with Session(postgres_engine) as session, session.begin():
+            creator = SqlAlchemyUserRepository(session).get(creator_id)
+            assert creator is not None
+            repository = _RejectCreatedActivityRepository(session)
             _service(session, repository).create_case(
                 creator,
                 ScenarioKey("process_review"),
@@ -216,7 +216,6 @@ def test_case_creation_rolls_back_case_and_lead_when_activity_insert_fails(
                 {"area_code": "ASSY", "review_type": "routine"},
                 occurred_at=NOW,
             )
-        session.rollback()
 
     with Session(postgres_engine) as verification:
         case_count = verification.scalar(
