@@ -475,5 +475,5 @@ def list_admin_scenario_versions(
             version=publication.version,
             published_at=publication.published_at,
         )
-        for publication in repository.list_versions(scenario.id)
+        for publication in repository.list_versions(identity.user.organization_id, scenario.id)
     ]
