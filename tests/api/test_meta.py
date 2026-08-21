@@ -36,5 +36,5 @@ def test_openapi_contract_has_stable_operation_ids() -> None:
         schema["paths"]["/api/v1/admin/scenarios/{key}/versions"]["get"]["operationId"]
         == "listAdminScenarioVersions"
     )
-    assert "/api/v1/review-cases" not in schema["paths"]
+    assert schema["paths"]["/api/v1/review-cases"]["post"]["operationId"] == "createReviewCase"
     assert "/api/v1/findings" not in schema["paths"]
