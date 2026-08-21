@@ -5,6 +5,9 @@ from easyaudit_next.api.contracts import DomainModelResponse, HealthResponse
 api_router = APIRouter()
 
 CORE_CONCEPTS = (
+    "Organization",
+    "Department",
+    "User",
     "Scenario",
     "ReviewPlan",
     "ReviewCase",
@@ -25,7 +28,7 @@ CORE_CONCEPTS = (
     tags=["system"],
 )
 def get_health() -> HealthResponse:
-    return HealthResponse(status="ok", stage="M0.1")
+    return HealthResponse(status="ok", stage="M1.1")
 
 
 @api_router.get(
@@ -36,8 +39,8 @@ def get_health() -> HealthResponse:
 )
 def get_domain_model() -> DomainModelResponse:
     return DomainModelResponse(
-        stage="M0.1",
+        stage="M1.1",
         concepts=CORE_CONCEPTS,
         backend="Python/FastAPI",
-        next="M1 Identity & Organization and first domain migration",
+        next="M1.2 Authentication & Platform Authorization",
     )

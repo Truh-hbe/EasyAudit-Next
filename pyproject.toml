@@ -31,6 +31,7 @@ packages = ["src/easyaudit_next"]
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+markers = ["postgresql: requires a migrated PostgreSQL database"]
 
 [tool.ruff]
 target-version = "py312"
