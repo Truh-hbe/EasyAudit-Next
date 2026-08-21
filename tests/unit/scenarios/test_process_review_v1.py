@@ -1,48 +1,134 @@
 from pathlib import Path
 from unittest import TestCase
 
+from easyaudit_next.composition import build_scenario_registry
 from easyaudit_next.review_core.domain.models import (
     ActionItemLifecycle,
-    AssignmentRole,
     FindingLifecycle,
     ReviewCaseLifecycle,
     ScenarioKey,
     ScenarioVersion,
     SubmissionPurpose,
 )
+from easyaudit_next.review_core.domain.planning_policy import (
+    CORE_REVIEW_PLANNING_AUTHORIZATION,
+    PlanningAuthorizationContext,
+    ReviewPlanningPermission,
+)
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemTransitionContext,
+    ActorKind,
     AuthorizationContext,
     FindingTransitionContext,
+    PermissionSource,
     ReviewCaseTransitionContext,
+    RoleGrant,
+    RoleSpecification,
+    SubmissionDecisionError,
+    SubmissionRequest,
     WorkflowTransitionError,
 )
-from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
 from easyaudit_next.scenarios.process_review import (
     PROCESS_REVIEW_V1,
     ProcessReviewPermission,
-    register_process_review_v1,
+    ProcessReviewSubmissionAction,
 )
 
 
+def _role_spec(
+    specs: tuple[RoleSpecification, ...],
+    key: str,
+) -> RoleSpecification:
+    return next(spec for spec in specs if spec.key == key)
+
+
+def _direct_user_grant(role_key: str) -> RoleGrant:
+    return RoleGrant(
+        role_key=role_key,
+        actor_kind=ActorKind.USER,
+        source=PermissionSource.DIRECT,
+    )
+
+
 class ProcessReviewV1Test(TestCase):
-    def test_registration_exposes_exact_versioned_capabilities(self) -> None:
-        registry = ScenarioRegistry()
+    def test_composition_root_registers_exact_versioned_policy(self) -> None:
+        registry = build_scenario_registry()
 
-        registered = register_process_review_v1(registry)
-
-        self.assertIs(registered, PROCESS_REVIEW_V1)
         self.assertIs(
             registry.get(ScenarioKey("process_review"), ScenarioVersion(1)),
             PROCESS_REVIEW_V1,
         )
-        self.assertEqual(
-            ("lead", "auditor", "reviewer", "observer"),
-            PROCESS_REVIEW_V1.case_role_keys,
+
+    def test_review_plan_creation_is_core_owned_and_requires_active_org_user(self) -> None:
+        policy = CORE_REVIEW_PLANNING_AUTHORIZATION
+
+        self.assertTrue(
+            policy.allows(
+                ReviewPlanningPermission.CREATE_REVIEW_PLAN,
+                PlanningAuthorizationContext(is_active_organization_user=True),
+            )
         )
+        self.assertFalse(
+            policy.allows(
+                ReviewPlanningPermission.CREATE_REVIEW_PLAN,
+                PlanningAuthorizationContext(is_active_organization_user=False),
+            )
+        )
+
+    def test_case_creation_is_scenario_owned_and_creator_becomes_lead_atomically(self) -> None:
+        authorization = PROCESS_REVIEW_V1.authorization
+        decision = PROCESS_REVIEW_V1.case_creation.decision()
+
+        self.assertTrue(
+            authorization.allows(
+                ProcessReviewPermission.CREATE_CASE,
+                AuthorizationContext(is_active_organization_user=True),
+            )
+        )
+        self.assertFalse(
+            authorization.allows(
+                ProcessReviewPermission.CREATE_CASE,
+                AuthorizationContext(is_active_organization_user=False),
+            )
+        )
+        self.assertEqual(ProcessReviewPermission.CREATE_CASE, decision.required_permission)
+        self.assertIs(decision.initial_lifecycle, ReviewCaseLifecycle.DRAFT)
+        self.assertEqual(("lead",), decision.creator_role_keys)
+        self.assertEqual("review_case.created", decision.activity_event_type)
+        self.assertTrue(decision.requires_atomic_membership)
+
+    def test_role_specs_freeze_actor_types_and_permission_sources(self) -> None:
+        responsible = _role_spec(
+            PROCESS_REVIEW_V1.finding_participant_role_specs,
+            "responsible_department",
+        )
+        owner = _role_spec(PROCESS_REVIEW_V1.finding_participant_role_specs, "owner")
+        collaborator = _role_spec(
+            PROCESS_REVIEW_V1.finding_participant_role_specs,
+            "collaborator",
+        )
+        primary_action = _role_spec(
+            PROCESS_REVIEW_V1.action_assignee_role_specs,
+            "primary",
+        )
+
+        self.assertEqual(frozenset({ActorKind.DEPARTMENT}), responsible.allowed_actor_kinds)
         self.assertEqual(
-            ("responsible_department", "owner", "collaborator"),
-            PROCESS_REVIEW_V1.finding_participant_role_keys,
+            frozenset({PermissionSource.DEPARTMENT_MEMBERSHIP}),
+            responsible.permission_sources,
+        )
+        for spec in (owner, collaborator, primary_action):
+            self.assertEqual(frozenset({ActorKind.USER}), spec.allowed_actor_kinds)
+            self.assertEqual(frozenset({PermissionSource.DIRECT}), spec.permission_sources)
+
+        self.assertFalse(
+            primary_action.accepts_grant(
+                RoleGrant(
+                    role_key="primary",
+                    actor_kind=ActorKind.DEPARTMENT,
+                    source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                )
+            )
         )
 
     def test_case_workflow_distinguishes_fieldwork_from_closure(self) -> None:
@@ -68,7 +154,11 @@ class ProcessReviewV1Test(TestCase):
         workflow = PROCESS_REVIEW_V1.case_workflow
 
         with self.assertRaisesRegex(WorkflowTransitionError, "requires a reason"):
-            workflow.transition(ReviewCaseLifecycle.DRAFT, "cancel", ReviewCaseTransitionContext())
+            workflow.transition(
+                ReviewCaseLifecycle.DRAFT,
+                "cancel",
+                ReviewCaseTransitionContext(),
+            )
 
         cancelled = workflow.transition(
             ReviewCaseLifecycle.SCHEDULED,
@@ -190,54 +280,150 @@ class ProcessReviewV1Test(TestCase):
         )
         self.assertIn(
             "area_code must be a non-blank string",
-            PROCESS_REVIEW_V1.validate_case_input({"area_code": "", "review_type": "routine"}),
+            PROCESS_REVIEW_V1.validate_case_input(
+                {"area_code": "", "review_type": "routine"}
+            ),
         )
         self.assertIn(
             "project_category must be a non-blank string",
             PROCESS_REVIEW_V1.validate_finding_input({"issue_type": "process_control"}),
         )
 
-    def test_submission_policy_models_plan_completion_and_verification_rounds(self) -> None:
+    def test_submission_policy_returns_atomic_plan_and_completion_decisions(self) -> None:
         policy = PROCESS_REVIEW_V1.submission_policy
 
-        self.assertEqual(
-            (),
-            policy.validate_submission(
-                SubmissionPurpose.RECTIFICATION,
-                {"stage": "plan", "root_cause": "换线后未及时更新状态卡"},
-            ),
+        plan = policy.decide(
+            SubmissionRequest(
+                current_lifecycle=FindingLifecycle.RECTIFYING,
+                action=ProcessReviewSubmissionAction.SUBMIT_PLAN,
+                purpose=SubmissionPurpose.RECTIFICATION,
+                payload={"stage": "plan", "root_cause": "换线后未及时更新状态卡"},
+            )
         )
-        self.assertEqual(
-            (),
-            policy.validate_submission(
-                SubmissionPurpose.RECTIFICATION,
-                {"stage": "completion", "comment": "整改完成，请审核"},
-            ),
-        )
-        self.assertEqual(
-            (),
-            policy.validate_submission(
-                SubmissionPurpose.VERIFICATION,
-                {"result": "approved", "comment": "验收通过"},
-            ),
-        )
-        self.assertIn(
-            "comment must be a non-blank string",
-            policy.validate_submission(
-                SubmissionPurpose.VERIFICATION,
-                {"result": "rejected", "comment": ""},
-            ),
-        )
+        self.assertEqual(ProcessReviewPermission.SUBMIT_RECTIFICATION, plan.required_permission)
+        self.assertIs(plan.target_lifecycle, FindingLifecycle.RECTIFYING)
+        self.assertEqual("finding.rectification_plan_submitted", plan.activity_event_type)
+        self.assertTrue(plan.requires_atomic_write)
 
-    def test_authorization_separates_department_visibility_from_explicit_write_roles(self) -> None:
+        completion = policy.decide(
+            SubmissionRequest(
+                current_lifecycle=FindingLifecycle.RECTIFYING,
+                action=ProcessReviewSubmissionAction.SUBMIT_FOR_VERIFICATION,
+                purpose=SubmissionPurpose.RECTIFICATION,
+                payload={"stage": "completion", "comment": "整改完成，请审核"},
+                transition_context=FindingTransitionContext(
+                    non_cancelled_action_count=2,
+                    all_non_cancelled_actions_done=True,
+                ),
+            )
+        )
+        self.assertIs(completion.target_lifecycle, FindingLifecycle.VERIFYING)
+        self.assertEqual(
+            "finding.submitted_for_verification",
+            completion.activity_event_type,
+        )
+        self.assertTrue(completion.requires_atomic_write)
+
+    def test_submission_policy_rejects_lifecycle_action_and_payload_mismatches(self) -> None:
+        policy = PROCESS_REVIEW_V1.submission_policy
+
+        with self.assertRaisesRegex(SubmissionDecisionError, "only be submitted"):
+            policy.decide(
+                SubmissionRequest(
+                    current_lifecycle=FindingLifecycle.OPEN,
+                    action=ProcessReviewSubmissionAction.SUBMIT_PLAN,
+                    purpose=SubmissionPurpose.RECTIFICATION,
+                    payload={"stage": "plan", "root_cause": "原因"},
+                )
+            )
+
+        with self.assertRaisesRegex(SubmissionDecisionError, "stage 'plan'"):
+            policy.decide(
+                SubmissionRequest(
+                    current_lifecycle=FindingLifecycle.RECTIFYING,
+                    action=ProcessReviewSubmissionAction.SUBMIT_PLAN,
+                    purpose=SubmissionPurpose.RECTIFICATION,
+                    payload={"stage": "completion", "comment": "完成"},
+                )
+            )
+
+        with self.assertRaisesRegex(SubmissionDecisionError, "result 'approved'"):
+            policy.decide(
+                SubmissionRequest(
+                    current_lifecycle=FindingLifecycle.VERIFYING,
+                    action=ProcessReviewSubmissionAction.APPROVE,
+                    purpose=SubmissionPurpose.VERIFICATION,
+                    payload={"result": "rejected", "comment": "不通过"},
+                )
+            )
+
+        with self.assertRaisesRegex(WorkflowTransitionError, "at least one"):
+            policy.decide(
+                SubmissionRequest(
+                    current_lifecycle=FindingLifecycle.RECTIFYING,
+                    action=ProcessReviewSubmissionAction.SUBMIT_FOR_VERIFICATION,
+                    purpose=SubmissionPurpose.RECTIFICATION,
+                    payload={"stage": "completion", "comment": "完成"},
+                )
+            )
+
+    def test_submission_policy_binds_verification_result_to_workflow_action(self) -> None:
+        policy = PROCESS_REVIEW_V1.submission_policy
+
+        approved = policy.decide(
+            SubmissionRequest(
+                current_lifecycle=FindingLifecycle.VERIFYING,
+                action=ProcessReviewSubmissionAction.APPROVE,
+                purpose=SubmissionPurpose.VERIFICATION,
+                payload={"result": "approved", "comment": "验收通过"},
+            )
+        )
+        self.assertEqual(ProcessReviewPermission.VERIFY_FINDING, approved.required_permission)
+        self.assertIs(approved.target_lifecycle, FindingLifecycle.CLOSED)
+        self.assertEqual("finding.approved", approved.activity_event_type)
+
+        rejected = policy.decide(
+            SubmissionRequest(
+                current_lifecycle=FindingLifecycle.VERIFYING,
+                action=ProcessReviewSubmissionAction.REJECT,
+                purpose=SubmissionPurpose.VERIFICATION,
+                payload={"result": "rejected", "comment": "整改证据不足"},
+            )
+        )
+        self.assertIs(rejected.target_lifecycle, FindingLifecycle.RECTIFYING)
+        self.assertEqual("finding.rejected", rejected.activity_event_type)
+        self.assertTrue(rejected.requires_atomic_write)
+
+    def test_authorization_separates_department_visibility_from_direct_write_roles(self) -> None:
         policy = PROCESS_REVIEW_V1.authorization
         department_only = AuthorizationContext(
-            department_finding_role_keys=frozenset({"responsible_department"})
+            finding_role_grants=frozenset(
+                {
+                    RoleGrant(
+                        role_key="responsible_department",
+                        actor_kind=ActorKind.DEPARTMENT,
+                        source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                    )
+                }
+            )
         )
-        owner = AuthorizationContext(explicit_finding_role_keys=frozenset({"owner"}))
+        owner = AuthorizationContext(
+            finding_role_grants=frozenset({_direct_user_grant("owner")})
+        )
         collaborator = AuthorizationContext(
-            explicit_finding_role_keys=frozenset({"collaborator"}),
-            action_assignment_roles=frozenset({AssignmentRole.COLLABORATOR}),
+            finding_role_grants=frozenset({_direct_user_grant("collaborator")}),
+            action_role_grants=frozenset({_direct_user_grant("collaborator")}),
+        )
+        department_action = AuthorizationContext(
+            action_role_grants=frozenset(
+                {
+                    RoleGrant(
+                        role_key="primary",
+                        actor_kind=ActorKind.DEPARTMENT,
+                        source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                    )
+                }
+            )
         )
 
         self.assertTrue(policy.allows(ProcessReviewPermission.VIEW_CASE, department_only))
@@ -250,12 +436,21 @@ class ProcessReviewV1Test(TestCase):
         self.assertTrue(
             policy.allows(ProcessReviewPermission.UPDATE_ASSIGNED_ACTION, collaborator)
         )
+        self.assertFalse(
+            policy.allows(ProcessReviewPermission.UPDATE_ASSIGNED_ACTION, department_action)
+        )
 
     def test_authorization_uses_business_roles_not_platform_administrator_status(self) -> None:
         policy = PROCESS_REVIEW_V1.authorization
-        lead = AuthorizationContext(case_role_keys=frozenset({"lead"}))
-        reviewer = AuthorizationContext(case_role_keys=frozenset({"reviewer"}))
-        observer = AuthorizationContext(case_role_keys=frozenset({"observer"}))
+        lead = AuthorizationContext(
+            case_role_grants=frozenset({_direct_user_grant("lead")})
+        )
+        reviewer = AuthorizationContext(
+            case_role_grants=frozenset({_direct_user_grant("reviewer")})
+        )
+        observer = AuthorizationContext(
+            case_role_grants=frozenset({_direct_user_grant("observer")})
+        )
         no_business_relationship = AuthorizationContext()
 
         self.assertTrue(policy.allows(ProcessReviewPermission.TRANSITION_CASE, lead))
