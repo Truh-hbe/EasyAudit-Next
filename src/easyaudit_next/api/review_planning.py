@@ -1,3 +1,4 @@
+from typing import NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -17,8 +18,13 @@ from easyaudit_next.composition import build_review_planning_service
 from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
 from easyaudit_next.review_core.domain.ids import ReviewCaseId, ReviewPlanId
-from easyaudit_next.review_core.domain.models import CaseMember, ReviewCase, ReviewPlan, ScenarioKey, ScenarioVersion
-from easyaudit_next.review_core.domain.scenario_capabilities import WorkflowTransitionError
+from easyaudit_next.review_core.domain.models import (
+    CaseMember,
+    ReviewCase,
+    ReviewPlan,
+    ScenarioKey,
+    ScenarioVersion,
+)
 
 review_planning_router = APIRouter(prefix="/api/v1", tags=["review-planning"])
 
@@ -63,7 +69,7 @@ def _member_response(member: CaseMember) -> CaseMemberResponse:
     )
 
 
-def _raise_api_error(exc: Exception) -> None:
+def _raise_api_error(exc: Exception) -> NoReturn:
     if isinstance(exc, ReviewAuthorizationError):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if isinstance(exc, LookupError):
@@ -92,7 +98,6 @@ def create_review_plan(
         )
     except (ReviewAuthorizationError, ValueError, IntegrityError) as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
     return _plan_response(plan)
 
 
@@ -110,7 +115,6 @@ def list_review_plans(
         return [_plan_response(item) for item in service.list_plans(identity.user)]
     except ReviewAuthorizationError as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
 
 
 @review_planning_router.get(
@@ -128,7 +132,6 @@ def get_review_plan(
         return _plan_response(service.get_plan(identity.user, ReviewPlanId(plan_id)))
     except (ReviewAuthorizationError, LookupError) as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
 
 
 @review_planning_router.post(
@@ -156,7 +159,6 @@ def create_review_case(
         )
     except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
     return _case_response(review_case)
 
 
@@ -174,7 +176,6 @@ def list_review_cases(
         return [_case_response(item) for item in service.list_cases(identity.user)]
     except ReviewAuthorizationError as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
 
 
 @review_planning_router.get(
@@ -192,7 +193,6 @@ def get_review_case(
         return _case_response(service.get_case(identity.user, ReviewCaseId(case_id)))
     except (ReviewAuthorizationError, LookupError) as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
 
 
 @review_planning_router.get(
@@ -210,7 +210,6 @@ def list_review_case_members(
         members = service.list_case_members(identity.user, ReviewCaseId(case_id))
     except (ReviewAuthorizationError, LookupError) as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
     return [_member_response(member) for member in members]
 
 
@@ -236,7 +235,6 @@ def add_review_case_member(
         )
     except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
     return _member_response(member)
 
 
@@ -259,13 +257,6 @@ def transition_review_case(
             payload.action,
             reason=payload.reason,
         )
-    except (
-        ReviewAuthorizationError,
-        LookupError,
-        WorkflowTransitionError,
-        ValueError,
-        IntegrityError,
-    ) as exc:
+    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
         _raise_api_error(exc)
-        raise AssertionError("unreachable")
     return _case_response(review_case)
