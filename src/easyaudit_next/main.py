@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from easyaudit_next.api.review_planning import review_planning_router
 from easyaudit_next.api.router import api_router
 
 
@@ -10,6 +11,7 @@ def create_app() -> FastAPI:
         description="Scenario-extensible review and remediation platform",
     )
     app.include_router(api_router)
+    app.include_router(review_planning_router)
     return app
 
 
