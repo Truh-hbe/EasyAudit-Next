@@ -41,7 +41,9 @@ def main() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for module in imported_modules(tree):
             if module.startswith(FORBIDDEN_IMPORT_PREFIXES):
-                raise SystemExit(f"Domain layer imports infrastructure/application: {path}: {module}")
+                raise SystemExit(
+                    f"Domain layer imports infrastructure/application: {path}: {module}"
+                )
 
     print(
         "Architecture check passed "
