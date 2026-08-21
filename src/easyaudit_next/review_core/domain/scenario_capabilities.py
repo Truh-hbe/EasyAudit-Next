@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Protocol
+
+from easyaudit_next.review_core.domain.models import (
+    ActionItemLifecycle,
+    FindingLifecycle,
+    ReviewCaseLifecycle,
+    SubmissionPurpose,
+)
+
+
+class WorkflowTransitionError(ValueError):
+    """Raised when a Scenario workflow rejects a requested lifecycle transition."""
+
+
+class SubmissionDecisionError(ValueError):
+    """Raised when a formal Submission request is not valid for the Scenario."""
+
+
+class ActorKind(StrEnum):
+    USER = "user"
+    DEPARTMENT = "department"
+
+
+class PermissionSource(StrEnum):
+    DIRECT = "direct"
+    DEPARTMENT_MEMBERSHIP = "department_membership"
+
+
+@dataclass(frozen=True, slots=True)
+class RoleSpecification:
+    """Versioned rules for one Scenario relationship role."""
+
+    key: str
+    allowed_actor_kinds: frozenset[ActorKind]
+    permission_sources: frozenset[PermissionSource]
+
+    def __post_init__(self) -> None:
+        if not self.key.strip() or self.key != self.key.strip():
+            raise ValueError("Role key must not be blank or padded")
+        if not self.allowed_actor_kinds:
+            raise ValueError("RoleSpecification requires at least one actor kind")
+        if not self.permission_sources:
+            raise ValueError("RoleSpecification requires at least one permission source")
+
+    def accepts_grant(self, grant: RoleGrant) -> bool:
+        return (
+            grant.role_key == self.key
+            and grant.actor_kind in self.allowed_actor_kinds
+            and grant.source in self.permission_sources
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RoleGrant:
+    """One relationship through which the current user derives Scenario authority."""
+
+    role_key: str
+    actor_kind: ActorKind
+    source: PermissionSource
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewCaseTransitionContext:
+    reason: str | None = None
+    all_findings_terminal: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class FindingTransitionContext:
+    reason: str | None = None
+    non_cancelled_action_count: int = 0
+    all_non_cancelled_actions_done: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ActionItemTransitionContext:
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizationContext:
+    """Business facts for one user; platform administrator status is deliberately absent."""
+
+    is_active_organization_user: bool = False
+    case_role_grants: frozenset[RoleGrant] = field(default_factory=frozenset)
+    finding_role_grants: frozenset[RoleGrant] = field(default_factory=frozenset)
+    action_role_grants: frozenset[RoleGrant] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True, slots=True)
+class CaseCreationDecision:
+    """Scenario-owned behavior that must be applied atomically when a Case is created."""
+
+    required_permission: str
+    initial_lifecycle: ReviewCaseLifecycle
+    creator_role_keys: tuple[str, ...]
+    activity_event_type: str
+    requires_atomic_membership: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class SubmissionRequest:
+    """Formal Finding submission plus the workflow facts needed to decide it."""
+
+    current_lifecycle: FindingLifecycle
+    action: str
+    purpose: SubmissionPurpose
+    payload: Mapping[str, object]
+    transition_context: FindingTransitionContext = field(
+        default_factory=FindingTransitionContext
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SubmissionDecision:
+    """One atomic Submission + Finding lifecycle + Activity write intent."""
+
+    required_permission: str
+    target_lifecycle: FindingLifecycle
+    activity_event_type: str
+    requires_atomic_write: bool = True
+
+
+class ReviewCaseWorkflowPolicy(Protocol):
+    def transition(
+        self,
+        lifecycle: ReviewCaseLifecycle,
+        action: str,
+        context: ReviewCaseTransitionContext,
+    ) -> ReviewCaseLifecycle: ...
+
+
+class FindingWorkflowPolicy(Protocol):
+    def transition(
+        self,
+        lifecycle: FindingLifecycle,
+        action: str,
+        context: FindingTransitionContext,
+    ) -> FindingLifecycle: ...
+
+
+class ActionItemWorkflowPolicy(Protocol):
+    def transition(
+        self,
+        lifecycle: ActionItemLifecycle,
+        action: str,
+        context: ActionItemTransitionContext,
+    ) -> ActionItemLifecycle: ...
+
+
+class ReviewCaseCreationPolicy(Protocol):
+    def decision(self) -> CaseCreationDecision: ...
+
+
+class AuthorizationPolicy(Protocol):
+    def allows(self, permission: str, context: AuthorizationContext) -> bool: ...
+
+
+class SubmissionPolicy(Protocol):
+    def decide(self, request: SubmissionRequest) -> SubmissionDecision: ...

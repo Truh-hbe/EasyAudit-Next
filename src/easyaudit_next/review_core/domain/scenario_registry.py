@@ -3,14 +3,51 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from easyaudit_next.review_core.domain.models import Scenario, ScenarioKey, ScenarioVersion
+from easyaudit_next.review_core.domain.scenario_capabilities import (
+    ActionItemWorkflowPolicy,
+    AuthorizationPolicy,
+    FindingWorkflowPolicy,
+    ReviewCaseCreationPolicy,
+    ReviewCaseWorkflowPolicy,
+    RoleSpecification,
+    SubmissionPolicy,
+)
 
 
 class ScenarioPolicy(Protocol):
-    scenario: Scenario
-    case_role_keys: tuple[str, ...]
-    finding_participant_role_keys: tuple[str, ...]
+    @property
+    def scenario(self) -> Scenario: ...
+
+    @property
+    def case_role_specs(self) -> tuple[RoleSpecification, ...]: ...
+
+    @property
+    def finding_participant_role_specs(self) -> tuple[RoleSpecification, ...]: ...
+
+    @property
+    def action_assignee_role_specs(self) -> tuple[RoleSpecification, ...]: ...
+
+    @property
+    def case_creation(self) -> ReviewCaseCreationPolicy: ...
+
+    @property
+    def case_workflow(self) -> ReviewCaseWorkflowPolicy: ...
+
+    @property
+    def finding_workflow(self) -> FindingWorkflowPolicy: ...
+
+    @property
+    def action_workflow(self) -> ActionItemWorkflowPolicy: ...
+
+    @property
+    def authorization(self) -> AuthorizationPolicy: ...
+
+    @property
+    def submission_policy(self) -> SubmissionPolicy: ...
 
     def validate_case_input(self, payload: Mapping[str, object]) -> tuple[str, ...]: ...
+
+    def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[str, ...]: ...
 
 
 @dataclass(slots=True)
