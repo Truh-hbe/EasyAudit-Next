@@ -21,6 +21,10 @@ class FakeOrganizationRepository:
     def get(self, organization_id: OrganizationId) -> Organization | None:
         return self.items.get(organization_id)
 
+    def lock_for_update(self, organization_id: OrganizationId) -> None:
+        if organization_id not in self.items:
+            raise LookupError(f"Organization {organization_id} does not exist")
+
     def list_all(self) -> tuple[Organization, ...]:
         return tuple(self.items.values())
 

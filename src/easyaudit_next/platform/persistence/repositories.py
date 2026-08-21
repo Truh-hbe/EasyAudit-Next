@@ -50,6 +50,15 @@ class SqlAlchemyOrganizationRepository:
             is_active=record.is_active,
         )
 
+    def lock_for_update(self, organization_id: OrganizationId) -> None:
+        locked_id = self._session.scalar(
+            select(OrganizationRecord.id)
+            .where(OrganizationRecord.id == organization_id)
+            .with_for_update()
+        )
+        if locked_id is None:
+            raise LookupError(f"Organization {organization_id} does not exist")
+
     def list_all(self) -> tuple[Organization, ...]:
         records = self._session.scalars(
             select(OrganizationRecord).order_by(OrganizationRecord.name)

@@ -17,6 +17,7 @@ from easyaudit_next.platform.domain.models import (
 from easyaudit_next.platform.domain.repositories import (
     DepartmentRepository,
     LocalCredentialRepository,
+    OrganizationRepository,
     PlatformAuditRepository,
     UserRepository,
 )
@@ -34,6 +35,7 @@ class PlatformAdministrationService:
     def __init__(
         self,
         identity: IdentityOrganizationService,
+        organizations: OrganizationRepository,
         departments: DepartmentRepository,
         users: UserRepository,
         credentials: LocalCredentialRepository,
@@ -43,6 +45,7 @@ class PlatformAdministrationService:
         password_hash: PasswordHash | None = None,
     ) -> None:
         self._identity = identity
+        self._organizations = organizations
         self._departments = departments
         self._users = users
         self._credentials = credentials
@@ -123,11 +126,10 @@ class PlatformAdministrationService:
             and user.platform_role is PlatformRole.SYSTEM_ADMIN
             and (not updated.is_active or updated.platform_role is not PlatformRole.SYSTEM_ADMIN)
         )
-        if (
-            removes_active_admin
-            and self._users.count_active_system_admins(user.organization_id) <= 1
-        ):
-            raise LastSystemAdminError("Cannot disable or demote the last active system_admin")
+        if removes_active_admin:
+            self._organizations.lock_for_update(user.organization_id)
+            if self._users.count_active_system_admins(user.organization_id) <= 1:
+                raise LastSystemAdminError("Cannot disable or demote the last active system_admin")
         if set_primary_department and primary_department_id is not None:
             department = self._departments.get(primary_department_id)
             if department is None or department.organization_id != actor.organization_id:

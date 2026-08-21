@@ -11,7 +11,7 @@ HTTP writes remain M2 scope.
 | Login/session | Random browser token, SHA-256 database hash, server-side expiry and revocation. |
 | Cookie | Fixed `__Host-easyaudit_session`, `Secure`, `HttpOnly`, `SameSite=Strict`, path `/`. |
 | Disable user | Authentication checks User activity on every request and admin disable revokes existing sessions. |
-| Platform permission | Only `system_admin` reaches admin dependencies; the final active admin cannot be disabled or demoted. |
+| Platform permission | Only `system_admin` reaches admin dependencies; an Organization row lock serializes admin removal so the final active admin cannot be disabled or demoted, including under concurrent transactions. |
 | Department | Composite Organization foreign key plus service and trigger cycle rejection. |
 | Scenario | Organization catalog and immutable exact versions; Policy behavior stays in code. |
 | Review Core | UUID records, typed strong foreign keys, and organization-aware composite relations. |

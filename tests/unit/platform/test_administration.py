@@ -41,6 +41,7 @@ def test_last_active_system_admin_cannot_be_demoted_or_disabled(
     service = PlatformAdministrationService(
         Mock(),
         Mock(),
+        Mock(),
         users,
         Mock(),
         Mock(),
@@ -61,12 +62,14 @@ def test_last_active_system_admin_cannot_be_demoted_or_disabled(
 
 def test_admin_can_be_demoted_when_another_active_admin_exists() -> None:
     actor = system_admin()
+    organizations = Mock()
     users = Mock()
     users.get.return_value = actor
     users.count_active_system_admins.return_value = 2
     audit = Mock()
     service = PlatformAdministrationService(
         Mock(),
+        organizations,
         Mock(),
         users,
         Mock(),
@@ -82,5 +85,6 @@ def test_admin_can_be_demoted_when_another_active_admin_exists() -> None:
     )
 
     assert updated.platform_role is PlatformRole.ORDINARY_USER
+    organizations.lock_for_update.assert_called_once_with(actor.organization_id)
     users.update.assert_called_once_with(updated)
     audit.add.assert_called_once()

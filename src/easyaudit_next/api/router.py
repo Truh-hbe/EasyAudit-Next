@@ -127,6 +127,7 @@ def _administration_service(session: Session) -> PlatformAdministrationService:
     )
     return PlatformAdministrationService(
         IdentityOrganizationService(organizations, departments, users),
+        organizations,
         departments,
         users,
         credentials,
