@@ -2,7 +2,7 @@
 
 EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Core 为中心，通过版本化 Scenario 承载“过程审查”等不同业务场景；旧版 `EasyAudit_Project` 继续独立维护，本仓库不承担其内部架构兼容义务。
 
-## M0.1 Bootstrap
+## M1.1 Platform Foundation
 
 M0.1 保留 M0 的领域成果，并完成合并前架构校正：
 
@@ -15,6 +15,17 @@ M0.1 保留 M0 的领域成果，并完成合并前架构校正：
 - 提供 FastAPI、运行时 OpenAPI、SQLAlchemy、Alembic、PostgreSQL Compose、容器、测试与 CI 底座。
 
 M0.1 不包含账号登录、首批正式领域表、完整状态流转或业务页面，也不引入万能低代码、BPMN、数据库动态状态机、复杂督办实体、知识图谱或无来源 AI 总结。
+
+M1.1 在该基线上新增：
+
+- Organization、Department tree 与 User 的纯 Python Platform Domain。
+- 应用侧 UUIDv4 身份、同步 Application Service 与 SQLAlchemy repository。
+- `organizations`、`departments`、`users` 第一份正式 PostgreSQL migration。
+- 组织感知的组合外键，数据库直接拒绝跨 Organization 的部门父级与用户主部门。
+- 部门循环的服务层校验与 PostgreSQL trigger 保护。
+- PostgreSQL migration、repository round-trip 和完整性集成测试。
+
+M1.1 仍不包含登录、Credential、Session、管理 API、Scenario 持久化或 Review Core 持久化。
 
 ## 快速开始
 
@@ -65,7 +76,7 @@ docs/                                   领域模型、路线与 ADR
 tests/                                  API 与领域边界测试
 ```
 
-下一阶段是 M1：Identity & Organization、首批 PostgreSQL 领域表、应用服务与正式授权策略。
+下一阶段是 M1.2：Authentication & Platform Authorization。
 
 ## License
 

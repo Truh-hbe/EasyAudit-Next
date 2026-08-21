@@ -1,9 +1,10 @@
 import re
 from typing import NewType
 
-OrganizationId = NewType("OrganizationId", str)
-DepartmentId = NewType("DepartmentId", str)
-UserId = NewType("UserId", str)
+from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
+
+__all__ = ["DepartmentId", "OrganizationId", "UserId"]
+
 ReviewPlanId = NewType("ReviewPlanId", str)
 ReviewCaseId = NewType("ReviewCaseId", str)
 FindingId = NewType("FindingId", str)

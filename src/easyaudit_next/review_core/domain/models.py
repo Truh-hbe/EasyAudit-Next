@@ -4,6 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import NewType
 
+from easyaudit_next.platform.domain.models import Department, Organization, PlatformRole, User
 from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
     ActivityId,
@@ -16,35 +17,10 @@ from easyaudit_next.review_core.domain.ids import (
     UserId,
 )
 
+__all__ = ["Department", "Organization", "PlatformRole", "User"]
+
 ScenarioKey = NewType("ScenarioKey", str)
 ScenarioVersion = NewType("ScenarioVersion", int)
-
-
-class PlatformRole(StrEnum):
-    SYSTEM_ADMIN = "system_admin"
-    ORDINARY_USER = "ordinary_user"
-
-
-@dataclass(frozen=True, slots=True)
-class Organization:
-    id: OrganizationId
-    name: str
-
-
-@dataclass(frozen=True, slots=True)
-class Department:
-    id: DepartmentId
-    organization_id: OrganizationId
-    name: str
-
-
-@dataclass(frozen=True, slots=True)
-class User:
-    id: UserId
-    organization_id: OrganizationId
-    department_id: DepartmentId | None
-    display_name: str
-    platform_role: PlatformRole
 
 
 @dataclass(frozen=True, slots=True)

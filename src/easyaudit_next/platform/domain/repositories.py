@@ -1,0 +1,26 @@
+from typing import Protocol
+
+from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
+from easyaudit_next.platform.domain.models import Department, Organization, User
+
+
+class OrganizationRepository(Protocol):
+    def add(self, organization: Organization) -> None: ...
+
+    def get(self, organization_id: OrganizationId) -> Organization | None: ...
+
+
+class DepartmentRepository(Protocol):
+    def add(self, department: Department) -> None: ...
+
+    def get(self, department_id: DepartmentId) -> Department | None: ...
+
+    def update(self, department: Department) -> None: ...
+
+
+class UserRepository(Protocol):
+    def add(self, user: User) -> None: ...
+
+    def get(self, user_id: UserId) -> User | None: ...
+
+    def update(self, user: User) -> None: ...
