@@ -3,7 +3,7 @@ from uuid import uuid4
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from easyaudit_next.platform.domain.ids import OrganizationId, UserId
+from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
 from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
     ActivityId,
@@ -28,6 +28,7 @@ from easyaudit_next.review_core.domain.models import (
     FindingLifecycle,
     FindingParticipant,
     FindingSeverity,
+    ParticipantActor,
     ReviewCase,
     ReviewCaseActivitySubject,
     ReviewCaseLifecycle,
@@ -380,6 +381,7 @@ class SqlAlchemyReviewCoreRepository:
                 lifecycle=finding.lifecycle.value,
                 raised_by=finding.raised_by,
                 raised_at=finding.raised_at,
+                scenario_data_json=dict(finding.scenario_data),
             )
         )
         self._session.flush()
@@ -397,6 +399,25 @@ class SqlAlchemyReviewCoreRepository:
         )
         if record is None:
             return None
+        return self._finding_to_domain(record)
+
+    def list_findings(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> tuple[Finding, ...]:
+        records = self._session.scalars(
+            select(FindingRecord)
+            .where(
+                FindingRecord.organization_id == organization_id,
+                FindingRecord.case_id == case_id,
+            )
+            .order_by(FindingRecord.raised_at.desc(), FindingRecord.id)
+        )
+        return tuple(self._finding_to_domain(record) for record in records)
+
+    @staticmethod
+    def _finding_to_domain(record: FindingRecord) -> Finding:
         return Finding(
             id=FindingId(record.id),
             organization_id=OrganizationId(record.organization_id),
@@ -407,7 +428,28 @@ class SqlAlchemyReviewCoreRepository:
             lifecycle=FindingLifecycle(record.lifecycle),
             raised_by=UserId(record.raised_by),
             raised_at=record.raised_at,
+            scenario_data=record.scenario_data_json,
         )
+
+    def update_finding(
+        self,
+        finding: Finding,
+        *,
+        expected_lifecycle: FindingLifecycle,
+    ) -> bool:
+        matched_id: object | None = self._session.scalar(
+            update(FindingRecord)
+            .where(
+                FindingRecord.organization_id == finding.organization_id,
+                FindingRecord.id == finding.id,
+                FindingRecord.lifecycle == expected_lifecycle.value,
+            )
+            .values(lifecycle=finding.lifecycle.value)
+            .returning(FindingRecord.id)
+            .execution_options(synchronize_session="fetch")
+        )
+        self._session.flush()
+        return matched_id is not None
 
     def add_finding_participant(self, participant: FindingParticipant) -> None:
         user_id = participant.actor.user_id if isinstance(participant.actor, UserActor) else None
@@ -428,6 +470,44 @@ class SqlAlchemyReviewCoreRepository:
             )
         )
         self._session.flush()
+
+    def list_finding_participants(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> tuple[FindingParticipant, ...]:
+        records = self._session.scalars(
+            select(FindingParticipantRecord)
+            .where(
+                FindingParticipantRecord.organization_id == organization_id,
+                FindingParticipantRecord.finding_id == finding_id,
+            )
+            .order_by(
+                FindingParticipantRecord.assigned_at,
+                FindingParticipantRecord.role_key,
+                FindingParticipantRecord.id,
+            )
+        )
+        return tuple(self._finding_participant_to_domain(record) for record in records)
+
+    @staticmethod
+    def _finding_participant_to_domain(
+        record: FindingParticipantRecord,
+    ) -> FindingParticipant:
+        actor: ParticipantActor
+        if record.user_id is not None:
+            actor = UserActor(UserId(record.user_id))
+        else:
+            if record.department_id is None:
+                raise ValueError("FindingParticipant has no actor")
+            actor = DepartmentActor(DepartmentId(record.department_id))
+        return FindingParticipant(
+            organization_id=OrganizationId(record.organization_id),
+            finding_id=FindingId(record.finding_id),
+            actor=actor,
+            role_key=record.role_key,
+            assigned_at=record.assigned_at,
+        )
 
     def add_action_item(self, action_item: ActionItem) -> None:
         self._session.add(

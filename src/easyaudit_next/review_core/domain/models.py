@@ -135,6 +135,7 @@ class Finding:
     lifecycle: FindingLifecycle
     raised_by: UserId
     raised_at: datetime
+    scenario_data: Mapping[str, object] = field(default_factory=dict)
 
 
 class ActionItemLifecycle(StrEnum):

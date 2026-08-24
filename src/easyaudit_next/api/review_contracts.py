@@ -3,7 +3,12 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from easyaudit_next.review_core.domain.models import ReviewCaseLifecycle
+from easyaudit_next.review_core.domain.models import (
+    FindingLifecycle,
+    FindingSeverity,
+    ReviewCaseLifecycle,
+)
+from easyaudit_next.review_core.domain.scenario_capabilities import ActorKind
 
 
 class ReviewPlanCreateRequest(BaseModel):
@@ -68,5 +73,48 @@ class CaseMemberResponse(BaseModel):
 
 
 class ReviewCaseTransitionRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=100)
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
+class FindingCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=20_000)
+    severity: FindingSeverity
+    scenario_data: dict[str, object] = Field(default_factory=dict)
+
+
+class FindingResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    organization_id: UUID
+    case_id: UUID
+    title: str
+    description: str | None
+    severity: FindingSeverity
+    lifecycle: FindingLifecycle
+    scenario_data: dict[str, object]
+    raised_by: UUID
+    raised_at: datetime
+
+
+class FindingParticipantCreateRequest(BaseModel):
+    actor_kind: ActorKind
+    actor_id: UUID
+    role_key: str = Field(min_length=1, max_length=100)
+
+
+class FindingParticipantResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    finding_id: UUID
+    actor_kind: ActorKind
+    actor_id: UUID
+    role_key: str
+    assigned_at: datetime
+
+
+class FindingTransitionRequest(BaseModel):
     action: str = Field(min_length=1, max_length=100)
     reason: str | None = Field(default=None, max_length=2_000)

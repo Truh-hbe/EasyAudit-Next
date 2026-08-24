@@ -16,6 +16,7 @@ from easyaudit_next.review_core.domain.models import (
     Activity,
     CaseMember,
     Finding,
+    FindingLifecycle,
     FindingParticipant,
     ReviewCase,
     ReviewCaseLifecycle,
@@ -101,7 +102,26 @@ class ReviewCoreRepository(Protocol):
         finding_id: FindingId,
     ) -> Finding | None: ...
 
+    def list_findings(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> tuple[Finding, ...]: ...
+
+    def update_finding(
+        self,
+        finding: Finding,
+        *,
+        expected_lifecycle: FindingLifecycle,
+    ) -> bool: ...
+
     def add_finding_participant(self, participant: FindingParticipant) -> None: ...
+
+    def list_finding_participants(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> tuple[FindingParticipant, ...]: ...
 
     def add_action_item(self, action_item: ActionItem) -> None: ...
 

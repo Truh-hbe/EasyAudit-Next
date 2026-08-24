@@ -1,0 +1,67 @@
+from easyaudit_next.platform.domain.models import User
+from easyaudit_next.review_core.domain.ids import FindingId, ReviewCaseId
+from easyaudit_next.review_core.domain.models import UserActor
+from easyaudit_next.review_core.domain.repositories import ReviewCoreRepository
+from easyaudit_next.review_core.domain.scenario_capabilities import (
+    ActorKind,
+    AuthorizationContext,
+    PermissionSource,
+    RoleGrant,
+)
+
+
+def build_authorization_context(
+    repository: ReviewCoreRepository,
+    actor: User,
+    case_id: ReviewCaseId,
+    *,
+    finding_id: FindingId | None = None,
+) -> AuthorizationContext:
+    """Derive Scenario grants from persisted relationships, never platform roles."""
+
+    case_grants = frozenset(
+        RoleGrant(
+            role_key=member.role_key,
+            actor_kind=ActorKind.USER,
+            source=PermissionSource.DIRECT,
+        )
+        for member in repository.list_case_members(actor.organization_id, case_id)
+        if member.user_id == actor.id
+    )
+
+    finding_ids = (
+        (finding_id,)
+        if finding_id is not None
+        else tuple(
+            finding.id for finding in repository.list_findings(actor.organization_id, case_id)
+        )
+    )
+    finding_grants: set[RoleGrant] = set()
+    for current_finding_id in finding_ids:
+        for participant in repository.list_finding_participants(
+            actor.organization_id,
+            current_finding_id,
+        ):
+            if isinstance(participant.actor, UserActor):
+                if participant.actor.user_id == actor.id:
+                    finding_grants.add(
+                        RoleGrant(
+                            role_key=participant.role_key,
+                            actor_kind=ActorKind.USER,
+                            source=PermissionSource.DIRECT,
+                        )
+                    )
+            elif participant.actor.department_id == actor.primary_department_id:
+                finding_grants.add(
+                    RoleGrant(
+                        role_key=participant.role_key,
+                        actor_kind=ActorKind.DEPARTMENT,
+                        source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                    )
+                )
+
+    return AuthorizationContext(
+        is_active_organization_user=actor.is_active,
+        case_role_grants=case_grants,
+        finding_role_grants=frozenset(finding_grants),
+    )

@@ -55,6 +55,41 @@
     },
     "/api/v1/admin/scenarios/{key}/versions": {
       "get": {"operationId": "listAdminScenarioVersions", "tags": ["admin"]}
+    },
+    "/api/v1/review-plans": {
+      "get": {"operationId": "listReviewPlans", "tags": ["review-planning"]},
+      "post": {"operationId": "createReviewPlan", "tags": ["review-planning"]}
+    },
+    "/api/v1/review-plans/{plan_id}": {
+      "get": {"operationId": "getReviewPlan", "tags": ["review-planning"]}
+    },
+    "/api/v1/review-cases": {
+      "get": {"operationId": "listReviewCases", "tags": ["review-planning"]},
+      "post": {"operationId": "createReviewCase", "tags": ["review-planning"]}
+    },
+    "/api/v1/review-cases/{case_id}": {
+      "get": {"operationId": "getReviewCase", "tags": ["review-planning"]}
+    },
+    "/api/v1/review-cases/{case_id}/members": {
+      "get": {"operationId": "listReviewCaseMembers", "tags": ["review-planning"]},
+      "post": {"operationId": "addReviewCaseMember", "tags": ["review-planning"]}
+    },
+    "/api/v1/review-cases/{case_id}/transitions": {
+      "post": {"operationId": "transitionReviewCase", "tags": ["review-planning"]}
+    },
+    "/api/v1/review-cases/{case_id}/findings": {
+      "get": {"operationId": "listFindings", "tags": ["review-findings"]},
+      "post": {"operationId": "createFinding", "tags": ["review-findings"]}
+    },
+    "/api/v1/findings/{finding_id}": {
+      "get": {"operationId": "getFinding", "tags": ["review-findings"]}
+    },
+    "/api/v1/findings/{finding_id}/participants": {
+      "get": {"operationId": "listFindingParticipants", "tags": ["review-findings"]},
+      "post": {"operationId": "addFindingParticipant", "tags": ["review-findings"]}
+    },
+    "/api/v1/findings/{finding_id}/transitions": {
+      "post": {"operationId": "transitionFinding", "tags": ["review-findings"]}
     }
   }
 }
