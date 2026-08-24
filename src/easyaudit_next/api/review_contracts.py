@@ -1,15 +1,15 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from easyaudit_next.review_core.domain.models import ReviewCaseLifecycle
 
 
 class ReviewPlanCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    planned_start_at: datetime | None = None
-    planned_end_at: datetime | None = None
+    planned_start_at: AwareDatetime | None = None
+    planned_end_at: AwareDatetime | None = None
 
 
 class ReviewPlanResponse(BaseModel):
@@ -28,8 +28,8 @@ class ReviewCaseCreateRequest(BaseModel):
     scenario_key: str = Field(min_length=1, max_length=100)
     scenario_version: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=300)
-    planned_start_at: datetime | None = None
-    planned_end_at: datetime | None = None
+    planned_start_at: AwareDatetime | None = None
+    planned_end_at: AwareDatetime | None = None
     scenario_data: dict[str, object] = Field(default_factory=dict)
 
 

@@ -10,6 +10,8 @@ M2.2 is ready for architecture review only when all of the following are true:
 - Review Core reads require organization scope; UUID alone is not an authorization boundary.
 - CaseMember roles are validated against Scenario RoleSpecification.
 - Case transitions are invoked through the Scenario workflow and append Activity.
+- Case transition persistence uses lifecycle compare-and-swap so one old state advances only once.
+- ReviewPlan and ReviewCase planning timestamps require explicit UTC offsets at API and service layers.
 - `lifecycle` is not writable through ordinary create/update payloads; state changes use transitions.
 - local users with `must_change_password=true` cannot enter Review business APIs.
 - Review Core contains no direct import from `easyaudit_next.scenarios`.

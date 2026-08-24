@@ -1,6 +1,8 @@
 import os
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -13,11 +15,17 @@ from easyaudit_next.platform.domain.ids import OrganizationId, UserId
 from easyaudit_next.platform.persistence.models import OrganizationRecord, UserRecord
 from easyaudit_next.platform.persistence.repositories import SqlAlchemyUserRepository
 from easyaudit_next.review_core.application.review_planning import (
+    ConcurrentCaseTransitionError,
     ReviewAuthorizationError,
     ReviewPlanningService,
 )
 from easyaudit_next.review_core.domain.ids import ReviewCaseId
-from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersion
+from easyaudit_next.review_core.domain.models import (
+    ReviewCase,
+    ReviewCaseLifecycle,
+    ScenarioKey,
+    ScenarioVersion,
+)
 from easyaudit_next.review_core.persistence.models import (
     ActivityRecord,
     CaseMemberRecord,
@@ -323,3 +331,81 @@ def test_lead_can_drive_m2_2_case_through_fieldwork_completion(
         assert awaiting.lifecycle.value == "awaiting_closure"
         assert awaiting.fieldwork_completed_at == NOW
         session.commit()
+
+
+class _SynchronizedTransitionRepository(SqlAlchemyReviewCoreRepository):
+    def __init__(self, session: Session, barrier: Barrier) -> None:
+        super().__init__(session)
+        self._barrier = barrier
+
+    def update_case(
+        self,
+        review_case: ReviewCase,
+        *,
+        expected_lifecycle: ReviewCaseLifecycle,
+    ) -> bool:
+        self._barrier.wait(timeout=10)
+        return super().update_case(
+            review_case,
+            expected_lifecycle=expected_lifecycle,
+        )
+
+
+def test_concurrent_case_transition_allows_only_one_old_state_to_advance(
+    postgres_engine: Engine,
+) -> None:
+    organization_id, creator_id, _ = _seed_process_review(postgres_engine)
+    with Session(postgres_engine, expire_on_commit=False) as setup:
+        creator = SqlAlchemyUserRepository(setup).get(creator_id)
+        assert creator is not None
+        review_case = _service(setup).create_case(
+            creator,
+            ScenarioKey("process_review"),
+            ScenarioVersion(1),
+            f"Concurrent transition {uuid4()}",
+            {"area_code": "ASSY", "review_type": "routine"},
+            occurred_at=NOW,
+        )
+        case_id = review_case.id
+        setup.commit()
+
+    barrier = Barrier(2)
+
+    def attempt_schedule() -> str:
+        with Session(postgres_engine, expire_on_commit=False) as session:
+            creator = SqlAlchemyUserRepository(session).get(creator_id)
+            assert creator is not None
+            repository = _SynchronizedTransitionRepository(session, barrier)
+            service = _service(session, repository)
+            try:
+                service.transition_case(creator, case_id, "schedule", occurred_at=NOW)
+                session.commit()
+            except ConcurrentCaseTransitionError:
+                session.rollback()
+                return "conflict"
+            return "success"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(attempt_schedule) for _ in range(2)]
+        outcomes = sorted(future.result() for future in futures)
+
+    assert outcomes == ["conflict", "success"]
+    with Session(postgres_engine) as verification:
+        persisted = verification.scalar(
+            select(ReviewCaseRecord).where(
+                ReviewCaseRecord.organization_id == organization_id,
+                ReviewCaseRecord.id == case_id,
+            )
+        )
+        transition_count = verification.scalar(
+            select(func.count())
+            .select_from(ActivityRecord)
+            .where(
+                ActivityRecord.organization_id == organization_id,
+                ActivityRecord.review_case_id == case_id,
+                ActivityRecord.event_type == "review_case.transitioned",
+            )
+        )
+        assert persisted is not None
+        assert persisted.lifecycle == "scheduled"
+        assert transition_count == 1

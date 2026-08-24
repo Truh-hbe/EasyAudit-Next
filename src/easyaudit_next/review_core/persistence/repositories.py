@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
@@ -303,24 +303,33 @@ class SqlAlchemyReviewCoreRepository:
             scenario_data=record.scenario_data_json,
         )
 
-    def update_case(self, review_case: ReviewCase) -> None:
-        record = self._session.scalar(
-            select(ReviewCaseRecord).where(
+    def update_case(
+        self,
+        review_case: ReviewCase,
+        *,
+        expected_lifecycle: ReviewCaseLifecycle,
+    ) -> bool:
+        result = self._session.execute(
+            update(ReviewCaseRecord)
+            .where(
                 ReviewCaseRecord.organization_id == review_case.organization_id,
                 ReviewCaseRecord.id == review_case.id,
+                ReviewCaseRecord.lifecycle == expected_lifecycle.value,
             )
+            .values(
+                title=review_case.title,
+                lifecycle=review_case.lifecycle.value,
+                planned_start_at=review_case.planned_start_at,
+                planned_end_at=review_case.planned_end_at,
+                started_at=review_case.started_at,
+                fieldwork_completed_at=review_case.fieldwork_completed_at,
+                closed_at=review_case.closed_at,
+                scenario_data_json=dict(review_case.scenario_data),
+            )
+            .execution_options(synchronize_session="fetch")
         )
-        if record is None:
-            raise LookupError(f"ReviewCase {review_case.id} does not exist")
-        record.title = review_case.title
-        record.lifecycle = review_case.lifecycle.value
-        record.planned_start_at = review_case.planned_start_at
-        record.planned_end_at = review_case.planned_end_at
-        record.started_at = review_case.started_at
-        record.fieldwork_completed_at = review_case.fieldwork_completed_at
-        record.closed_at = review_case.closed_at
-        record.scenario_data_json = dict(review_case.scenario_data)
         self._session.flush()
+        return result.rowcount == 1
 
     def add_case_member(self, member: CaseMember) -> None:
         self._session.add(

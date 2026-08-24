@@ -47,6 +47,10 @@ class ReviewAuthorizationError(PermissionError):
     """The authenticated user lacks the required business relationship."""
 
 
+class ConcurrentCaseTransitionError(RuntimeError):
+    """The persisted lifecycle no longer matches the workflow input."""
+
+
 class ReviewPlanningService:
     """M2.2 use cases for ReviewPlan, ReviewCase, CaseMember, and Case transitions."""
 
@@ -273,7 +277,11 @@ class ReviewPlanningService:
             ),
             closed_at=(now if target is ReviewCaseLifecycle.CLOSED else review_case.closed_at),
         )
-        self._repository.update_case(updated)
+        if not self._repository.update_case(
+            updated,
+            expected_lifecycle=review_case.lifecycle,
+        ):
+            raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
         metadata: dict[str, object] = {
             "action": action,
             "from_lifecycle": review_case.lifecycle.value,
@@ -368,5 +376,9 @@ class ReviewPlanningService:
 
     @staticmethod
     def _validate_dates(start: datetime | None, end: datetime | None) -> None:
+        if start is not None and start.utcoffset() is None:
+            raise ValueError("planned_start_at must include UTC offset")
+        if end is not None and end.utcoffset() is None:
+            raise ValueError("planned_end_at must include UTC offset")
         if start is not None and end is not None and end < start:
             raise ValueError("planned_end_at must be greater than or equal to planned_start_at")

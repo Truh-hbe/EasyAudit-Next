@@ -19,6 +19,7 @@ from easyaudit_next.review_core.domain.ids import (
 from easyaudit_next.review_core.domain.models import (
     CaseMember,
     ReviewCase,
+    ReviewCaseLifecycle,
     ReviewPlan,
     ScenarioDefinition,
     ScenarioKey,
@@ -68,8 +69,17 @@ class InMemoryRepository:
             if review_case.organization_id == organization_id
         )
 
-    def update_case(self, review_case: ReviewCase) -> None:
+    def update_case(
+        self,
+        review_case: ReviewCase,
+        *,
+        expected_lifecycle: ReviewCaseLifecycle,
+    ) -> bool:
+        current = self.cases.get(review_case.id)
+        if current is None or current.lifecycle is not expected_lifecycle:
+            return False
         self.cases[review_case.id] = review_case
+        return True
 
     def add_case_member(self, member: CaseMember) -> None:
         self.members.append(member)
@@ -191,4 +201,45 @@ def test_inactive_user_cannot_create_plan_or_case() -> None:
             ScenarioVersion(1),
             "Case",
             {"area_code": "ASSY", "review_type": "routine"},
+        )
+
+
+def test_application_rejects_naive_plan_start_before_comparing_dates() -> None:
+    organization_id = OrganizationId(uuid4())
+    actor = _user(organization_id)
+    service = ReviewPlanningService(
+        InMemoryRepository(),  # type: ignore[arg-type]
+        Catalog(organization_id),  # type: ignore[arg-type]
+        Users(actor),  # type: ignore[arg-type]
+        build_scenario_registry(),
+    )
+
+    with pytest.raises(ValueError, match="planned_start_at must include UTC offset"):
+        service.create_plan(
+            actor,
+            "Plan",
+            planned_start_at=datetime(2026, 8, 25, 9, 0),
+            planned_end_at=datetime(2026, 8, 26, 9, 0, tzinfo=UTC),
+        )
+
+
+def test_application_rejects_naive_case_end_before_comparing_dates() -> None:
+    organization_id = OrganizationId(uuid4())
+    actor = _user(organization_id)
+    service = ReviewPlanningService(
+        InMemoryRepository(),  # type: ignore[arg-type]
+        Catalog(organization_id),  # type: ignore[arg-type]
+        Users(actor),  # type: ignore[arg-type]
+        build_scenario_registry(),
+    )
+
+    with pytest.raises(ValueError, match="planned_end_at must include UTC offset"):
+        service.create_case(
+            actor,
+            ScenarioKey("process_review"),
+            ScenarioVersion(1),
+            "Case",
+            {"area_code": "ASSY", "review_type": "routine"},
+            planned_start_at=datetime(2026, 8, 25, 9, 0, tzinfo=UTC),
+            planned_end_at=datetime(2026, 8, 26, 9, 0),
         )

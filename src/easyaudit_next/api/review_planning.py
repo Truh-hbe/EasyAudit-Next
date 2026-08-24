@@ -16,7 +16,10 @@ from easyaudit_next.api.review_contracts import (
 )
 from easyaudit_next.composition import build_review_planning_service
 from easyaudit_next.platform.domain.ids import UserId
-from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
+from easyaudit_next.review_core.application.review_planning import (
+    ConcurrentCaseTransitionError,
+    ReviewAuthorizationError,
+)
 from easyaudit_next.review_core.domain.ids import ReviewCaseId, ReviewPlanId
 from easyaudit_next.review_core.domain.models import (
     CaseMember,
@@ -257,6 +260,12 @@ def transition_review_case(
             payload.action,
             reason=payload.reason,
         )
-    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+    except (
+        ConcurrentCaseTransitionError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _case_response(review_case)
