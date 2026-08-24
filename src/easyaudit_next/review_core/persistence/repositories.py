@@ -309,7 +309,7 @@ class SqlAlchemyReviewCoreRepository:
         *,
         expected_lifecycle: ReviewCaseLifecycle,
     ) -> bool:
-        result = self._session.execute(
+        matched_id: object | None = self._session.scalar(
             update(ReviewCaseRecord)
             .where(
                 ReviewCaseRecord.organization_id == review_case.organization_id,
@@ -326,10 +326,11 @@ class SqlAlchemyReviewCoreRepository:
                 closed_at=review_case.closed_at,
                 scenario_data_json=dict(review_case.scenario_data),
             )
+            .returning(ReviewCaseRecord.id)
             .execution_options(synchronize_session="fetch")
         )
         self._session.flush()
-        return result.rowcount == 1
+        return matched_id is not None
 
     def add_case_member(self, member: CaseMember) -> None:
         self._session.add(
