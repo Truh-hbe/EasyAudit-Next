@@ -35,14 +35,17 @@ class FakeScenarioCatalogRepository:
     def __init__(self) -> None:
         self.scenarios: dict[tuple[OrganizationId, ScenarioKey], ScenarioDefinition] = {}
         self.versions: dict[
-            tuple[ScenarioDefinitionId, ScenarioVersion], ScenarioVersionPublication
+            tuple[OrganizationId, ScenarioDefinitionId, ScenarioVersion],
+            ScenarioVersionPublication,
         ] = {}
 
     def add_scenario(self, scenario: ScenarioDefinition) -> None:
         self.scenarios[(scenario.organization_id, scenario.key)] = scenario
 
     def add_version(self, publication: ScenarioVersionPublication) -> None:
-        self.versions[(publication.scenario_id, publication.version)] = publication
+        self.versions[
+            (publication.organization_id, publication.scenario_id, publication.version)
+        ] = publication
 
     def get_by_key(
         self,
@@ -53,10 +56,11 @@ class FakeScenarioCatalogRepository:
 
     def get_version(
         self,
+        organization_id: OrganizationId,
         scenario_id: ScenarioDefinitionId,
         version: ScenarioVersion,
     ) -> ScenarioVersionPublication | None:
-        return self.versions.get((scenario_id, version))
+        return self.versions.get((organization_id, scenario_id, version))
 
     def list_for_organization(
         self, organization_id: OrganizationId
@@ -68,12 +72,14 @@ class FakeScenarioCatalogRepository:
         )
 
     def list_versions(
-        self, scenario_id: ScenarioDefinitionId
+        self,
+        organization_id: OrganizationId,
+        scenario_id: ScenarioDefinitionId,
     ) -> tuple[ScenarioVersionPublication, ...]:
         return tuple(
             publication
-            for (stored_scenario_id, _), publication in self.versions.items()
-            if stored_scenario_id == scenario_id
+            for (stored_org_id, stored_scenario_id, _), publication in self.versions.items()
+            if stored_org_id == organization_id and stored_scenario_id == scenario_id
         )
 
 
@@ -112,7 +118,7 @@ def test_publish_requires_exact_code_policy_and_preserves_versions() -> None:
     assert same_scenario == scenario
     assert v1.version == 1
     assert v2.version == 2
-    assert repository.get_version(scenario.id, ScenarioVersion(1)) == v1
+    assert repository.get_version(organization_id, scenario.id, ScenarioVersion(1)) == v1
 
     with pytest.raises(LookupError, match="process_review@3"):
         service.publish(

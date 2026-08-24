@@ -83,6 +83,22 @@ def get_current_identity(
 AuthenticatedIdentity = Annotated[CurrentIdentity, Depends(get_current_identity)]
 
 
+def require_business_identity(
+    identity: AuthenticatedIdentity,
+    session: DatabaseSession,
+) -> CurrentIdentity:
+    credential = SqlAlchemyLocalCredentialRepository(session).get_by_user_id(identity.user.id)
+    if credential is not None and credential.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password change required before business APIs",
+        )
+    return identity
+
+
+BusinessIdentity = Annotated[CurrentIdentity, Depends(require_business_identity)]
+
+
 def require_system_admin(
     identity: AuthenticatedIdentity,
 ) -> CurrentIdentity:

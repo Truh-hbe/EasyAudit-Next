@@ -101,6 +101,12 @@ class ReviewCase:
     lifecycle: ReviewCaseLifecycle
     created_by: UserId
     created_at: datetime
+    planned_start_at: datetime | None = None
+    planned_end_at: datetime | None = None
+    started_at: datetime | None = None
+    fieldwork_completed_at: datetime | None = None
+    closed_at: datetime | None = None
+    scenario_data: Mapping[str, object] = field(default_factory=dict)
 
 
 class FindingLifecycle(StrEnum):

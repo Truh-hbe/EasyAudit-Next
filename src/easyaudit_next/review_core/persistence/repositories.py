@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
@@ -97,34 +97,24 @@ class SqlAlchemyScenarioCatalogRepository:
         )
         if record is None:
             return None
-        return ScenarioDefinition(
-            id=ScenarioDefinitionId(record.id),
-            organization_id=OrganizationId(record.organization_id),
-            key=ScenarioKey(record.key),
-            name=record.name,
-            is_active=record.is_active,
-        )
+        return self._scenario_to_domain(record)
 
     def get_version(
         self,
+        organization_id: OrganizationId,
         scenario_id: ScenarioDefinitionId,
         version: ScenarioVersion,
     ) -> ScenarioVersionPublication | None:
         record = self._session.scalar(
             select(ScenarioVersionRecord).where(
+                ScenarioVersionRecord.organization_id == organization_id,
                 ScenarioVersionRecord.scenario_id == scenario_id,
                 ScenarioVersionRecord.version == version,
             )
         )
         if record is None:
             return None
-        return ScenarioVersionPublication(
-            id=ScenarioVersionId(record.id),
-            scenario_id=ScenarioDefinitionId(record.scenario_id),
-            organization_id=OrganizationId(record.organization_id),
-            version=ScenarioVersion(record.version),
-            published_at=record.published_at,
-        )
+        return self._version_to_domain(record)
 
     def list_for_organization(
         self, organization_id: OrganizationId
@@ -134,34 +124,41 @@ class SqlAlchemyScenarioCatalogRepository:
             .where(ScenarioRecord.organization_id == organization_id)
             .order_by(ScenarioRecord.key)
         )
-        return tuple(
-            ScenarioDefinition(
-                id=ScenarioDefinitionId(record.id),
-                organization_id=OrganizationId(record.organization_id),
-                key=ScenarioKey(record.key),
-                name=record.name,
-                is_active=record.is_active,
-            )
-            for record in records
-        )
+        return tuple(self._scenario_to_domain(record) for record in records)
 
     def list_versions(
-        self, scenario_id: ScenarioDefinitionId
+        self,
+        organization_id: OrganizationId,
+        scenario_id: ScenarioDefinitionId,
     ) -> tuple[ScenarioVersionPublication, ...]:
         records = self._session.scalars(
             select(ScenarioVersionRecord)
-            .where(ScenarioVersionRecord.scenario_id == scenario_id)
+            .where(
+                ScenarioVersionRecord.organization_id == organization_id,
+                ScenarioVersionRecord.scenario_id == scenario_id,
+            )
             .order_by(ScenarioVersionRecord.version)
         )
-        return tuple(
-            ScenarioVersionPublication(
-                id=ScenarioVersionId(record.id),
-                scenario_id=ScenarioDefinitionId(record.scenario_id),
-                organization_id=OrganizationId(record.organization_id),
-                version=ScenarioVersion(record.version),
-                published_at=record.published_at,
-            )
-            for record in records
+        return tuple(self._version_to_domain(record) for record in records)
+
+    @staticmethod
+    def _scenario_to_domain(record: ScenarioRecord) -> ScenarioDefinition:
+        return ScenarioDefinition(
+            id=ScenarioDefinitionId(record.id),
+            organization_id=OrganizationId(record.organization_id),
+            key=ScenarioKey(record.key),
+            name=record.name,
+            is_active=record.is_active,
+        )
+
+    @staticmethod
+    def _version_to_domain(record: ScenarioVersionRecord) -> ScenarioVersionPublication:
+        return ScenarioVersionPublication(
+            id=ScenarioVersionId(record.id),
+            scenario_id=ScenarioDefinitionId(record.scenario_id),
+            organization_id=OrganizationId(record.organization_id),
+            version=ScenarioVersion(record.version),
+            published_at=record.published_at,
         )
 
 
@@ -182,10 +179,29 @@ class SqlAlchemyReviewCoreRepository:
         )
         self._session.flush()
 
-    def get_plan(self, plan_id: ReviewPlanId) -> ReviewPlan | None:
-        record = self._session.get(ReviewPlanRecord, plan_id)
-        if record is None:
-            return None
+    def get_plan(
+        self,
+        organization_id: OrganizationId,
+        plan_id: ReviewPlanId,
+    ) -> ReviewPlan | None:
+        record = self._session.scalar(
+            select(ReviewPlanRecord).where(
+                ReviewPlanRecord.organization_id == organization_id,
+                ReviewPlanRecord.id == plan_id,
+            )
+        )
+        return self._plan_to_domain(record) if record is not None else None
+
+    def list_plans(self, organization_id: OrganizationId) -> tuple[ReviewPlan, ...]:
+        records = self._session.scalars(
+            select(ReviewPlanRecord)
+            .where(ReviewPlanRecord.organization_id == organization_id)
+            .order_by(ReviewPlanRecord.created_at.desc())
+        )
+        return tuple(self._plan_to_domain(record) for record in records)
+
+    @staticmethod
+    def _plan_to_domain(record: ReviewPlanRecord) -> ReviewPlan:
         return ReviewPlan(
             id=ReviewPlanId(record.id),
             organization_id=OrganizationId(record.organization_id),
@@ -201,6 +217,7 @@ class SqlAlchemyReviewCoreRepository:
             .join(ScenarioRecord, ScenarioRecord.id == ScenarioVersionRecord.scenario_id)
             .where(
                 ScenarioVersionRecord.organization_id == review_case.organization_id,
+                ScenarioRecord.organization_id == review_case.organization_id,
                 ScenarioRecord.key == review_case.scenario_key,
                 ScenarioVersionRecord.version == review_case.scenario_version,
             )
@@ -218,20 +235,54 @@ class SqlAlchemyReviewCoreRepository:
                 scenario_version_id=scenario_version_id,
                 title=review_case.title,
                 lifecycle=review_case.lifecycle.value,
+                planned_start_at=review_case.planned_start_at,
+                planned_end_at=review_case.planned_end_at,
+                started_at=review_case.started_at,
+                fieldwork_completed_at=review_case.fieldwork_completed_at,
+                closed_at=review_case.closed_at,
+                scenario_data_json=dict(review_case.scenario_data),
                 created_by=review_case.created_by,
                 created_at=review_case.created_at,
             )
         )
         self._session.flush()
 
-    def get_case(self, case_id: ReviewCaseId) -> ReviewCase | None:
-        record = self._session.get(ReviewCaseRecord, case_id)
-        if record is None:
-            return None
-        version = self._session.get(ScenarioVersionRecord, record.scenario_version_id)
+    def get_case(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> ReviewCase | None:
+        record = self._session.scalar(
+            select(ReviewCaseRecord).where(
+                ReviewCaseRecord.organization_id == organization_id,
+                ReviewCaseRecord.id == case_id,
+            )
+        )
+        return self._case_to_domain(record) if record is not None else None
+
+    def list_cases(self, organization_id: OrganizationId) -> tuple[ReviewCase, ...]:
+        records = self._session.scalars(
+            select(ReviewCaseRecord)
+            .where(ReviewCaseRecord.organization_id == organization_id)
+            .order_by(ReviewCaseRecord.created_at.desc())
+        )
+        return tuple(self._case_to_domain(record) for record in records)
+
+    def _case_to_domain(self, record: ReviewCaseRecord) -> ReviewCase:
+        version = self._session.scalar(
+            select(ScenarioVersionRecord).where(
+                ScenarioVersionRecord.organization_id == record.organization_id,
+                ScenarioVersionRecord.id == record.scenario_version_id,
+            )
+        )
         if version is None:
             raise LookupError("ReviewCase has no Scenario version")
-        scenario = self._session.get(ScenarioRecord, version.scenario_id)
+        scenario = self._session.scalar(
+            select(ScenarioRecord).where(
+                ScenarioRecord.organization_id == record.organization_id,
+                ScenarioRecord.id == version.scenario_id,
+            )
+        )
         if scenario is None:
             raise LookupError("ScenarioVersion has no Scenario")
         return ReviewCase(
@@ -244,7 +295,42 @@ class SqlAlchemyReviewCoreRepository:
             lifecycle=ReviewCaseLifecycle(record.lifecycle),
             created_by=UserId(record.created_by),
             created_at=record.created_at,
+            planned_start_at=record.planned_start_at,
+            planned_end_at=record.planned_end_at,
+            started_at=record.started_at,
+            fieldwork_completed_at=record.fieldwork_completed_at,
+            closed_at=record.closed_at,
+            scenario_data=record.scenario_data_json,
         )
+
+    def update_case(
+        self,
+        review_case: ReviewCase,
+        *,
+        expected_lifecycle: ReviewCaseLifecycle,
+    ) -> bool:
+        matched_id: object | None = self._session.scalar(
+            update(ReviewCaseRecord)
+            .where(
+                ReviewCaseRecord.organization_id == review_case.organization_id,
+                ReviewCaseRecord.id == review_case.id,
+                ReviewCaseRecord.lifecycle == expected_lifecycle.value,
+            )
+            .values(
+                title=review_case.title,
+                lifecycle=review_case.lifecycle.value,
+                planned_start_at=review_case.planned_start_at,
+                planned_end_at=review_case.planned_end_at,
+                started_at=review_case.started_at,
+                fieldwork_completed_at=review_case.fieldwork_completed_at,
+                closed_at=review_case.closed_at,
+                scenario_data_json=dict(review_case.scenario_data),
+            )
+            .returning(ReviewCaseRecord.id)
+            .execution_options(synchronize_session="fetch")
+        )
+        self._session.flush()
+        return matched_id is not None
 
     def add_case_member(self, member: CaseMember) -> None:
         self._session.add(
@@ -257,6 +343,30 @@ class SqlAlchemyReviewCoreRepository:
             )
         )
         self._session.flush()
+
+    def list_case_members(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> tuple[CaseMember, ...]:
+        records = self._session.scalars(
+            select(CaseMemberRecord)
+            .where(
+                CaseMemberRecord.organization_id == organization_id,
+                CaseMemberRecord.case_id == case_id,
+            )
+            .order_by(CaseMemberRecord.joined_at, CaseMemberRecord.role_key)
+        )
+        return tuple(
+            CaseMember(
+                organization_id=OrganizationId(record.organization_id),
+                case_id=ReviewCaseId(record.case_id),
+                user_id=UserId(record.user_id),
+                role_key=record.role_key,
+                joined_at=record.joined_at,
+            )
+            for record in records
+        )
 
     def add_finding(self, finding: Finding) -> None:
         self._session.add(
@@ -274,8 +384,17 @@ class SqlAlchemyReviewCoreRepository:
         )
         self._session.flush()
 
-    def get_finding(self, finding_id: FindingId) -> Finding | None:
-        record = self._session.get(FindingRecord, finding_id)
+    def get_finding(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> Finding | None:
+        record = self._session.scalar(
+            select(FindingRecord).where(
+                FindingRecord.organization_id == organization_id,
+                FindingRecord.id == finding_id,
+            )
+        )
         if record is None:
             return None
         return Finding(
@@ -323,8 +442,17 @@ class SqlAlchemyReviewCoreRepository:
         )
         self._session.flush()
 
-    def get_action_item(self, action_item_id: ActionItemId) -> ActionItem | None:
-        record = self._session.get(ActionItemRecord, action_item_id)
+    def get_action_item(
+        self,
+        organization_id: OrganizationId,
+        action_item_id: ActionItemId,
+    ) -> ActionItem | None:
+        record = self._session.scalar(
+            select(ActionItemRecord).where(
+                ActionItemRecord.organization_id == organization_id,
+                ActionItemRecord.id == action_item_id,
+            )
+        )
         if record is None:
             return None
         return ActionItem(
@@ -369,8 +497,17 @@ class SqlAlchemyReviewCoreRepository:
         )
         self._session.flush()
 
-    def get_submission(self, submission_id: SubmissionId) -> Submission | None:
-        record = self._session.get(SubmissionRecord, submission_id)
+    def get_submission(
+        self,
+        organization_id: OrganizationId,
+        submission_id: SubmissionId,
+    ) -> Submission | None:
+        record = self._session.scalar(
+            select(SubmissionRecord).where(
+                SubmissionRecord.organization_id == organization_id,
+                SubmissionRecord.id == submission_id,
+            )
+        )
         if record is None:
             return None
         return Submission(
@@ -412,8 +549,17 @@ class SqlAlchemyReviewCoreRepository:
         )
         self._session.flush()
 
-    def get_activity(self, activity_id: ActivityId) -> Activity | None:
-        record = self._session.get(ActivityRecord, activity_id)
+    def get_activity(
+        self,
+        organization_id: OrganizationId,
+        activity_id: ActivityId,
+    ) -> Activity | None:
+        record = self._session.scalar(
+            select(ActivityRecord).where(
+                ActivityRecord.organization_id == organization_id,
+                ActivityRecord.id == activity_id,
+            )
+        )
         if record is None:
             return None
         subject: ActivitySubject

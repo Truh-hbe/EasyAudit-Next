@@ -127,7 +127,13 @@ class ReviewCaseRecord(Base):
             "'awaiting_closure', 'closed', 'cancelled')",
             name="ck_review_cases_lifecycle",
         ),
+        CheckConstraint(
+            "planned_end_at IS NULL OR planned_start_at IS NULL "
+            "OR planned_end_at >= planned_start_at",
+            name="ck_review_cases_dates",
+        ),
         Index("ix_review_cases_organization_lifecycle", "organization_id", "lifecycle"),
+        Index("ix_review_cases_organization_planned_end", "organization_id", "planned_end_at"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
@@ -139,6 +145,14 @@ class ReviewCaseRecord(Base):
     scenario_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
     title: Mapped[str] = mapped_column(String(300))
     lifecycle: Mapped[str] = mapped_column(String(32))
+    planned_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    planned_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fieldwork_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scenario_data_json: Mapped[dict[str, object]] = mapped_column(
+        "scenario_data", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
     created_by: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

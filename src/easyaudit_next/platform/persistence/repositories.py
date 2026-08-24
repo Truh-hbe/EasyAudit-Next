@@ -219,8 +219,16 @@ class SqlAlchemyLocalCredentialRepository:
                 LocalCredentialRecord.login_name == login_name.strip().lower()
             )
         )
-        if record is None:
-            return None
+        return self._to_domain(record) if record is not None else None
+
+    def get_by_user_id(self, user_id: UserId) -> LocalCredential | None:
+        record = self._session.scalar(
+            select(LocalCredentialRecord).where(LocalCredentialRecord.user_id == user_id)
+        )
+        return self._to_domain(record) if record is not None else None
+
+    @staticmethod
+    def _to_domain(record: LocalCredentialRecord) -> LocalCredential:
         return LocalCredential(
             user_id=UserId(record.user_id),
             organization_id=OrganizationId(record.organization_id),

@@ -379,12 +379,12 @@ def test_repository_round_trips_core_entities_and_typed_actors(session: Session)
     repository.add_submission(submission)
     repository.add_activity(activity)
 
-    assert repository.get_plan(plan.id) == plan
-    assert repository.get_case(review_case.id) == review_case
-    assert repository.get_finding(finding.id) == finding
-    assert repository.get_action_item(action.id) == action
-    assert repository.get_submission(submission.id) == submission
-    assert repository.get_activity(activity.id) == activity
+    assert repository.get_plan(organization_id, plan.id) == plan
+    assert repository.get_case(organization_id, review_case.id) == review_case
+    assert repository.get_finding(organization_id, finding.id) == finding
+    assert repository.get_action_item(organization_id, action.id) == action
+    assert repository.get_submission(organization_id, submission.id) == submission
+    assert repository.get_activity(organization_id, activity.id) == activity
 
 
 def test_database_rejects_cross_organization_case_member(session: Session) -> None:
