@@ -26,10 +26,8 @@ from easyaudit_next.review_core.domain.models import (
     ActionItemLifecycle,
     Activity,
     AssignmentRole,
-    DepartmentActor,
     Evidence,
     Finding,
-    FindingLifecycle,
     ParticipantActor,
     ReviewCase,
     Submission,
@@ -417,7 +415,9 @@ class RectificationService:
             )
         )
         if not policy.authorization.allows(decision.required_permission, context):
-            raise ReviewAuthorizationError("Scenario permission required for rectification Submission")
+            raise ReviewAuthorizationError(
+                "Scenario permission required for rectification Submission"
+            )
 
         now = occurred_at or datetime.now(UTC)
         updated_finding = finding
