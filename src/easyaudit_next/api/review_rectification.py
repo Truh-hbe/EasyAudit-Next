@@ -155,7 +155,13 @@ def create_action_item(
             payload.title,
             due_at=payload.due_at,
         )
-    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+    except (
+        ConcurrentFindingTransitionError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _action_response(action_item)
 
@@ -221,7 +227,13 @@ def add_action_assignee(
             assignee_actor,
             payload.role,
         )
-    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+    except (
+        ConcurrentFindingTransitionError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _assignee_response(assignee)
 
@@ -265,6 +277,7 @@ def transition_action_item(
         )
     except (
         ConcurrentActionItemTransitionError,
+        ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
         LookupError,
         ValueError,
@@ -298,7 +311,13 @@ def register_action_evidence(
             content_type=payload.content_type,
             description=payload.description,
         )
-    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+    except (
+        ConcurrentFindingTransitionError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _evidence_response(evidence)
 
