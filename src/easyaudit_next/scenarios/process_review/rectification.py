@@ -109,7 +109,7 @@ class ProcessReviewRectificationAuthorizationPolicy(ProcessReviewAuthorizationPo
             return "owner" in finding_roles or bool(
                 action_roles.intersection({"primary", "collaborator"})
             )
-        return super().allows(permission, context)
+        return ProcessReviewAuthorizationPolicy.allows(self, permission, context)
 
 
 @dataclass(frozen=True, slots=True)
