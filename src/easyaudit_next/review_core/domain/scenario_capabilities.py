@@ -25,6 +25,10 @@ class FindingOperationError(ValueError):
     """Raised when Scenario-owned Finding operation invariants are not satisfied."""
 
 
+class ActionItemOperationError(ValueError):
+    """Raised when Scenario-owned ActionItem operation invariants are not satisfied."""
+
+
 class ActorKind(StrEnum):
     USER = "user"
     DEPARTMENT = "department"
@@ -94,6 +98,20 @@ class FindingOperationContext:
 
     def has_participant_role(self, role_key: str) -> bool:
         return role_key in self.participant_role_keys
+
+
+@dataclass(frozen=True, slots=True)
+class ActionItemOperationContext:
+    """Scenario-neutral facts needed to validate rectification operations."""
+
+    case_lifecycle: ReviewCaseLifecycle
+    finding_lifecycle: FindingLifecycle
+    current_action_lifecycle: ActionItemLifecycle | None = None
+    assignee_role_keys: frozenset[str] = field(default_factory=frozenset)
+    reason: str | None = None
+
+    def has_assignee_role(self, role_key: str) -> bool:
+        return role_key in self.assignee_role_keys
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +203,26 @@ class ActionItemWorkflowPolicy(Protocol):
         action: str,
         context: ActionItemTransitionContext,
     ) -> ActionItemLifecycle: ...
+
+
+class ActionItemOperationPolicy(Protocol):
+    def validate_create(self, context: ActionItemOperationContext) -> None: ...
+
+    def validate_assignee_management(
+        self,
+        context: ActionItemOperationContext,
+    ) -> None: ...
+
+    def validate_transition(
+        self,
+        action: str,
+        context: ActionItemOperationContext,
+    ) -> None: ...
+
+    def validate_evidence_registration(
+        self,
+        context: ActionItemOperationContext,
+    ) -> None: ...
 
 
 class ReviewCaseCreationPolicy(Protocol):
