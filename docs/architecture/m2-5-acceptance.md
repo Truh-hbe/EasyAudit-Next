@@ -88,15 +88,42 @@ close wins
 
 It is never legal to persist `Case=CLOSED + Finding=RECTIFYING`.
 
+### Finding create vs fieldwork cutover
+
+Finding creation also changes the Case-level all-Findings-terminal set. A caller that observed
+`Case=IN_PROGRESS` must not be able to insert a new `OPEN` Finding after fieldwork has already crossed
+to `AWAITING_CLOSURE` (and potentially onward to `CLOSED`).
+
+Both legal serializations are accepted:
+
+```text
+create wins Case guard
+→ OPEN Finding is persisted
+→ finish_fieldwork obtains Case guard afterward
+→ Case AWAITING_CLOSURE with the non-terminal Finding visible to future close
+```
+
+or:
+
+```text
+finish_fieldwork wins Case guard
+→ Case AWAITING_CLOSURE
+→ stale create obtains Case guard afterward
+→ create receives ReviewCase concurrency conflict and persists no Finding
+```
+
+A late Finding insert after the Case cutover is never legal.
+
 ## Shared Case guard and stale snapshots
 
 - M2.5 operations that can affect the all-Findings-terminal predicate use the same organization-scoped parent ReviewCase `FOR UPDATE` guard.
+- Finding creation uses that same Case guard before its decisive Case-lifecycle validation and insert.
 - M2.5 lock order is consistently `ReviewCase -> Finding -> Submission/Activity`.
 - No M2.5 path acquires a Finding lock and then requests the parent Case guard.
 - The locked Case is refreshed after lock wait.
 - The target Finding used by verification/reopen is refreshed after lock wait.
 - The complete Finding set used for closure is refreshed after lock wait.
-- SQLAlchemy identity-map state observed before waiting cannot determine post-lock verification or closure decisions.
+- SQLAlchemy identity-map state observed before waiting cannot determine post-lock creation, verification, or closure decisions.
 
 ## Error contract
 
