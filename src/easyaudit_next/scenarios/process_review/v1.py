@@ -529,7 +529,9 @@ class ProcessReviewSubmissionPolicy:
 
 
 @dataclass(frozen=True, slots=True)
-class ProcessReviewV1Policy:
+class ProcessReviewV1BasePolicy:
+    """Pre-rectification capabilities shared by the complete process_review@1 policy."""
+
     scenario: Scenario = field(
         default_factory=lambda: Scenario(
             key=ScenarioKey("process_review"),
@@ -561,6 +563,3 @@ class ProcessReviewV1Policy:
 
     def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[str, ...]:
         return _required_text_fields(payload, ("issue_type", "project_category"))
-
-
-PROCESS_REVIEW_V1 = ProcessReviewV1Policy()
