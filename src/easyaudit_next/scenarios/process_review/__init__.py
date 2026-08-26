@@ -1,17 +1,14 @@
 from easyaudit_next.scenarios.process_review.rectification import (
-    PROCESS_REVIEW_V1_RECTIFICATION,
+    PROCESS_REVIEW_V1,
     ProcessReviewActionOperations,
     ProcessReviewRectificationPermission,
-    ProcessReviewV1RectificationPolicy,
+    ProcessReviewV1Policy,
 )
 from easyaudit_next.scenarios.process_review.v1 import (
     ProcessReviewFindingOperations,
     ProcessReviewPermission,
     ProcessReviewSubmissionAction,
-    ProcessReviewV1Policy,
 )
-
-PROCESS_REVIEW_V1 = PROCESS_REVIEW_V1_RECTIFICATION
 
 __all__ = [
     "PROCESS_REVIEW_V1",
@@ -21,5 +18,4 @@ __all__ = [
     "ProcessReviewRectificationPermission",
     "ProcessReviewSubmissionAction",
     "ProcessReviewV1Policy",
-    "ProcessReviewV1RectificationPolicy",
 ]
