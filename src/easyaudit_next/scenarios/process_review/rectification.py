@@ -18,7 +18,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
 from easyaudit_next.scenarios.process_review.v1 import (
     ProcessReviewActionItemAction,
     ProcessReviewAuthorizationPolicy,
-    ProcessReviewV1Policy,
+    ProcessReviewV1BasePolicy,
 )
 
 
@@ -113,8 +113,8 @@ class ProcessReviewRectificationAuthorizationPolicy(ProcessReviewAuthorizationPo
 
 
 @dataclass(frozen=True, slots=True)
-class ProcessReviewV1RectificationPolicy(ProcessReviewV1Policy):
-    """Same immutable process_review@1 policy with the M2.4 capability surface realized."""
+class ProcessReviewV1Policy(ProcessReviewV1BasePolicy):
+    """The single complete immutable policy registered for process_review@1."""
 
     action_operations: ActionItemOperationPolicy = field(
         default_factory=ProcessReviewActionOperations
@@ -124,4 +124,4 @@ class ProcessReviewV1RectificationPolicy(ProcessReviewV1Policy):
     )
 
 
-PROCESS_REVIEW_V1_RECTIFICATION = ProcessReviewV1RectificationPolicy()
+PROCESS_REVIEW_V1 = ProcessReviewV1Policy()
