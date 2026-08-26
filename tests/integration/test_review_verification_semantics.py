@@ -245,7 +245,7 @@ def test_case_close_uses_real_terminal_aggregate(postgres_engine: Engine) -> Non
         lead = SqlAlchemyUserRepository(session).get(lead_id)
         assert lead is not None
         service = _planning_service(session, SqlAlchemyVerificationClosureRepository(session))
-        with pytest.raises(ValueError, match="terminal"):
+        with pytest.raises(ValueError, match="closed or voided"):
             service.transition_case(lead, case_id, "close", occurred_at=NOW)
         session.rollback()
 
