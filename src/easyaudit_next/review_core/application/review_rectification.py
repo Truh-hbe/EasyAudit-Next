@@ -221,6 +221,7 @@ class RectificationService:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
         if not policy.authorization.allows(CREATE_ACTION_PERMISSION, context):
             raise ReviewAuthorizationError("Finding owner role required to create ActionItem")
+        finding = self._lock_expected_finding(actor, finding)
         policy.action_operations.validate_create(
             self._action_operation_context(review_case, finding)
         )
@@ -281,6 +282,8 @@ class RectificationService:
         )
         if not policy.authorization.allows(MANAGE_ACTION_ASSIGNEES_PERMISSION, context):
             raise ReviewAuthorizationError("Finding owner role required to manage ActionAssignee")
+        finding = self._lock_expected_finding(actor, finding)
+        action_item = self._reload_action(actor, action_item.id, finding.id)
         policy.action_operations.validate_assignee_management(
             self._action_operation_context(review_case, finding, action_item)
         )
@@ -350,6 +353,7 @@ class RectificationService:
         )
         if not policy.authorization.allows(UPDATE_ASSIGNED_ACTION_PERMISSION, context):
             raise ReviewAuthorizationError("Action assignee role required to transition ActionItem")
+        finding = self._lock_expected_finding(actor, finding)
         operation_context = self._action_operation_context(
             review_case,
             finding,
@@ -414,6 +418,8 @@ class RectificationService:
             raise ReviewAuthorizationError(
                 "Finding owner or Action assignee role required to register Evidence"
             )
+        finding = self._lock_expected_finding(actor, finding)
+        action_item = self._reload_action(actor, action_item.id, finding.id)
         policy.action_operations.validate_evidence_registration(
             self._action_operation_context(review_case, finding, action_item)
         )
@@ -476,6 +482,9 @@ class RectificationService:
         occurred_at: datetime | None = None,
     ) -> tuple[Submission, Finding]:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
+        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
+            raise ReviewAuthorizationError("Finding is not visible to this user")
+        finding = self._lock_expected_finding(actor, finding)
         active_actions = tuple(
             action_item
             for action_item in self._repository.list_action_items(
@@ -608,6 +617,28 @@ class RectificationService:
             action_item_id=action_item.id,
         )
         return action_item, finding, review_case, policy, context
+
+    def _lock_expected_finding(self, actor: User, expected: Finding) -> Finding:
+        locked = self._repository.lock_finding_for_rectification(
+            actor.organization_id,
+            expected.id,
+        )
+        if locked is None:
+            raise LookupError("Finding not found")
+        if locked.lifecycle is not expected.lifecycle:
+            raise ConcurrentFindingTransitionError("Concurrent Finding transition")
+        return locked
+
+    def _reload_action(
+        self,
+        actor: User,
+        action_item_id: ActionItemId,
+        expected_finding_id: FindingId,
+    ) -> ActionItem:
+        action_item = self._repository.get_action_item(actor.organization_id, action_item_id)
+        if action_item is None or action_item.finding_id != expected_finding_id:
+            raise LookupError("ActionItem not found")
+        return action_item
 
     def _action_operation_context(
         self,
