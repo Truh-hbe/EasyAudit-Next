@@ -9,7 +9,20 @@ M2.3 is ready for architecture review only when CI proves:
 - participant User and Department targets are active and organization-local;
 - direct owner/collaborator and responsible-department membership grant visibility;
 - Department visibility does not grant Finding transition or participant-management authority;
-- `issue` and `void(reason)` use the Scenario workflow;
+- Review Core supplies Scenario-neutral Finding operation facts, including parent Case lifecycle,
+  current Finding lifecycle, and persisted participant role presence;
+- Process Review allows Finding creation only while the parent Case is `in_progress`;
+- `draft`, `scheduled`, `cancelled`, `awaiting_closure`, and `closed` Cases cannot create new
+  Findings;
+- an existing open Finding may be issued or voided only while its Case is `in_progress` or
+  `awaiting_closure`;
+- `issue` requires both `owner` and `responsible_department` relationships before the Finding can
+  enter `rectifying`;
+- ordinary participant management is frozen for terminal `closed` and `voided` Findings;
+- `issue` and `void(reason)` still use the Scenario workflow after operation invariants pass;
+- scenario/business validation failures return 422 while CAS concurrency conflicts remain 409;
+- PostgreSQL Finding fixtures advance the Case through `schedule` and `start` before creating a
+  Finding;
 - two concurrent transitions from the same old lifecycle yield one success, one conflict, and one
   transition Activity;
 - lifecycle cannot be supplied on create or changed by ordinary PATCH;
