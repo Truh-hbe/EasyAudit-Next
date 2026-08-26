@@ -48,6 +48,7 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
                 FindingRecord.id == finding_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return self._finding_to_domain(record) if record is not None else None
 
@@ -71,10 +72,12 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
         action_item_id: ActionItemId,
     ) -> ActionItem | None:
         record = self._session.scalar(
-            select(ActionItemRecord).where(
+            select(ActionItemRecord)
+            .where(
                 ActionItemRecord.organization_id == organization_id,
                 ActionItemRecord.id == action_item_id,
             )
+            .execution_options(populate_existing=True)
         )
         return self._action_to_domain(record) if record is not None else None
 
@@ -90,6 +93,7 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
                 ActionItemRecord.finding_id == finding_id,
             )
             .order_by(ActionItemRecord.due_at, ActionItemRecord.id)
+            .execution_options(populate_existing=True)
         )
         return tuple(self._action_to_domain(record) for record in records)
 
@@ -128,6 +132,7 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
                 ActionAssigneeRecord.action_item_id == action_item_id,
             )
             .order_by(ActionAssigneeRecord.assigned_at, ActionAssigneeRecord.role)
+            .execution_options(populate_existing=True)
         )
         return tuple(self._assignee_to_domain(record) for record in records)
 
