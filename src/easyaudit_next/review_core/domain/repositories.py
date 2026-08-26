@@ -134,6 +134,28 @@ class ReviewCoreRepository(Protocol):
         action_item_id: ActionItemId,
     ) -> ActionItem | None: ...
 
+    def add_action_assignee(self, assignee: ActionAssignee) -> None: ...
+
+    def add_submission(self, submission: Submission) -> None: ...
+
+    def get_submission(
+        self,
+        organization_id: OrganizationId,
+        submission_id: SubmissionId,
+    ) -> Submission | None: ...
+
+    def add_activity(self, activity: Activity) -> None: ...
+
+    def get_activity(
+        self,
+        organization_id: OrganizationId,
+        activity_id: ActivityId,
+    ) -> Activity | None: ...
+
+
+class RectificationRepository(ReviewCoreRepository, Protocol):
+    """Additional persistence capabilities required only by the M2.4 rectification slice."""
+
     def list_action_items(
         self,
         organization_id: OrganizationId,
@@ -146,8 +168,6 @@ class ReviewCoreRepository(Protocol):
         *,
         expected_lifecycle: ActionItemLifecycle,
     ) -> bool: ...
-
-    def add_action_assignee(self, assignee: ActionAssignee) -> None: ...
 
     def list_action_assignees(
         self,
@@ -169,24 +189,8 @@ class ReviewCoreRepository(Protocol):
         action_item_id: ActionItemId,
     ) -> tuple[Evidence, ...]: ...
 
-    def add_submission(self, submission: Submission) -> None: ...
-
-    def get_submission(
-        self,
-        organization_id: OrganizationId,
-        submission_id: SubmissionId,
-    ) -> Submission | None: ...
-
     def list_submissions(
         self,
         organization_id: OrganizationId,
         finding_id: FindingId,
     ) -> tuple[Submission, ...]: ...
-
-    def add_activity(self, activity: Activity) -> None: ...
-
-    def get_activity(
-        self,
-        organization_id: OrganizationId,
-        activity_id: ActivityId,
-    ) -> Activity | None: ...
