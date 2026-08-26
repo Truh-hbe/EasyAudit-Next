@@ -4,10 +4,10 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
     SqlAlchemyUserRepository,
 )
-from easyaudit_next.review_core.application.review_rectification import (
-    ActionAwareFindingLifecycleService,
-    RectificationService,
+from easyaudit_next.review_core.application.review_closure_findings import (
+    ClosureAwareFindingLifecycleService,
 )
+from easyaudit_next.review_core.application.review_rectification import RectificationService
 from easyaudit_next.review_core.application.review_verification import (
     ClosureAwareReviewPlanningService,
     VerificationClosureService,
@@ -44,11 +44,11 @@ def build_review_planning_service(session: Session) -> ClosureAwareReviewPlannin
     )
 
 
-def build_finding_lifecycle_service(session: Session) -> ActionAwareFindingLifecycleService:
-    """Wire generic Finding use cases with persisted M2.4 Action operation facts."""
+def build_finding_lifecycle_service(session: Session) -> ClosureAwareFindingLifecycleService:
+    """Wire Finding creation to the M2.5 Case-level aggregate guard."""
 
-    return ActionAwareFindingLifecycleService(
-        SqlAlchemyRectificationRepository(session),
+    return ClosureAwareFindingLifecycleService(
+        SqlAlchemyVerificationClosureRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyDepartmentRepository(session),
         build_scenario_registry(),
