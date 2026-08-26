@@ -23,6 +23,7 @@ from easyaudit_next.review_core.domain.repositories import ReviewCoreRepository
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActorKind,
     AuthorizationContext,
+    FindingOperationContext,
     FindingTransitionContext,
     PermissionSource,
     RoleGrant,
@@ -73,6 +74,9 @@ class FindingLifecycleService:
         )
         if not policy.authorization.allows(CREATE_FINDING_PERMISSION, context):
             raise ReviewAuthorizationError("lead or auditor role required to create Finding")
+        policy.finding_operations.validate_create(
+            FindingOperationContext(case_lifecycle=review_case.lifecycle)
+        )
         self._validate_title(title)
         errors = policy.validate_finding_input(scenario_data)
         if errors:
@@ -147,7 +151,7 @@ class FindingLifecycleService:
         *,
         occurred_at: datetime | None = None,
     ) -> FindingParticipant:
-        finding, _, policy, context = self._finding_context(actor, finding_id)
+        finding, review_case, policy, context = self._finding_context(actor, finding_id)
         if not policy.authorization.allows(
             MANAGE_FINDING_PARTICIPANTS_PERMISSION,
             context,
@@ -155,6 +159,9 @@ class FindingLifecycleService:
             raise ReviewAuthorizationError(
                 "lead or auditor role required to manage FindingParticipant"
             )
+        policy.finding_operations.validate_participant_management(
+            self._finding_operation_context(review_case, finding)
+        )
         grant = self._participant_grant(participant_actor, role_key)
         if not any(
             specification.accepts_grant(grant)
@@ -202,15 +209,27 @@ class FindingLifecycleService:
         reason: str | None = None,
         occurred_at: datetime | None = None,
     ) -> Finding:
-        finding, _, policy, context = self._finding_context(actor, finding_id)
+        finding, review_case, policy, context = self._finding_context(actor, finding_id)
         if not policy.authorization.allows(ISSUE_FINDING_PERMISSION, context):
             raise ReviewAuthorizationError("lead or auditor role required to transition Finding")
+        operation_context = self._finding_operation_context(
+            review_case,
+            finding,
+            reason=reason,
+        )
+        policy.finding_operations.validate_transition(action, operation_context)
         if finding.lifecycle is not FindingLifecycle.OPEN:
             raise ValueError("M2.3 only supports issuing or voiding an open Finding")
         target = policy.finding_workflow.transition(
             finding.lifecycle,
             action,
-            FindingTransitionContext(reason=reason),
+            FindingTransitionContext(
+                reason=reason,
+                non_cancelled_action_count=operation_context.non_cancelled_action_count,
+                all_non_cancelled_actions_done=(
+                    operation_context.all_non_cancelled_actions_done
+                ),
+            ),
         )
         if target not in {
             FindingLifecycle.RECTIFYING,
@@ -279,6 +298,31 @@ class FindingLifecycleService:
             finding_id=finding.id,
         )
         return finding, review_case, policy, context
+
+    def _finding_operation_context(
+        self,
+        review_case: ReviewCase,
+        finding: Finding | None = None,
+        *,
+        reason: str | None = None,
+    ) -> FindingOperationContext:
+        participant_role_keys = (
+            frozenset(
+                participant.role_key
+                for participant in self._repository.list_finding_participants(
+                    review_case.organization_id,
+                    finding.id,
+                )
+            )
+            if finding is not None
+            else frozenset()
+        )
+        return FindingOperationContext(
+            case_lifecycle=review_case.lifecycle,
+            current_finding_lifecycle=(finding.lifecycle if finding is not None else None),
+            participant_role_keys=participant_role_keys,
+            reason=reason,
+        )
 
     def _require_active_participant_actor(
         self,
