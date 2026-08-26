@@ -664,10 +664,9 @@ def test_completion_racing_done_action_reopen_cannot_break_verifying_invariant(
                 return "reopen_conflict"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        outcomes = {
-            executor.submit(attempt_completion).result(),
-            executor.submit(attempt_reopen).result(),
-        }
+        completion_future = executor.submit(attempt_completion)
+        reopen_future = executor.submit(attempt_reopen)
+        outcomes = {completion_future.result(), reopen_future.result()}
 
     assert outcomes in (
         {"completion_success", "reopen_conflict"},
