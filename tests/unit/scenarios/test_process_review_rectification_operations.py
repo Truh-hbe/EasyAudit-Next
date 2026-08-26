@@ -1,9 +1,12 @@
 import pytest
 
+from easyaudit_next.composition import build_scenario_registry
 from easyaudit_next.review_core.domain.models import (
     ActionItemLifecycle,
     FindingLifecycle,
     ReviewCaseLifecycle,
+    ScenarioKey,
+    ScenarioVersion,
 )
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemOperationContext,
@@ -17,6 +20,7 @@ from easyaudit_next.scenarios.process_review import (
     PROCESS_REVIEW_V1,
     ProcessReviewRectificationPermission,
 )
+from easyaudit_next.scenarios.process_review import v1 as process_review_v1_base
 
 
 def _direct(role_key: str) -> RoleGrant:
@@ -34,6 +38,14 @@ def _context(
         finding_lifecycle=finding_lifecycle,
         current_action_lifecycle=action_lifecycle,
     )
+
+
+def test_process_review_v1_has_one_canonical_registered_policy() -> None:
+    registry = build_scenario_registry()
+
+    assert registry.get(ScenarioKey("process_review"), ScenarioVersion(1)) is PROCESS_REVIEW_V1
+    assert not hasattr(process_review_v1_base, "PROCESS_REVIEW_V1")
+    assert PROCESS_REVIEW_V1.action_operations is not None
 
 
 def test_action_creation_is_owned_by_scenario_context_invariants() -> None:
