@@ -158,19 +158,47 @@ def _finding_service(
     )
 
 
+def _start_case(
+    session: Session,
+    lead_id: UserId,
+    *,
+    title: str,
+):
+    lead = SqlAlchemyUserRepository(session).get(lead_id)
+    assert lead is not None
+    planning = _planning_service(session)
+    review_case = planning.create_case(
+        lead,
+        ScenarioKey("process_review"),
+        ScenarioVersion(1),
+        title,
+        {"area_code": "ASSY", "review_type": "routine"},
+        occurred_at=NOW,
+    )
+    review_case = planning.transition_case(
+        lead,
+        review_case.id,
+        "schedule",
+        occurred_at=NOW,
+    )
+    return planning.transition_case(
+        lead,
+        review_case.id,
+        "start",
+        occurred_at=NOW,
+    )
+
+
 def _create_case_and_finding(
     session: Session,
     lead_id: UserId,
 ) -> tuple[FindingLifecycleService, Finding]:
     lead = SqlAlchemyUserRepository(session).get(lead_id)
     assert lead is not None
-    review_case = _planning_service(session).create_case(
-        lead,
-        ScenarioKey("process_review"),
-        ScenarioVersion(1),
-        f"M2.3 Case {uuid4()}",
-        {"area_code": "ASSY", "review_type": "routine"},
-        occurred_at=NOW,
+    review_case = _start_case(
+        session,
+        lead_id,
+        title=f"M2.3 Case {uuid4()}",
     )
     service = _finding_service(session)
     finding = service.create_finding(
@@ -182,6 +210,34 @@ def _create_case_and_finding(
         occurred_at=NOW,
     )
     return service, finding
+
+
+def _assign_required_participants(
+    service: FindingLifecycleService,
+    lead_id: UserId,
+    owner_id: UserId,
+    department_id: DepartmentId,
+    finding: Finding,
+    session: Session,
+) -> None:
+    users = SqlAlchemyUserRepository(session)
+    lead = users.get(lead_id)
+    owner = users.get(owner_id)
+    assert lead is not None and owner is not None
+    service.add_participant(
+        lead,
+        finding.id,
+        UserActor(owner.id),
+        "owner",
+        occurred_at=NOW,
+    )
+    service.add_participant(
+        lead,
+        finding.id,
+        DepartmentActor(department_id),
+        "responsible_department",
+        occurred_at=NOW,
+    )
 
 
 def test_m2_3_migration_adds_finding_scenario_data(postgres_engine: Engine) -> None:
@@ -249,15 +305,10 @@ def test_finding_creation_rolls_back_when_created_activity_fails(
 ) -> None:
     organization_id, _, lead_id, _, _ = _seed_process_review(postgres_engine)
     with Session(postgres_engine, expire_on_commit=False) as setup:
-        lead = SqlAlchemyUserRepository(setup).get(lead_id)
-        assert lead is not None
-        review_case = _planning_service(setup).create_case(
-            lead,
-            ScenarioKey("process_review"),
-            ScenarioVersion(1),
-            f"M2.3 rollback Case {uuid4()}",
-            {"area_code": "ASSY", "review_type": "routine"},
-            occurred_at=NOW,
+        review_case = _start_case(
+            setup,
+            lead_id,
+            title=f"M2.3 rollback Case {uuid4()}",
         )
         case_id = review_case.id
         setup.commit()
@@ -290,6 +341,92 @@ def test_finding_creation_rolls_back_when_created_activity_fails(
             )
         )
         assert finding_count == 0
+
+
+def test_process_review_finding_requires_started_case_and_responsibility(
+    postgres_engine: Engine,
+) -> None:
+    _, department_id, lead_id, owner_id, _ = _seed_process_review(postgres_engine)
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        users = SqlAlchemyUserRepository(session)
+        lead = users.get(lead_id)
+        owner = users.get(owner_id)
+        assert lead is not None and owner is not None
+        planning = _planning_service(session)
+        review_case = planning.create_case(
+            lead,
+            ScenarioKey("process_review"),
+            ScenarioVersion(1),
+            f"M2.3 gate Case {uuid4()}",
+            {"area_code": "ASSY", "review_type": "routine"},
+            occurred_at=NOW,
+        )
+        service = _finding_service(session)
+        payload = {"issue_type": "control_gap", "project_category": "assembly"}
+
+        with pytest.raises(ValueError, match="only be created.*in_progress"):
+            service.create_finding(
+                lead,
+                review_case.id,
+                "Draft case finding",
+                FindingSeverity.MEDIUM,
+                payload,
+            )
+        review_case = planning.transition_case(
+            lead,
+            review_case.id,
+            "schedule",
+            occurred_at=NOW,
+        )
+        with pytest.raises(ValueError, match="only be created.*in_progress"):
+            service.create_finding(
+                lead,
+                review_case.id,
+                "Scheduled case finding",
+                FindingSeverity.MEDIUM,
+                payload,
+            )
+        review_case = planning.transition_case(
+            lead,
+            review_case.id,
+            "start",
+            occurred_at=NOW,
+        )
+        finding = service.create_finding(
+            lead,
+            review_case.id,
+            "Started case finding",
+            FindingSeverity.MEDIUM,
+            payload,
+            occurred_at=NOW,
+        )
+
+        with pytest.raises(ValueError, match="responsible_department, owner"):
+            service.transition_finding(lead, finding.id, "issue")
+        service.add_participant(
+            lead,
+            finding.id,
+            UserActor(owner.id),
+            "owner",
+            occurred_at=NOW,
+        )
+        with pytest.raises(ValueError, match="responsible_department"):
+            service.transition_finding(lead, finding.id, "issue")
+        service.add_participant(
+            lead,
+            finding.id,
+            DepartmentActor(department_id),
+            "responsible_department",
+            occurred_at=NOW,
+        )
+        issued = service.transition_finding(
+            lead,
+            finding.id,
+            "issue",
+            occurred_at=NOW,
+        )
+        assert issued.lifecycle is FindingLifecycle.RECTIFYING
+        session.commit()
 
 
 def test_direct_and_department_participants_are_scoped_and_drive_visibility(
@@ -393,9 +530,19 @@ class _SynchronizedFindingRepository(SqlAlchemyReviewCoreRepository):
 def test_concurrent_finding_transition_allows_only_one_old_state_to_advance(
     postgres_engine: Engine,
 ) -> None:
-    organization_id, _, lead_id, _, _ = _seed_process_review(postgres_engine)
+    organization_id, department_id, lead_id, owner_id, _ = _seed_process_review(
+        postgres_engine
+    )
     with Session(postgres_engine, expire_on_commit=False) as setup:
-        _, finding = _create_case_and_finding(setup, lead_id)
+        service, finding = _create_case_and_finding(setup, lead_id)
+        _assign_required_participants(
+            service,
+            lead_id,
+            owner_id,
+            department_id,
+            finding,
+            setup,
+        )
         finding_id = finding.id
         setup.commit()
 
