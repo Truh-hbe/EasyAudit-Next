@@ -15,6 +15,7 @@ from easyaudit_next.review_core.domain.models import (
     AssignmentRole,
     DepartmentActor,
     Evidence,
+    Finding,
     ParticipantActor,
     Submission,
     SubmissionPurpose,
@@ -24,6 +25,7 @@ from easyaudit_next.review_core.persistence.models import (
     ActionAssigneeRecord,
     ActionItemRecord,
     EvidenceRecord,
+    FindingRecord,
     SubmissionRecord,
 )
 from easyaudit_next.review_core.persistence.repositories import (
@@ -33,6 +35,21 @@ from easyaudit_next.review_core.persistence.repositories import (
 
 class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
     """Review Core persistence with the M2.4 rectification surface."""
+
+    def lock_finding_for_rectification(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> Finding | None:
+        record = self._session.scalar(
+            select(FindingRecord)
+            .where(
+                FindingRecord.organization_id == organization_id,
+                FindingRecord.id == finding_id,
+            )
+            .with_for_update()
+        )
+        return self._finding_to_domain(record) if record is not None else None
 
     def add_action_item(self, action_item: ActionItem) -> None:
         self._session.add(
