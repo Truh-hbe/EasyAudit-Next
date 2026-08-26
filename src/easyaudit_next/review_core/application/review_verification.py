@@ -237,7 +237,9 @@ class VerificationClosureService:
         if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
             raise ReviewAuthorizationError("Finding is not visible to this user")
         if not policy.authorization.allows(REOPEN_FINDING_PERMISSION, context):
-            raise ReviewAuthorizationError("lead, auditor, or reviewer role required to reopen Finding")
+            raise ReviewAuthorizationError(
+                "lead, auditor, or reviewer role required to reopen Finding"
+            )
 
         locked_case = self._lock_expected_case(actor, review_case)
         if locked_case.lifecycle is ReviewCaseLifecycle.CLOSED:
