@@ -156,6 +156,12 @@ class ReviewCoreRepository(Protocol):
 class RectificationRepository(ReviewCoreRepository, Protocol):
     """Additional persistence capabilities required only by the M2.4 rectification slice."""
 
+    def lock_finding_for_rectification(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> Finding | None: ...
+
     def list_action_items(
         self,
         organization_id: OrganizationId,
