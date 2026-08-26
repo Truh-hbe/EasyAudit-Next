@@ -4,6 +4,7 @@ from easyaudit_next.platform.domain.ids import OrganizationId
 from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
     ActivityId,
+    EvidenceId,
     FindingId,
     ReviewCaseId,
     ReviewPlanId,
@@ -13,8 +14,10 @@ from easyaudit_next.review_core.domain.ids import (
 from easyaudit_next.review_core.domain.models import (
     ActionAssignee,
     ActionItem,
+    ActionItemLifecycle,
     Activity,
     CaseMember,
+    Evidence,
     Finding,
     FindingLifecycle,
     FindingParticipant,
@@ -131,7 +134,40 @@ class ReviewCoreRepository(Protocol):
         action_item_id: ActionItemId,
     ) -> ActionItem | None: ...
 
+    def list_action_items(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> tuple[ActionItem, ...]: ...
+
+    def update_action_item(
+        self,
+        action_item: ActionItem,
+        *,
+        expected_lifecycle: ActionItemLifecycle,
+    ) -> bool: ...
+
     def add_action_assignee(self, assignee: ActionAssignee) -> None: ...
+
+    def list_action_assignees(
+        self,
+        organization_id: OrganizationId,
+        action_item_id: ActionItemId,
+    ) -> tuple[ActionAssignee, ...]: ...
+
+    def add_evidence(self, evidence: Evidence) -> None: ...
+
+    def get_evidence(
+        self,
+        organization_id: OrganizationId,
+        evidence_id: EvidenceId,
+    ) -> Evidence | None: ...
+
+    def list_evidences(
+        self,
+        organization_id: OrganizationId,
+        action_item_id: ActionItemId,
+    ) -> tuple[Evidence, ...]: ...
 
     def add_submission(self, submission: Submission) -> None: ...
 
@@ -140,6 +176,12 @@ class ReviewCoreRepository(Protocol):
         organization_id: OrganizationId,
         submission_id: SubmissionId,
     ) -> Submission | None: ...
+
+    def list_submissions(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> tuple[Submission, ...]: ...
 
     def add_activity(self, activity: Activity) -> None: ...
 
