@@ -4,6 +4,7 @@ from easyaudit_next.platform.domain.ids import OrganizationId
 from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
     ActivityId,
+    EvidenceId,
     FindingId,
     ReviewCaseId,
     ReviewPlanId,
@@ -13,8 +14,10 @@ from easyaudit_next.review_core.domain.ids import (
 from easyaudit_next.review_core.domain.models import (
     ActionAssignee,
     ActionItem,
+    ActionItemLifecycle,
     Activity,
     CaseMember,
+    Evidence,
     Finding,
     FindingLifecycle,
     FindingParticipant,
@@ -148,3 +151,52 @@ class ReviewCoreRepository(Protocol):
         organization_id: OrganizationId,
         activity_id: ActivityId,
     ) -> Activity | None: ...
+
+
+class RectificationRepository(ReviewCoreRepository, Protocol):
+    """Additional persistence capabilities required only by the M2.4 rectification slice."""
+
+    def lock_finding_for_rectification(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> Finding | None: ...
+
+    def list_action_items(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> tuple[ActionItem, ...]: ...
+
+    def update_action_item(
+        self,
+        action_item: ActionItem,
+        *,
+        expected_lifecycle: ActionItemLifecycle,
+    ) -> bool: ...
+
+    def list_action_assignees(
+        self,
+        organization_id: OrganizationId,
+        action_item_id: ActionItemId,
+    ) -> tuple[ActionAssignee, ...]: ...
+
+    def add_evidence(self, evidence: Evidence) -> None: ...
+
+    def get_evidence(
+        self,
+        organization_id: OrganizationId,
+        evidence_id: EvidenceId,
+    ) -> Evidence | None: ...
+
+    def list_evidences(
+        self,
+        organization_id: OrganizationId,
+        action_item_id: ActionItemId,
+    ) -> tuple[Evidence, ...]: ...
+
+    def list_submissions(
+        self,
+        organization_id: OrganizationId,
+        finding_id: FindingId,
+    ) -> tuple[Submission, ...]: ...

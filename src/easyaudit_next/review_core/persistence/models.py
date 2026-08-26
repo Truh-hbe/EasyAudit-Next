@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -310,6 +312,7 @@ class ActionItemRecord(Base):
     title: Mapped[str] = mapped_column(String(300))
     lifecycle: Mapped[str] = mapped_column(String(32))
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ActionAssigneeRecord(Base):
@@ -366,6 +369,52 @@ class ActionAssigneeRecord(Base):
     department_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     role: Mapped[str] = mapped_column(String(32))
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class EvidenceRecord(Base):
+    __tablename__ = "evidences"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_evidences_id_organization"),
+        ForeignKeyConstraint(
+            ["action_item_id", "organization_id"],
+            ["action_items.id", "action_items.organization_id"],
+            name="fk_evidences_action_organization",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["uploaded_by", "organization_id"],
+            ["users.id", "users.organization_id"],
+            name="fk_evidences_uploader_organization",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "storage_key = btrim(storage_key) AND storage_key <> ''",
+            name="ck_evidences_storage_key",
+        ),
+        CheckConstraint(
+            "original_name = btrim(original_name) AND original_name <> ''",
+            name="ck_evidences_original_name",
+        ),
+        CheckConstraint("size_bytes >= 0", name="ck_evidences_size_bytes"),
+        CheckConstraint(
+            "sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_evidences_sha256",
+        ),
+        Index("ix_evidences_organization_action", "organization_id", "action_item_id"),
+        Index("ix_evidences_organization_sha256", "organization_id", "sha256"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    action_item_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    storage_key: Mapped[str] = mapped_column(String(500))
+    original_name: Mapped[str] = mapped_column(String(500))
+    content_type: Mapped[str | None] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str | None] = mapped_column(Text)
+    uploaded_by: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class SubmissionRecord(Base):

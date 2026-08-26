@@ -4,9 +4,12 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from easyaudit_next.review_core.domain.models import (
+    ActionItemLifecycle,
+    AssignmentRole,
     FindingLifecycle,
     FindingSeverity,
     ReviewCaseLifecycle,
+    SubmissionPurpose,
 )
 from easyaudit_next.review_core.domain.scenario_capabilities import ActorKind
 
@@ -118,3 +121,91 @@ class FindingParticipantResponse(BaseModel):
 class FindingTransitionRequest(BaseModel):
     action: str = Field(min_length=1, max_length=100)
     reason: str | None = Field(default=None, max_length=2_000)
+
+
+class ActionItemCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    due_at: AwareDatetime | None = None
+
+
+class ActionItemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    organization_id: UUID
+    finding_id: UUID
+    title: str
+    lifecycle: ActionItemLifecycle
+    due_at: datetime | None
+    completed_at: datetime | None
+
+
+class ActionAssigneeCreateRequest(BaseModel):
+    actor_kind: ActorKind
+    actor_id: UUID
+    role: AssignmentRole
+
+
+class ActionAssigneeResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    action_item_id: UUID
+    actor_kind: ActorKind
+    actor_id: UUID
+    role: AssignmentRole
+    assigned_at: datetime
+
+
+class ActionItemTransitionRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=100)
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
+class EvidenceRegisterRequest(BaseModel):
+    storage_key: str = Field(min_length=1, max_length=500)
+    original_name: str = Field(min_length=1, max_length=500)
+    content_type: str | None = Field(default=None, min_length=1, max_length=255)
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    description: str | None = Field(default=None, max_length=20_000)
+
+
+class EvidenceResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    organization_id: UUID
+    action_item_id: UUID
+    storage_key: str
+    original_name: str
+    content_type: str | None
+    size_bytes: int
+    sha256: str
+    description: str | None
+    uploaded_by: UUID
+    created_at: datetime
+
+
+class RectificationSubmissionRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=100)
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class SubmissionResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    organization_id: UUID
+    case_id: UUID
+    finding_id: UUID | None
+    purpose: SubmissionPurpose
+    submitted_by: UUID
+    submitted_at: datetime
+    payload: dict[str, object]
+
+
+class RectificationSubmissionResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    submission: SubmissionResponse
+    finding: FindingResponse
