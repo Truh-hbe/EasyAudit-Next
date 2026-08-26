@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from pwdlib import PasswordHash
 from sqlalchemy import Engine, create_engine, func, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -14,13 +15,20 @@ from easyaudit_next.composition import (
     build_review_planning_service,
     build_verification_closure_service,
 )
+from easyaudit_next.platform.application.authentication import AuthenticationService
 from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
 from easyaudit_next.platform.persistence.models import (
     DepartmentRecord,
+    LocalCredentialRecord,
     OrganizationRecord,
     UserRecord,
 )
-from easyaudit_next.platform.persistence.repositories import SqlAlchemyUserRepository
+from easyaudit_next.platform.persistence.repositories import (
+    SqlAlchemyAuthSessionRepository,
+    SqlAlchemyLocalCredentialRepository,
+    SqlAlchemyPlatformAuditRepository,
+    SqlAlchemyUserRepository,
+)
 from easyaudit_next.review_core.domain.models import (
     AssignmentRole,
     DepartmentActor,
@@ -43,6 +51,7 @@ from easyaudit_next.review_core.persistence.models import (
 )
 
 NOW = datetime(2026, 8, 26, 17, 0, tzinfo=UTC)
+PASSWORD = "m2-e2e-correct-horse-battery"
 
 
 @pytest.fixture(scope="module")
@@ -54,15 +63,29 @@ def postgres_engine() -> Iterator[Engine]:
     engine.dispose()
 
 
+def _authentication_service(session: Session) -> AuthenticationService:
+    return AuthenticationService(
+        SqlAlchemyLocalCredentialRepository(session),
+        SqlAlchemyAuthSessionRepository(session),
+        SqlAlchemyUserRepository(session),
+        SqlAlchemyPlatformAuditRepository(session),
+    )
+
+
 def _seed_process_review(
     engine: Engine,
-) -> tuple[OrganizationId, DepartmentId, UserId, UserId, UserId]:
+) -> tuple[OrganizationId, DepartmentId, str, str, str]:
     organization_id = OrganizationId(uuid4())
     department_id = DepartmentId(uuid4())
     lead_id = UserId(uuid4())
     owner_id = UserId(uuid4())
     reviewer_id = UserId(uuid4())
     scenario_id = uuid4()
+    suffix = uuid4().hex[:12]
+    lead_login = f"m2-lead-{suffix}"
+    owner_login = f"m2-owner-{suffix}"
+    reviewer_login = f"m2-reviewer-{suffix}"
+    password_hash = PasswordHash.recommended().hash(PASSWORD)
 
     with Session(engine) as session, session.begin():
         session.add(
@@ -104,6 +127,32 @@ def _seed_process_review(
             ]
         )
         session.flush()
+        session.add_all(
+            [
+                LocalCredentialRecord(
+                    user_id=lead_id,
+                    organization_id=organization_id,
+                    login_name=lead_login,
+                    password_hash=password_hash,
+                    password_changed_at=NOW,
+                ),
+                LocalCredentialRecord(
+                    user_id=owner_id,
+                    organization_id=organization_id,
+                    login_name=owner_login,
+                    password_hash=password_hash,
+                    password_changed_at=NOW,
+                ),
+                LocalCredentialRecord(
+                    user_id=reviewer_id,
+                    organization_id=organization_id,
+                    login_name=reviewer_login,
+                    password_hash=password_hash,
+                    password_changed_at=NOW,
+                ),
+            ]
+        )
+        session.flush()
         session.add(
             ScenarioRecord(
                 id=scenario_id,
@@ -123,22 +172,28 @@ def _seed_process_review(
             )
         )
 
-    return organization_id, department_id, lead_id, owner_id, reviewer_id
+    return organization_id, department_id, lead_login, owner_login, reviewer_login
 
 
 def test_complete_authenticated_process_review_chain_closes_case(
     postgres_engine: Engine,
 ) -> None:
-    organization_id, department_id, lead_id, owner_id, reviewer_id = _seed_process_review(
-        postgres_engine
+    organization_id, department_id, lead_login, owner_login, reviewer_login = (
+        _seed_process_review(postgres_engine)
     )
 
+    with Session(postgres_engine, expire_on_commit=False) as login_session:
+        authentication = _authentication_service(login_session)
+        lead_token = authentication.login(lead_login, PASSWORD, now=NOW).token
+        owner_token = authentication.login(owner_login, PASSWORD, now=NOW).token
+        reviewer_token = authentication.login(reviewer_login, PASSWORD, now=NOW).token
+        login_session.commit()
+
     with Session(postgres_engine, expire_on_commit=False) as session:
-        users = SqlAlchemyUserRepository(session)
-        lead = users.get(lead_id)
-        owner = users.get(owner_id)
-        reviewer = users.get(reviewer_id)
-        assert lead is not None and owner is not None and reviewer is not None
+        authentication = _authentication_service(session)
+        _, lead = authentication.authenticate(lead_token, now=NOW)
+        _, owner = authentication.authenticate(owner_token, now=NOW)
+        _, reviewer = authentication.authenticate(reviewer_token, now=NOW)
 
         planning = build_review_planning_service(session)
         plan = planning.create_plan(lead, "M2 complete process review")
