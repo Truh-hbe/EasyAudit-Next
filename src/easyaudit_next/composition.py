@@ -4,9 +4,9 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
     SqlAlchemyUserRepository,
 )
-from easyaudit_next.review_core.application.review_planning import ReviewPlanningService
 from easyaudit_next.review_core.application.review_rectification import (
     ActionAwareFindingLifecycleService,
+    ActionAwareReviewPlanningService,
     RectificationService,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
@@ -27,10 +27,10 @@ def build_scenario_registry() -> ScenarioRegistry:
     return registry
 
 
-def build_review_planning_service(session: Session) -> ReviewPlanningService:
-    """Wire generic Review Core application services to registered Scenario policies."""
+def build_review_planning_service(session: Session) -> ActionAwareReviewPlanningService:
+    """Wire planning reads with M2.4 ActionAssignee-derived visibility."""
 
-    return ReviewPlanningService(
+    return ActionAwareReviewPlanningService(
         SqlAlchemyRectificationRepository(session),
         SqlAlchemyScenarioCatalogRepository(session),
         SqlAlchemyUserRepository(session),
