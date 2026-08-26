@@ -4,11 +4,16 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
     SqlAlchemyUserRepository,
 )
-from easyaudit_next.review_core.application.review_findings import FindingLifecycleService
 from easyaudit_next.review_core.application.review_planning import ReviewPlanningService
+from easyaudit_next.review_core.application.review_rectification import (
+    ActionAwareFindingLifecycleService,
+    RectificationService,
+)
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
+from easyaudit_next.review_core.persistence.rectification_repositories import (
+    SqlAlchemyRectificationRepository,
+)
 from easyaudit_next.review_core.persistence.repositories import (
-    SqlAlchemyReviewCoreRepository,
     SqlAlchemyScenarioCatalogRepository,
 )
 from easyaudit_next.scenarios.process_review import PROCESS_REVIEW_V1
@@ -26,18 +31,29 @@ def build_review_planning_service(session: Session) -> ReviewPlanningService:
     """Wire generic Review Core application services to registered Scenario policies."""
 
     return ReviewPlanningService(
-        SqlAlchemyReviewCoreRepository(session),
+        SqlAlchemyRectificationRepository(session),
         SqlAlchemyScenarioCatalogRepository(session),
         SqlAlchemyUserRepository(session),
         build_scenario_registry(),
     )
 
 
-def build_finding_lifecycle_service(session: Session) -> FindingLifecycleService:
-    """Wire generic Finding use cases to versioned Scenario capabilities."""
+def build_finding_lifecycle_service(session: Session) -> ActionAwareFindingLifecycleService:
+    """Wire generic Finding use cases with persisted M2.4 Action operation facts."""
 
-    return FindingLifecycleService(
-        SqlAlchemyReviewCoreRepository(session),
+    return ActionAwareFindingLifecycleService(
+        SqlAlchemyRectificationRepository(session),
+        SqlAlchemyUserRepository(session),
+        SqlAlchemyDepartmentRepository(session),
+        build_scenario_registry(),
+    )
+
+
+def build_rectification_service(session: Session) -> RectificationService:
+    """Wire generic rectification use cases to exact versioned Scenario capabilities."""
+
+    return RectificationService(
+        SqlAlchemyRectificationRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyDepartmentRepository(session),
         build_scenario_registry(),
