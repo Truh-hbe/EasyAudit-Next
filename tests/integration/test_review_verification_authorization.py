@@ -13,7 +13,13 @@ from easyaudit_next.review_core.application.review_verification import Verificat
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
-from tests.integration.test_review_verification_semantics import NOW, _seed_case
+from tests.integration.test_review_verification_semantics import (
+    NOW,
+    _seed_case,
+    postgres_engine,
+)
+
+__all__ = ["postgres_engine"]
 
 
 def test_system_admin_without_scenario_relationship_is_not_a_reviewer(
