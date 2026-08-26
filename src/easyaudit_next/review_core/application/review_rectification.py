@@ -6,17 +6,23 @@ from uuid import uuid4
 from easyaudit_next.platform.domain.ids import DepartmentId, UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import DepartmentRepository, UserRepository
-from easyaudit_next.review_core.application.authorization import build_authorization_context
+from easyaudit_next.review_core.application.authorization import (
+    build_rectification_authorization_context,
+)
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
     FindingLifecycleService,
 )
-from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
+from easyaudit_next.review_core.application.review_planning import (
+    ReviewAuthorizationError,
+    ReviewPlanningService,
+)
 from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
     ActivityId,
     EvidenceId,
     FindingId,
+    ReviewCaseId,
     SubmissionId,
 )
 from easyaudit_next.review_core.domain.models import (
@@ -35,7 +41,10 @@ from easyaudit_next.review_core.domain.models import (
     SubmissionPurpose,
     UserActor,
 )
-from easyaudit_next.review_core.domain.repositories import ReviewCoreRepository
+from easyaudit_next.review_core.domain.repositories import (
+    RectificationRepository,
+    ScenarioCatalogRepository,
+)
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemOperationContext,
     ActionItemTransitionContext,
@@ -60,8 +69,87 @@ class ConcurrentActionItemTransitionError(RuntimeError):
     """The persisted ActionItem lifecycle no longer matches the workflow input."""
 
 
+class ActionAwareReviewPlanningService(ReviewPlanningService):
+    """M2.2 planning reads extended with M2.4 ActionAssignee visibility."""
+
+    def __init__(
+        self,
+        repository: RectificationRepository,
+        scenario_catalog: ScenarioCatalogRepository,
+        users: UserRepository,
+        registry: ScenarioRegistry,
+    ) -> None:
+        super().__init__(repository, scenario_catalog, users, registry)
+        self._rectification_repository = repository
+
+    def _authorization_context(
+        self,
+        actor: User,
+        case_id: ReviewCaseId,
+    ) -> AuthorizationContext:
+        return build_rectification_authorization_context(
+            self._rectification_repository,
+            actor,
+            case_id,
+        )
+
+
 class ActionAwareFindingLifecycleService(FindingLifecycleService):
-    """M2.3 Finding use cases with M2.4 Action facts populated from persistence."""
+    """M2.3 Finding use cases extended with persisted M2.4 Action facts and visibility."""
+
+    def __init__(
+        self,
+        repository: RectificationRepository,
+        users: UserRepository,
+        departments: DepartmentRepository,
+        registry: ScenarioRegistry,
+    ) -> None:
+        super().__init__(repository, users, departments, registry)
+        self._rectification_repository = repository
+
+    def list_findings(self, actor: User, case_id: ReviewCaseId) -> tuple[Finding, ...]:
+        review_case, policy = self._case_policy(actor, case_id)
+        visible: list[Finding] = []
+        for finding in self._rectification_repository.list_findings(
+            actor.organization_id,
+            review_case.id,
+        ):
+            context = build_rectification_authorization_context(
+                self._rectification_repository,
+                actor,
+                review_case.id,
+                finding_id=finding.id,
+            )
+            if policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
+                visible.append(finding)
+        return tuple(visible)
+
+    def _finding_context(
+        self,
+        actor: User,
+        finding_id: FindingId,
+    ) -> tuple[Finding, ReviewCase, ScenarioPolicy, AuthorizationContext]:
+        self._require_active(actor)
+        finding = self._rectification_repository.get_finding(
+            actor.organization_id,
+            finding_id,
+        )
+        if finding is None:
+            raise LookupError("Finding not found")
+        review_case = self._rectification_repository.get_case(
+            actor.organization_id,
+            finding.case_id,
+        )
+        if review_case is None:
+            raise LookupError("ReviewCase not found")
+        policy = self._registry.get(review_case.scenario_key, review_case.scenario_version)
+        context = build_rectification_authorization_context(
+            self._rectification_repository,
+            actor,
+            review_case.id,
+            finding_id=finding.id,
+        )
+        return finding, review_case, policy, context
 
     def _finding_operation_context(
         self,
@@ -73,7 +161,7 @@ class ActionAwareFindingLifecycleService(FindingLifecycleService):
         participant_role_keys = (
             frozenset(
                 participant.role_key
-                for participant in self._repository.list_finding_participants(
+                for participant in self._rectification_repository.list_finding_participants(
                     review_case.organization_id,
                     finding.id,
                 )
@@ -84,7 +172,7 @@ class ActionAwareFindingLifecycleService(FindingLifecycleService):
         active_actions = (
             tuple(
                 action
-                for action in self._repository.list_action_items(
+                for action in self._rectification_repository.list_action_items(
                     review_case.organization_id,
                     finding.id,
                 )
@@ -111,7 +199,7 @@ class RectificationService:
 
     def __init__(
         self,
-        repository: ReviewCoreRepository,
+        repository: RectificationRepository,
         users: UserRepository,
         departments: DepartmentRepository,
         registry: ScenarioRegistry,
@@ -488,7 +576,7 @@ class RectificationService:
         if review_case is None:
             raise LookupError("ReviewCase not found")
         policy = self._registry.get(review_case.scenario_key, review_case.scenario_version)
-        context = build_authorization_context(
+        context = build_rectification_authorization_context(
             self._repository,
             actor,
             review_case.id,
@@ -512,7 +600,7 @@ class RectificationService:
         if review_case is None:
             raise LookupError("ReviewCase not found")
         policy = self._registry.get(review_case.scenario_key, review_case.scenario_version)
-        context = build_authorization_context(
+        context = build_rectification_authorization_context(
             self._repository,
             actor,
             review_case.id,
