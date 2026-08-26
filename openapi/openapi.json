@@ -90,6 +90,28 @@
     },
     "/api/v1/findings/{finding_id}/transitions": {
       "post": {"operationId": "transitionFinding", "tags": ["review-findings"]}
+    },
+    "/api/v1/findings/{finding_id}/actions": {
+      "get": {"operationId": "listActionItems", "tags": ["review-rectification"]},
+      "post": {"operationId": "createActionItem", "tags": ["review-rectification"]}
+    },
+    "/api/v1/action-items/{action_item_id}": {
+      "get": {"operationId": "getActionItem", "tags": ["review-rectification"]}
+    },
+    "/api/v1/action-items/{action_item_id}/assignees": {
+      "get": {"operationId": "listActionAssignees", "tags": ["review-rectification"]},
+      "post": {"operationId": "addActionAssignee", "tags": ["review-rectification"]}
+    },
+    "/api/v1/action-items/{action_item_id}/transitions": {
+      "post": {"operationId": "transitionActionItem", "tags": ["review-rectification"]}
+    },
+    "/api/v1/action-items/{action_item_id}/evidences": {
+      "get": {"operationId": "listActionEvidences", "tags": ["review-rectification"]},
+      "post": {"operationId": "registerActionEvidence", "tags": ["review-rectification"]}
+    },
+    "/api/v1/findings/{finding_id}/rectification-submissions": {
+      "get": {"operationId": "listRectificationSubmissions", "tags": ["review-rectification"]},
+      "post": {"operationId": "submitRectification", "tags": ["review-rectification"]}
     }
   }
 }
