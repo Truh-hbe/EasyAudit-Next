@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -212,6 +213,23 @@ def _create_finding(
     )
 
 
+def _assign_required_participants(
+    service: FindingLifecycleService,
+    lead: User,
+    finding: Finding,
+    owner: User,
+    department: Department,
+) -> None:
+    service.add_participant(lead, finding.id, UserActor(owner.id), "owner", occurred_at=NOW)
+    service.add_participant(
+        lead,
+        finding.id,
+        DepartmentActor(department.id),
+        "responsible_department",
+        occurred_at=NOW,
+    )
+
+
 def test_create_finding_validates_scenario_data_and_records_activity() -> None:
     service, repository, lead, _, _, _ = _fixture()
 
@@ -229,6 +247,24 @@ def test_create_finding_validates_scenario_data_and_records_activity() -> None:
     assert finding.lifecycle is FindingLifecycle.OPEN
     assert finding.scenario_data["issue_type"] == "control_gap"
     assert repository.activities[-1].event_type == "finding.created"
+
+
+@pytest.mark.parametrize(
+    "lifecycle",
+    [
+        ReviewCaseLifecycle.DRAFT,
+        ReviewCaseLifecycle.SCHEDULED,
+        ReviewCaseLifecycle.AWAITING_CLOSURE,
+        ReviewCaseLifecycle.CLOSED,
+        ReviewCaseLifecycle.CANCELLED,
+    ],
+)
+def test_create_finding_requires_in_progress_case(lifecycle: ReviewCaseLifecycle) -> None:
+    service, repository, lead, _, _, _ = _fixture()
+    repository.review_case = replace(repository.review_case, lifecycle=lifecycle)
+
+    with pytest.raises(ValueError, match="only be created.*in_progress"):
+        _create_finding(service, lead, repository.review_case.id)
 
 
 def test_participant_role_enforces_actor_kind_and_same_organization() -> None:
@@ -267,13 +303,7 @@ def test_participant_role_enforces_actor_kind_and_same_organization() -> None:
 def test_direct_and_department_participants_gain_visibility_but_not_write_authority() -> None:
     service, repository, lead, owner, department_member, department = _fixture()
     finding = _create_finding(service, lead, repository.review_case.id)
-    service.add_participant(lead, finding.id, UserActor(owner.id), "owner")
-    service.add_participant(
-        lead,
-        finding.id,
-        DepartmentActor(department.id),
-        "responsible_department",
-    )
+    _assign_required_participants(service, lead, finding, owner, department)
 
     assert service.get_finding(owner, finding.id) == finding
     assert service.get_finding(department_member, finding.id) == finding
@@ -281,9 +311,44 @@ def test_direct_and_department_participants_gain_visibility_but_not_write_author
         service.transition_finding(department_member, finding.id, "issue")
 
 
+def test_issue_requires_owner_and_responsible_department() -> None:
+    service, repository, lead, owner, _, department = _fixture()
+    finding = _create_finding(service, lead, repository.review_case.id)
+
+    with pytest.raises(ValueError, match="responsible_department, owner"):
+        service.transition_finding(lead, finding.id, "issue")
+
+    service.add_participant(lead, finding.id, UserActor(owner.id), "owner")
+    with pytest.raises(ValueError, match="responsible_department"):
+        service.transition_finding(lead, finding.id, "issue")
+
+    service.add_participant(
+        lead,
+        finding.id,
+        DepartmentActor(department.id),
+        "responsible_department",
+    )
+    issued = service.transition_finding(lead, finding.id, "issue", occurred_at=NOW)
+    assert issued.lifecycle is FindingLifecycle.RECTIFYING
+
+
+def test_issue_is_explicitly_allowed_for_existing_open_finding_awaiting_closure() -> None:
+    service, repository, lead, owner, _, department = _fixture()
+    finding = _create_finding(service, lead, repository.review_case.id)
+    _assign_required_participants(service, lead, finding, owner, department)
+    repository.review_case = replace(
+        repository.review_case,
+        lifecycle=ReviewCaseLifecycle.AWAITING_CLOSURE,
+    )
+
+    issued = service.transition_finding(lead, finding.id, "issue", occurred_at=NOW)
+    assert issued.lifecycle is FindingLifecycle.RECTIFYING
+
+
 def test_issue_and_void_are_scenario_transitions_and_void_requires_reason() -> None:
-    service, repository, lead, _, _, _ = _fixture()
+    service, repository, lead, owner, _, department = _fixture()
     issue_finding = _create_finding(service, lead, repository.review_case.id)
+    _assign_required_participants(service, lead, issue_finding, owner, department)
     issued = service.transition_finding(lead, issue_finding.id, "issue", occurred_at=NOW)
     assert issued.lifecycle is FindingLifecycle.RECTIFYING
     with pytest.raises(ValueError, match="M2.3 only supports"):
@@ -309,9 +374,26 @@ def test_issue_and_void_are_scenario_transitions_and_void_requires_reason() -> N
     assert voided.lifecycle is FindingLifecycle.VOIDED
 
 
-def test_transition_reports_conflict_when_lifecycle_cas_loses() -> None:
-    service, repository, lead, _, _, _ = _fixture()
+def test_terminal_finding_freezes_participant_management() -> None:
+    service, repository, lead, owner, _, _ = _fixture()
     finding = _create_finding(service, lead, repository.review_case.id)
+    voided = service.transition_finding(
+        lead,
+        finding.id,
+        "void",
+        reason="Duplicate",
+        occurred_at=NOW,
+    )
+    assert voided.lifecycle is FindingLifecycle.VOIDED
+
+    with pytest.raises(ValueError, match="Terminal Finding participants"):
+        service.add_participant(lead, finding.id, UserActor(owner.id), "owner")
+
+
+def test_transition_reports_conflict_when_lifecycle_cas_loses() -> None:
+    service, repository, lead, owner, _, department = _fixture()
+    finding = _create_finding(service, lead, repository.review_case.id)
+    _assign_required_participants(service, lead, finding, owner, department)
     repository.reject_update = True
 
     with pytest.raises(ConcurrentFindingTransitionError):
