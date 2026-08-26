@@ -21,6 +21,10 @@ class SubmissionDecisionError(ValueError):
     """Raised when a formal Submission request is not valid for the Scenario."""
 
 
+class FindingOperationError(ValueError):
+    """Raised when Scenario-owned Finding operation invariants are not satisfied."""
+
+
 class ActorKind(StrEnum):
     USER = "user"
     DEPARTMENT = "department"
@@ -75,6 +79,21 @@ class FindingTransitionContext:
     reason: str | None = None
     non_cancelled_action_count: int = 0
     all_non_cancelled_actions_done: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class FindingOperationContext:
+    """Scenario-neutral facts needed to validate Finding operations."""
+
+    case_lifecycle: ReviewCaseLifecycle
+    current_finding_lifecycle: FindingLifecycle | None = None
+    participant_role_keys: frozenset[str] = field(default_factory=frozenset)
+    non_cancelled_action_count: int = 0
+    all_non_cancelled_actions_done: bool = False
+    reason: str | None = None
+
+    def has_participant_role(self, role_key: str) -> bool:
+        return role_key in self.participant_role_keys
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +161,21 @@ class FindingWorkflowPolicy(Protocol):
         action: str,
         context: FindingTransitionContext,
     ) -> FindingLifecycle: ...
+
+
+class FindingOperationPolicy(Protocol):
+    def validate_create(self, context: FindingOperationContext) -> None: ...
+
+    def validate_participant_management(
+        self,
+        context: FindingOperationContext,
+    ) -> None: ...
+
+    def validate_transition(
+        self,
+        action: str,
+        context: FindingOperationContext,
+    ) -> None: ...
 
 
 class ActionItemWorkflowPolicy(Protocol):

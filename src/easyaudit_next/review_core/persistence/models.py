@@ -225,6 +225,9 @@ class FindingRecord(Base):
     lifecycle: Mapped[str] = mapped_column(String(32))
     raised_by: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
     raised_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    scenario_data_json: Mapped[dict[str, object]] = mapped_column(
+        "scenario_data", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
 
 
 class FindingParticipantRecord(Base):

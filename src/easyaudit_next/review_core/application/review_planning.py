@@ -5,6 +5,7 @@ from uuid import uuid4
 from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import UserRepository
+from easyaudit_next.review_core.application.authorization import build_authorization_context
 from easyaudit_next.review_core.domain.ids import (
     ActivityId,
     ReviewCaseId,
@@ -340,19 +341,7 @@ class ReviewPlanningService:
         actor: User,
         case_id: ReviewCaseId,
     ) -> AuthorizationContext:
-        grants = frozenset(
-            RoleGrant(
-                role_key=member.role_key,
-                actor_kind=ActorKind.USER,
-                source=PermissionSource.DIRECT,
-            )
-            for member in self._repository.list_case_members(actor.organization_id, case_id)
-            if member.user_id == actor.id
-        )
-        return AuthorizationContext(
-            is_active_organization_user=actor.is_active,
-            case_role_grants=grants,
-        )
+        return build_authorization_context(self._repository, actor, case_id)
 
     @staticmethod
     def _require_valid_case_role(policy: ScenarioPolicy, role_key: str) -> None:

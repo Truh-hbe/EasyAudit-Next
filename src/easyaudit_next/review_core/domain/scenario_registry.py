@@ -6,6 +6,7 @@ from easyaudit_next.review_core.domain.models import Scenario, ScenarioKey, Scen
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemWorkflowPolicy,
     AuthorizationPolicy,
+    FindingOperationPolicy,
     FindingWorkflowPolicy,
     ReviewCaseCreationPolicy,
     ReviewCaseWorkflowPolicy,
@@ -35,6 +36,9 @@ class ScenarioPolicy(Protocol):
 
     @property
     def finding_workflow(self) -> FindingWorkflowPolicy: ...
+
+    @property
+    def finding_operations(self) -> FindingOperationPolicy: ...
 
     @property
     def action_workflow(self) -> ActionItemWorkflowPolicy: ...
