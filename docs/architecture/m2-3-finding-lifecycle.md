@@ -18,16 +18,55 @@ transition rather than physical deletion.
 
 The application service resolves the Scenario policy from the parent ReviewCase's immutable
 `(ScenarioKey, ScenarioVersion)`. It delegates Finding payload validation, participant role actor
-rules, authorization, and lifecycle calculation to that policy. Review Core contains no
-Process Review branch or Scenario import.
+rules, authorization, operation invariants, and lifecycle calculation to that policy. Review Core
+contains no Process Review branch or Scenario import.
+
+Authorization and operation validity are deliberately separate concerns. Review Core derives the
+current actor's relationship grants for authorization, while it also supplies a Scenario-neutral
+`FindingOperationContext` containing persisted business facts such as:
+
+- parent ReviewCase lifecycle;
+- current Finding lifecycle, when a Finding already exists;
+- the set of FindingParticipant role keys currently present;
+- action-summary fields reserved for later rectification stages; and
+- the operation reason when supplied.
+
+The concrete Scenario decides what those facts mean. The generic service does not compare against
+Process Review lifecycle values and does not know Process Review participant role names.
 
 Process Review v1 permits Case `lead` and `auditor` roles to create, issue, void, and manage
 Finding participants. Direct `owner` and `collaborator` User relationships, and membership in the
 `responsible_department`, grant visibility only at this stage. A Department relationship cannot
 produce Finding write authority.
 
+Process Review v1 freezes these M2.3 operation invariants:
+
+- new Findings may be created only while the parent Case is `in_progress`;
+- an existing open Finding may be issued or voided while the Case is `in_progress` or
+  `awaiting_closure`;
+- `issue` requires both an `owner` User and a `responsible_department` Department before the
+  Finding may enter `rectifying`;
+- `awaiting_closure` therefore permits finalizing an already-created open Finding but does not
+  permit discovering a new one; and
+- ordinary participant management is frozen once the Finding is `closed` or `voided`.
+
+The `awaiting_closure` rule is intentional: fieldwork completion stops new Finding discovery while
+still allowing an already-recorded open Finding to have responsibility completed and be issued or
+voided, avoiding an artificial dead-end during Case closure.
+
 All User and Department participant targets must be active and belong to the Finding's
 organization. Repository reads continue to require both `organization_id` and entity id.
+
+## API error semantics
+
+The API distinguishes validation from concurrency:
+
+- authorization failure: 403;
+- organization-scoped lookup miss: 404;
+- Scenario data, actor-role, workflow, and Finding operation validation failure: 422; and
+- PostgreSQL CAS loss or persistence conflict: 409.
+
+`409 Concurrent Finding transition` remains the concurrency contract.
 
 ## Persistence and lifecycle concurrency
 
@@ -51,6 +90,10 @@ WHERE organization_id = :organization_id
 No matching row produces `409 Concurrent Finding transition`, and no transition Activity is
 written. PostgreSQL double-Session coverage proves that two requests reading `open` cannot both
 record the same transition.
+
+PostgreSQL Finding fixtures follow the real Process Review chain and advance a newly created Case
+through `schedule` and `start` before creating a Finding. Tests also prove that responsibility must
+exist before `issue` and that the Scenario capability, not Review Core branching, owns the rule.
 
 M2.3 intentionally exposes only transitions from `open` to `rectifying` or `voided`. Later
 rectification and verification transitions must be driven by the atomic Submission decision path
