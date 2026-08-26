@@ -1,7 +1,13 @@
 from sqlalchemy import select, update
 
 from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
-from easyaudit_next.review_core.domain.ids import ActionItemId, EvidenceId, FindingId
+from easyaudit_next.review_core.domain.ids import (
+    ActionItemId,
+    EvidenceId,
+    FindingId,
+    ReviewCaseId,
+    SubmissionId,
+)
 from easyaudit_next.review_core.domain.models import (
     ActionAssignee,
     ActionItem,
@@ -169,9 +175,9 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
         )
         return tuple(
             Submission(
-                id=record.id,
+                id=SubmissionId(record.id),
                 organization_id=OrganizationId(record.organization_id),
-                case_id=record.case_id,
+                case_id=ReviewCaseId(record.case_id),
                 finding_id=FindingId(record.finding_id) if record.finding_id is not None else None,
                 purpose=SubmissionPurpose(record.purpose),
                 submitted_by=UserId(record.submitted_by),
