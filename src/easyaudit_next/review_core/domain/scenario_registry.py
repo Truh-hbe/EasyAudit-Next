@@ -4,6 +4,7 @@ from typing import Protocol
 
 from easyaudit_next.review_core.domain.models import Scenario, ScenarioKey, ScenarioVersion
 from easyaudit_next.review_core.domain.scenario_capabilities import (
+    ActionItemOperationPolicy,
     ActionItemWorkflowPolicy,
     AuthorizationPolicy,
     FindingOperationPolicy,
@@ -42,6 +43,9 @@ class ScenarioPolicy(Protocol):
 
     @property
     def action_workflow(self) -> ActionItemWorkflowPolicy: ...
+
+    @property
+    def action_operations(self) -> ActionItemOperationPolicy: ...
 
     @property
     def authorization(self) -> AuthorizationPolicy: ...
