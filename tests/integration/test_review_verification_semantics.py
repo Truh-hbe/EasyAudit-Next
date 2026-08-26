@@ -67,7 +67,12 @@ def _seed_case(
     finding_id = FindingId(uuid4())
 
     with Session(engine) as session, session.begin():
-        session.add(OrganizationRecord(id=organization_id, name=f"M2.5 semantics {organization_id}"))
+        session.add(
+            OrganizationRecord(
+                id=organization_id,
+                name=f"M2.5 semantics {organization_id}",
+            )
+        )
         session.flush()
         users = [
             UserRecord(
