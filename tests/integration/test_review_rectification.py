@@ -29,6 +29,7 @@ from easyaudit_next.platform.persistence.repositories import (
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
 )
+from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
 from easyaudit_next.review_core.application.review_rectification import (
     ConcurrentActionItemTransitionError,
     RectificationService,
@@ -229,6 +230,21 @@ def _create_assigned_action(session: Session, owner_id: UserId, finding_id):
     return service, owner, action_item
 
 
+def _complete_action(service: RectificationService, owner, action_item):
+    action_item = service.transition_action_item(
+        owner,
+        action_item.id,
+        "start",
+        occurred_at=NOW,
+    )
+    return service.transition_action_item(
+        owner,
+        action_item.id,
+        "complete",
+        occurred_at=NOW,
+    )
+
+
 def test_m2_4_migration_adds_action_completion_and_evidence_table(
     postgres_engine: Engine,
 ) -> None:
@@ -263,18 +279,7 @@ def test_real_rectification_chain_persists_evidence_and_reaches_verifying(
             department_id,
         )
         service, _, action_item = _create_assigned_action(session, owner_id, finding.id)
-        action_item = service.transition_action_item(
-            owner,
-            action_item.id,
-            "start",
-            occurred_at=NOW,
-        )
-        action_item = service.transition_action_item(
-            owner,
-            action_item.id,
-            "complete",
-            occurred_at=NOW,
-        )
+        action_item = _complete_action(service, owner, action_item)
         assert action_item.lifecycle is ActionItemLifecycle.DONE
         assert action_item.completed_at == NOW
 
@@ -390,18 +395,7 @@ def test_completion_submission_uses_real_non_cancelled_action_state(
                 occurred_at=NOW,
             )
 
-        action_item = service.transition_action_item(
-            owner,
-            action_item.id,
-            "start",
-            occurred_at=NOW,
-        )
-        service.transition_action_item(
-            owner,
-            action_item.id,
-            "complete",
-            occurred_at=NOW,
-        )
+        _complete_action(service, owner, action_item)
         _, updated = service.submit_rectification(
             owner,
             finding.id,
@@ -413,22 +407,50 @@ def test_completion_submission_uses_real_non_cancelled_action_state(
         session.commit()
 
 
-class _SynchronizedActionRepository(SqlAlchemyRectificationRepository):
+def test_submission_checks_visibility_before_completion_business_validation(
+    postgres_engine: Engine,
+) -> None:
+    organization_id, department_id, lead_id, owner_id = _seed_process_review(postgres_engine)
+    outsider_id = UserId(uuid4())
+    with Session(postgres_engine, expire_on_commit=False) as setup:
+        finding, _ = _create_rectifying_finding(
+            setup,
+            lead_id,
+            owner_id,
+            department_id,
+        )
+        setup.add(
+            UserRecord(
+                id=outsider_id,
+                organization_id=organization_id,
+                display_name="Unrelated User",
+                platform_role="ordinary_user",
+            )
+        )
+        setup.commit()
+
+    with Session(postgres_engine) as session:
+        outsider = SqlAlchemyUserRepository(session).get(outsider_id)
+        assert outsider is not None
+        service = build_rectification_service(session)
+        with pytest.raises(ReviewAuthorizationError, match="not visible"):
+            service.submit_rectification(
+                outsider,
+                finding.id,
+                "submit_for_verification",
+                {"stage": "completion", "comment": "Should not expose state"},
+                occurred_at=NOW,
+            )
+
+
+class _SynchronizedFindingGuardRepository(SqlAlchemyRectificationRepository):
     def __init__(self, session: Session, barrier: Barrier) -> None:
         super().__init__(session)
         self._barrier = barrier
 
-    def update_action_item(
-        self,
-        action_item,
-        *,
-        expected_lifecycle: ActionItemLifecycle,
-    ) -> bool:
+    def lock_finding_for_rectification(self, organization_id, finding_id):
         self._barrier.wait(timeout=10)
-        return super().update_action_item(
-            action_item,
-            expected_lifecycle=expected_lifecycle,
-        )
+        return super().lock_finding_for_rectification(organization_id, finding_id)
 
 
 def test_concurrent_action_transition_allows_only_one_old_state_to_advance(
@@ -452,7 +474,7 @@ def test_concurrent_action_transition_allows_only_one_old_state_to_advance(
         with Session(postgres_engine, expire_on_commit=False) as session:
             owner = SqlAlchemyUserRepository(session).get(owner_id)
             assert owner is not None
-            repository = _SynchronizedActionRepository(session, barrier)
+            repository = _SynchronizedFindingGuardRepository(session, barrier)
             service = _rectification_service(session, repository)
             try:
                 service.transition_action_item(
@@ -495,19 +517,6 @@ def test_concurrent_action_transition_allows_only_one_old_state_to_advance(
         assert transition_count == 1
 
 
-class _SynchronizedFindingRepository(SqlAlchemyRectificationRepository):
-    def __init__(self, session: Session, barrier: Barrier) -> None:
-        super().__init__(session)
-        self._barrier = barrier
-
-    def update_finding(self, finding, *, expected_lifecycle: FindingLifecycle) -> bool:
-        self._barrier.wait(timeout=10)
-        return super().update_finding(
-            finding,
-            expected_lifecycle=expected_lifecycle,
-        )
-
-
 def test_concurrent_completion_submission_creates_one_snapshot_and_one_transition(
     postgres_engine: Engine,
 ) -> None:
@@ -520,18 +529,7 @@ def test_concurrent_completion_submission_creates_one_snapshot_and_one_transitio
             department_id,
         )
         service, _, action_item = _create_assigned_action(setup, owner_id, finding.id)
-        action_item = service.transition_action_item(
-            owner,
-            action_item.id,
-            "start",
-            occurred_at=NOW,
-        )
-        service.transition_action_item(
-            owner,
-            action_item.id,
-            "complete",
-            occurred_at=NOW,
-        )
+        _complete_action(service, owner, action_item)
         finding_id = finding.id
         setup.commit()
 
@@ -541,7 +539,7 @@ def test_concurrent_completion_submission_creates_one_snapshot_and_one_transitio
         with Session(postgres_engine, expire_on_commit=False) as session:
             owner = SqlAlchemyUserRepository(session).get(owner_id)
             assert owner is not None
-            repository = _SynchronizedFindingRepository(session, barrier)
+            repository = _SynchronizedFindingGuardRepository(session, barrier)
             service = _rectification_service(session, repository)
             try:
                 service.submit_rectification(
@@ -600,6 +598,221 @@ def test_concurrent_completion_submission_creates_one_snapshot_and_one_transitio
         assert activity_count == 1
 
 
+def test_completion_racing_done_action_reopen_cannot_break_verifying_invariant(
+    postgres_engine: Engine,
+) -> None:
+    organization_id, department_id, lead_id, owner_id = _seed_process_review(postgres_engine)
+    with Session(postgres_engine, expire_on_commit=False) as setup:
+        finding, owner = _create_rectifying_finding(
+            setup,
+            lead_id,
+            owner_id,
+            department_id,
+        )
+        service, _, action_item = _create_assigned_action(setup, owner_id, finding.id)
+        action_item = _complete_action(service, owner, action_item)
+        finding_id = finding.id
+        action_id = action_item.id
+        setup.commit()
+
+    barrier = Barrier(2)
+
+    def attempt_completion() -> str:
+        with Session(postgres_engine, expire_on_commit=False) as session:
+            owner = SqlAlchemyUserRepository(session).get(owner_id)
+            assert owner is not None
+            service = _rectification_service(
+                session,
+                _SynchronizedFindingGuardRepository(session, barrier),
+            )
+            try:
+                service.submit_rectification(
+                    owner,
+                    finding_id,
+                    "submit_for_verification",
+                    {"stage": "completion", "comment": "Race with reopen"},
+                    occurred_at=NOW,
+                )
+                session.commit()
+                return "completion_success"
+            except ConcurrentFindingTransitionError:
+                session.rollback()
+                return "completion_conflict"
+            except ValueError:
+                session.rollback()
+                return "completion_invalid"
+
+    def attempt_reopen() -> str:
+        with Session(postgres_engine, expire_on_commit=False) as session:
+            owner = SqlAlchemyUserRepository(session).get(owner_id)
+            assert owner is not None
+            service = _rectification_service(
+                session,
+                _SynchronizedFindingGuardRepository(session, barrier),
+            )
+            try:
+                service.transition_action_item(
+                    owner,
+                    action_id,
+                    "reopen",
+                    occurred_at=NOW,
+                )
+                session.commit()
+                return "reopen_success"
+            except ConcurrentFindingTransitionError:
+                session.rollback()
+                return "reopen_conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = {
+            executor.submit(attempt_completion).result(),
+            executor.submit(attempt_reopen).result(),
+        }
+
+    assert outcomes in (
+        {"completion_success", "reopen_conflict"},
+        {"completion_invalid", "reopen_success"},
+    )
+    with Session(postgres_engine) as verification:
+        finding_lifecycle = verification.scalar(
+            select(FindingRecord.lifecycle).where(
+                FindingRecord.organization_id == organization_id,
+                FindingRecord.id == finding_id,
+            )
+        )
+        action_lifecycle = verification.scalar(
+            select(ActionItemRecord.lifecycle).where(
+                ActionItemRecord.organization_id == organization_id,
+                ActionItemRecord.id == action_id,
+            )
+        )
+        completion_count = verification.scalar(
+            select(func.count())
+            .select_from(SubmissionRecord)
+            .where(
+                SubmissionRecord.organization_id == organization_id,
+                SubmissionRecord.finding_id == finding_id,
+                SubmissionRecord.payload_json["stage"].as_string() == "completion",
+            )
+        )
+        assert (finding_lifecycle, action_lifecycle) != ("verifying", "in_progress")
+        if finding_lifecycle == "verifying":
+            assert action_lifecycle == "done"
+            assert completion_count == 1
+        else:
+            assert finding_lifecycle == "rectifying"
+            assert action_lifecycle == "in_progress"
+            assert completion_count == 0
+
+
+def test_completion_racing_action_create_cannot_admit_new_todo_after_cutover(
+    postgres_engine: Engine,
+) -> None:
+    organization_id, department_id, lead_id, owner_id = _seed_process_review(postgres_engine)
+    with Session(postgres_engine, expire_on_commit=False) as setup:
+        finding, owner = _create_rectifying_finding(
+            setup,
+            lead_id,
+            owner_id,
+            department_id,
+        )
+        service, _, action_item = _create_assigned_action(setup, owner_id, finding.id)
+        _complete_action(service, owner, action_item)
+        finding_id = finding.id
+        setup.commit()
+
+    barrier = Barrier(2)
+
+    def attempt_completion() -> str:
+        with Session(postgres_engine, expire_on_commit=False) as session:
+            owner = SqlAlchemyUserRepository(session).get(owner_id)
+            assert owner is not None
+            service = _rectification_service(
+                session,
+                _SynchronizedFindingGuardRepository(session, barrier),
+            )
+            try:
+                service.submit_rectification(
+                    owner,
+                    finding_id,
+                    "submit_for_verification",
+                    {"stage": "completion", "comment": "Race with Action create"},
+                    occurred_at=NOW,
+                )
+                session.commit()
+                return "completion_success"
+            except ConcurrentFindingTransitionError:
+                session.rollback()
+                return "completion_conflict"
+            except ValueError:
+                session.rollback()
+                return "completion_invalid"
+
+    def attempt_create() -> str:
+        with Session(postgres_engine, expire_on_commit=False) as session:
+            owner = SqlAlchemyUserRepository(session).get(owner_id)
+            assert owner is not None
+            service = _rectification_service(
+                session,
+                _SynchronizedFindingGuardRepository(session, barrier),
+            )
+            try:
+                service.create_action_item(
+                    owner,
+                    finding_id,
+                    "Concurrent new Action",
+                    occurred_at=NOW,
+                )
+                session.commit()
+                return "create_success"
+            except ConcurrentFindingTransitionError:
+                session.rollback()
+                return "create_conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        completion_future = executor.submit(attempt_completion)
+        create_future = executor.submit(attempt_create)
+        outcomes = {completion_future.result(), create_future.result()}
+
+    assert outcomes in (
+        {"completion_success", "create_conflict"},
+        {"completion_invalid", "create_success"},
+    )
+    with Session(postgres_engine) as verification:
+        finding_lifecycle = verification.scalar(
+            select(FindingRecord.lifecycle).where(
+                FindingRecord.organization_id == organization_id,
+                FindingRecord.id == finding_id,
+            )
+        )
+        action_lifecycles = tuple(
+            verification.scalars(
+                select(ActionItemRecord.lifecycle)
+                .where(
+                    ActionItemRecord.organization_id == organization_id,
+                    ActionItemRecord.finding_id == finding_id,
+                )
+                .order_by(ActionItemRecord.lifecycle)
+            )
+        )
+        completion_count = verification.scalar(
+            select(func.count())
+            .select_from(SubmissionRecord)
+            .where(
+                SubmissionRecord.organization_id == organization_id,
+                SubmissionRecord.finding_id == finding_id,
+                SubmissionRecord.payload_json["stage"].as_string() == "completion",
+            )
+        )
+        if finding_lifecycle == "verifying":
+            assert action_lifecycles == ("done",)
+            assert completion_count == 1
+        else:
+            assert finding_lifecycle == "rectifying"
+            assert sorted(action_lifecycles) == ["done", "todo"]
+            assert completion_count == 0
+
+
 class _RejectSubmissionRepository(SqlAlchemyRectificationRepository):
     """Fail a formal Submission after the Finding CAS has already flushed."""
 
@@ -631,18 +844,7 @@ def test_completion_submission_failure_rolls_back_finding_cas_and_snapshot(
             department_id,
         )
         service, _, action_item = _create_assigned_action(setup, owner_id, finding.id)
-        action_item = service.transition_action_item(
-            owner,
-            action_item.id,
-            "start",
-            occurred_at=NOW,
-        )
-        service.transition_action_item(
-            owner,
-            action_item.id,
-            "complete",
-            occurred_at=NOW,
-        )
+        _complete_action(service, owner, action_item)
         finding_id = finding.id
         setup.commit()
 
