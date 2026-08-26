@@ -9,6 +9,7 @@ from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
     ActivityId,
     DepartmentId,
+    EvidenceId,
     FindingId,
     OrganizationId,
     ReviewCaseId,
@@ -153,6 +154,7 @@ class ActionItem:
     title: str
     lifecycle: ActionItemLifecycle
     due_at: datetime | None
+    completed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +182,23 @@ class ActionAssignee:
     actor: ParticipantActor
     role: AssignmentRole
     assigned_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class Evidence:
+    """Immutable evidence metadata anchored to one ActionItem."""
+
+    id: EvidenceId
+    organization_id: OrganizationId
+    action_item_id: ActionItemId
+    storage_key: str
+    original_name: str
+    content_type: str | None
+    size_bytes: int
+    sha256: str
+    description: str | None
+    uploaded_by: UserId
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
