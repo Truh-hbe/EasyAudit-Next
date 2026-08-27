@@ -13,7 +13,11 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActorKind,
     AuthorizationContext,
     AuthorizationPolicy,
+    CollaborationRecipientPolicy,
     PermissionSource,
+)
+from easyaudit_next.scenarios.process_review.recipient_policy import (
+    ProcessReviewCollaborationRecipientPolicy,
 )
 from easyaudit_next.scenarios.process_review.v1 import (
     ProcessReviewActionItemAction,
@@ -121,6 +125,9 @@ class ProcessReviewV1Policy(ProcessReviewV1BasePolicy):
     )
     authorization: AuthorizationPolicy = field(
         default_factory=ProcessReviewRectificationAuthorizationPolicy
+    )
+    collaboration_recipients: CollaborationRecipientPolicy = field(
+        default_factory=ProcessReviewCollaborationRecipientPolicy
     )
 
 
