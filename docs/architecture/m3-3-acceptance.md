@@ -185,6 +185,75 @@ Deterministic ordering must be proven. For the initial risk-oriented order this 
 
 Repeated requests against unchanged data must return the same order.
 
+## Authorization-safe external pagination
+
+External pagination is defined over the final authorized management collection. CI must reject implementations that apply the API's external `limit`/`offset` (or cursor progression) to raw direct-CaseMember candidates before exact Scenario authorization.
+
+The required observable semantics are equivalent to:
+
+```text
+organization scope
+    ↓
+candidate discovery
+    ↓
+exact historical ScenarioVersion
+    ↓
+target-specific AuthorizationContext
+    ↓
+manage_case_members
+    +
+view_case
+    ↓
+AUTHORIZED MANAGEMENT SET
+    ↓
+authorized child projection
+    ↓
+filter
+    ↓
+deterministic order
+    ↓
+external pagination
+```
+
+Internal bounded candidate scanning/chunking is allowed. The Acceptance contract does not require one unbounded in-memory candidate load. However, the externally visible result must be indistinguishable from authorizing the relevant candidate set before applying page positions.
+
+CI must include an anti-cheat shape equivalent to this ordered candidate sequence:
+
+```text
+A   authorized
+H1  hidden: direct CaseMember candidate but not management-authorized
+B   authorized
+H2  hidden
+C   authorized
+```
+
+With `limit=2`, the collection must return:
+
+```text
+page 1, offset=0 → A, B
+page 2, offset=2 → C
+```
+
+The test must then insert/remove or otherwise vary H1/H2 without changing A/B/C or their authorized ordering and prove:
+
+```text
+page 1 remains → A, B
+page 2 remains → C
+```
+
+In particular, CI must prove that an unauthorized candidate Case:
+
+- does not consume an external page position;
+- does not cause a short page when enough later authorized Cases exist;
+- is excluded from any returned `total`/`total_count`;
+- does not affect `has_more` if such metadata is exposed;
+- does not affect `next_cursor` if cursor pagination is exposed; and
+- does not move authorized Cases between externally visible pages merely because hidden candidates are added or removed.
+
+If the initial API does not expose `total`, `has_more`, or cursor metadata, those assertions are not required yet; but any such metadata added within M3.3 must be derived solely from the authorized, filtered collection.
+
+This test is a privacy as well as correctness gate: page fullness, offsets, totals, and cursor behavior must not become a side channel for hidden same-Organization candidate Cases.
+
 ## Progress detail
 
 For an authorized managed Case, the detail endpoint must return one coherent `as_of` snapshot containing only authorized facts.
@@ -203,12 +272,14 @@ PostgreSQL integration tests must prove the dashboard does not use one query loo
 
 At minimum:
 
-- candidate Case membership discovery is bulk;
+- candidate Case membership discovery is bulk or internally batch-scanned;
 - Scenario metadata loading is category-bounded;
 - relationship facts used for authorization are bulk-loaded and grouped by target;
 - Finding lifecycle aggregation is bulk/category-bounded;
 - Action lifecycle/deadline aggregation is bulk/category-bounded; and
 - increasing managed Case count materially, for example from 5 to 50/100, does not produce proportional SQL statement growth.
+
+Authorization-safe pagination and category-bounded query behavior must hold simultaneously. CI must not accept candidate-level external `LIMIT/OFFSET` followed by Python Policy filtering merely because that implementation has a low SQL statement count.
 
 The test must not freeze one exact SQL count as a permanent contract, but it may enforce a small implementation-level upper bound to catch N+1 regressions.
 
@@ -280,6 +351,8 @@ Case F: other Organization
 ```
 
 The collection must include only authorized managed Cases, compute Case/Finding/Action factual progress correctly, classify deadlines correctly, and leak nothing from B/C/D-hidden/E/F.
+
+The collection pagination proof must additionally interleave authorized and unauthorized direct-CaseMember candidates and prove hidden candidates cannot consume page positions or perturb pagination metadata/order as specified above.
 
 The detail endpoint for Case A must expose the authorized factual drill-down and use the same captured `as_of` semantics.
 
