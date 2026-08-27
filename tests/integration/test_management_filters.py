@@ -1,7 +1,7 @@
 import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, create_engine
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.management.schemas import ManagementDeadlineFilter
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
-from easyaudit_next.platform.domain.models import User
+from easyaudit_next.platform.domain.models import PlatformRole, User
 from easyaudit_next.platform.persistence.models import OrganizationRecord, UserRecord
 from easyaudit_next.review_core.domain.models import (
     ReviewCaseLifecycle,
@@ -137,7 +137,7 @@ def test_collection_filters_never_broaden_authorized_management_scope(
 
         def managed_case(
             title: str,
-            plan_id: object,
+            plan_id: UUID,
             lifecycle: str,
             deadline: datetime,
         ) -> ReviewCaseRecord:
@@ -207,6 +207,7 @@ def test_collection_filters_never_broaden_authorized_management_scope(
         id=user_id,
         organization_id=organization_id,
         display_name="Filter Caller",
+        platform_role=PlatformRole.ORDINARY_USER,
     )
     with Session(postgres_engine) as session:
         service = ManagementQueryService(session, _registry())
