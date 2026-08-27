@@ -128,8 +128,7 @@ def downgrade() -> None:
             IF EXISTS (
                 SELECT 1 FROM notifications WHERE automatic_origin_key IS NOT NULL
             ) THEN
-                RAISE EXCEPTION
-                    'Cannot downgrade M3.4 Notification provenance while automatic reminder rows exist';
+                RAISE EXCEPTION 'Cannot downgrade while automatic reminder rows exist';
             END IF;
         END;
         $$
