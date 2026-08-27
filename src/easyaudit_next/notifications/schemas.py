@@ -3,7 +3,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from easyaudit_next.notifications.models import NotificationKind, NotificationSubjectKind
+from easyaudit_next.notifications.models import (
+    NotificationKind,
+    NotificationOriginKind,
+    NotificationSubjectKind,
+)
 
 
 class NotificationSubjectResponse(BaseModel):
@@ -18,7 +22,9 @@ class NotificationResponse(BaseModel):
 
     id: UUID
     kind: NotificationKind
-    origin_activity_id: UUID
+    origin_kind: NotificationOriginKind
+    origin_activity_id: UUID | None
+    automatic_origin_key: str | None
     subject: NotificationSubjectResponse
     title: str
     body: str
