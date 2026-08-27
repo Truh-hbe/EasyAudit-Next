@@ -15,7 +15,7 @@ from easyaudit_next.notifications.service import NotificationService
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.persistence.models import UserRecord
-from easyaudit_next.review_core.domain.ids import ActivityId, FindingId
+from easyaudit_next.review_core.domain.ids import ActionItemId, ActivityId, FindingId
 from easyaudit_next.review_core.domain.models import (
     ActionItemActivitySubject,
     Activity,
@@ -158,10 +158,11 @@ class ManualNudgeService:
             raise NudgeValidationError("No eligible nudge recipients")
 
         now = self._occurred_at(occurred_at)
+        typed_action_id = ActionItemId(action.id)
         activity = Activity(
             id=ActivityId(uuid4()),
             organization_id=actor.organization_id,
-            subject=ActionItemActivitySubject(action.id),
+            subject=ActionItemActivitySubject(typed_action_id),
             event_type="action_item.nudged",
             actor_id=actor.id,
             occurred_at=now,
@@ -173,7 +174,7 @@ class ManualNudgeService:
             recipients=recipients,
             kind=NotificationKind.MANUAL_ACTION_NUDGE,
             origin_activity_id=activity.id,
-            subject=ActionItemNotificationSubject(action.id),
+            subject=ActionItemNotificationSubject(typed_action_id),
             title="ActionItem nudge",
             body="An ActionItem needs your attention.",
             created_at=now,
@@ -270,51 +271,61 @@ class ManualNudgeService:
             lambda: defaultdict(set)
         )
         for participant in participants:
-            grant: RoleGrant
-            recipient_ids: set[UUID]
+            participant_grant: RoleGrant
+            participant_recipient_ids: set[UUID]
             if participant.user_id is not None:
-                grant = RoleGrant(
+                participant_grant = RoleGrant(
                     role_key=participant.role_key,
                     actor_kind=ActorKind.USER,
                     source=PermissionSource.DIRECT,
                 )
-                recipient_ids = {participant.user_id} if participant.user_id in user_ids else set()
+                participant_recipient_ids = (
+                    {participant.user_id} if participant.user_id in user_ids else set()
+                )
             elif participant.department_id is not None:
-                grant = RoleGrant(
+                participant_grant = RoleGrant(
                     role_key=participant.role_key,
                     actor_kind=ActorKind.DEPARTMENT,
                     source=PermissionSource.DEPARTMENT_MEMBERSHIP,
                 )
-                recipient_ids = users_by_department.get(participant.department_id, set())
+                participant_recipient_ids = users_by_department.get(
+                    participant.department_id,
+                    set(),
+                )
             else:
                 continue
-            for user_id in recipient_ids:
-                finding_grants[participant.finding_id][user_id].add(grant)
+            for user_id in participant_recipient_ids:
+                finding_grants[participant.finding_id][user_id].add(participant_grant)
 
         action_grants: dict[UUID, dict[UUID, set[RoleGrant]]] = defaultdict(
             lambda: defaultdict(set)
         )
         for assignee in assignees:
-            grant: RoleGrant
-            recipient_ids: set[UUID]
+            assignee_grant: RoleGrant
+            assignee_recipient_ids: set[UUID]
             if assignee.user_id is not None:
-                grant = RoleGrant(
+                assignee_grant = RoleGrant(
                     role_key=assignee.role,
                     actor_kind=ActorKind.USER,
                     source=PermissionSource.DIRECT,
                 )
-                recipient_ids = {assignee.user_id} if assignee.user_id in user_ids else set()
+                assignee_recipient_ids = (
+                    {assignee.user_id} if assignee.user_id in user_ids else set()
+                )
             elif assignee.department_id is not None:
-                grant = RoleGrant(
+                assignee_grant = RoleGrant(
                     role_key=assignee.role,
                     actor_kind=ActorKind.DEPARTMENT,
                     source=PermissionSource.DEPARTMENT_MEMBERSHIP,
                 )
-                recipient_ids = users_by_department.get(assignee.department_id, set())
+                assignee_recipient_ids = users_by_department.get(
+                    assignee.department_id,
+                    set(),
+                )
             else:
                 continue
-            for user_id in recipient_ids:
-                action_grants[assignee.action_item_id][user_id].add(grant)
+            for user_id in assignee_recipient_ids:
+                action_grants[assignee.action_item_id][user_id].add(assignee_grant)
 
         finding_by_id = {record.id: record for record in findings}
         actions_by_finding: dict[UUID, set[UUID]] = defaultdict(set)
