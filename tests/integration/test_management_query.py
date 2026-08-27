@@ -144,14 +144,14 @@ def _case(
         scenario_version_id=version_id,
         title=title,
         lifecycle=lifecycle,
-        planned_start_at=NOW - timedelta(days=2),
+        planned_start_at=NOW - timedelta(days=60),
         planned_end_at=planned_end_at,
         started_at=NOW - timedelta(days=1),
         fieldwork_completed_at=None,
         closed_at=None,
         scenario_data_json={},
         created_by=creator_id,
-        created_at=NOW - timedelta(days=3),
+        created_at=NOW - timedelta(days=61),
     )
     session.add(record)
     session.flush()
@@ -394,16 +394,24 @@ def test_child_projection_authorizes_before_aggregating_and_keeps_deadline_seman
         )
         _member(session, organization_id, review_case.id, caller_id, "manage")
 
-        visible = _finding(
-            session,
-            organization_id,
-            review_case.id,
-            caller_id,
-            "Visible Finding",
-            lifecycle="rectifying",
-            severity="high",
-            raised_at=NOW - timedelta(hours=2),
-        )
+        visible_findings: list[FindingRecord] = []
+        for index, lifecycle in enumerate(
+            ("open", "rectifying", "verifying", "closed", "voided")
+        ):
+            finding = _finding(
+                session,
+                organization_id,
+                review_case.id,
+                caller_id,
+                f"Visible {lifecycle}",
+                lifecycle=lifecycle,
+                severity="high" if lifecycle == "rectifying" else "medium",
+                raised_at=NOW - timedelta(hours=10 - index),
+            )
+            _participant(session, organization_id, finding.id, caller_id, "visible")
+            visible_findings.append(finding)
+        visible = visible_findings[1]
+
         hidden = _finding(
             session,
             organization_id,
@@ -414,7 +422,6 @@ def test_child_projection_authorizes_before_aggregating_and_keeps_deadline_seman
             severity="critical",
             raised_at=NOW - timedelta(hours=1),
         )
-        _participant(session, organization_id, visible.id, caller_id, "visible")
 
         overdue = _action(
             session,
@@ -432,6 +439,14 @@ def test_child_projection_authorizes_before_aggregating_and_keeps_deadline_seman
             "Visible done",
             lifecycle="done",
             due_at=NOW - timedelta(days=2),
+        )
+        cancelled = _action(
+            session,
+            organization_id,
+            visible.id,
+            "Visible cancelled",
+            lifecycle="cancelled",
+            due_at=NOW - timedelta(days=3),
         )
         due_now = _action(
             session,
@@ -473,6 +488,26 @@ def test_child_projection_authorizes_before_aggregating_and_keeps_deadline_seman
             planned_end_at=NOW - timedelta(days=30),
         )
         _member(session, organization_id, closed_case.id, caller_id, "manage")
+        due_now_case = _case(
+            session,
+            organization_id,
+            caller_id,
+            version_one_id,
+            "Case due now",
+            lifecycle="scheduled",
+            planned_end_at=NOW,
+        )
+        _member(session, organization_id, due_now_case.id, caller_id, "manage")
+        no_deadline_case = _case(
+            session,
+            organization_id,
+            caller_id,
+            version_one_id,
+            "Case without deadline",
+            lifecycle="scheduled",
+            planned_end_at=None,
+        )
+        _member(session, organization_id, no_deadline_case.id, caller_id, "manage")
 
     actor = _actor(organization_id, department_id, caller_id)
     with Session(postgres_engine) as session:
@@ -482,25 +517,32 @@ def test_child_projection_authorizes_before_aggregating_and_keeps_deadline_seman
 
     summary = next(item for item in collection.items if item.id == review_case.id)
     assert summary.deadline_bucket is DeadlineBucket.OVERDUE
-    assert summary.findings.total == 1
+    assert summary.findings.total == 5
+    assert summary.findings.open == 1
     assert summary.findings.rectifying == 1
-    assert summary.findings.verifying == 0
-    assert summary.actions.total == 5
-    assert summary.actions.in_progress == 1
+    assert summary.findings.verifying == 1
+    assert summary.findings.closed == 1
+    assert summary.findings.voided == 1
+    assert summary.actions.total == 6
     assert summary.actions.todo == 3
+    assert summary.actions.in_progress == 1
     assert summary.actions.done == 1
+    assert summary.actions.cancelled == 1
     assert summary.actions.overdue == 1
     assert summary.actions.due_soon == 2
 
-    closed_summary = next(item for item in collection.items if item.id == closed_case.id)
-    assert closed_summary.deadline_bucket is DeadlineBucket.NONE
+    summaries = {item.id: item for item in collection.items}
+    assert summaries[closed_case.id].deadline_bucket is DeadlineBucket.NONE
+    assert summaries[due_now_case.id].deadline_bucket is DeadlineBucket.DUE_SOON
+    assert summaries[no_deadline_case.id].deadline_bucket is DeadlineBucket.NONE
 
-    assert [item.id for item in progress.findings] == [visible.id]
+    assert [item.id for item in progress.findings] == [item.id for item in visible_findings]
     assert [item.id for item in progress.overdue_actions] == [overdue.id]
     assert [item.id for item in progress.due_soon_actions] == [due_now.id, due_seven_days.id]
     assert hidden.id not in {item.id for item in progress.findings}
     assert hidden_overdue.id not in {item.id for item in progress.overdue_actions}
     assert done.id not in {item.id for item in progress.overdue_actions}
+    assert cancelled.id not in {item.id for item in progress.overdue_actions}
     assert no_deadline.id not in {item.id for item in progress.due_soon_actions}
 
 
@@ -549,6 +591,11 @@ def test_management_scope_does_not_inherit_platform_admin_or_known_uuid_access(
             service.get_progress(actor, view_only.id, as_of=NOW)
         with pytest.raises(LookupError, match="Managed ReviewCase not found"):
             service.get_progress(actor, other_case.id, as_of=NOW)
+        assert service.list_review_cases(
+            actor,
+            review_plan_id=uuid4(),
+            as_of=NOW,
+        ).items == ()
 
     admin = _actor(
         organization_id,
@@ -557,10 +604,12 @@ def test_management_scope_does_not_inherit_platform_admin_or_known_uuid_access(
         platform_role=PlatformRole.SYSTEM_ADMIN,
     )
     with Session(postgres_engine) as session:
-        assert ManagementQueryService(session, _registry()).list_review_cases(
+        admin_page = ManagementQueryService(session, _registry()).list_review_cases(
             admin,
             as_of=NOW,
-        ).items == ()
+        )
+    assert admin_page.items == ()
+    assert admin_page.total == 0
 
     other_actor = _actor(other_organization_id, other_department_id, other_user_id)
     with Session(postgres_engine) as session:
