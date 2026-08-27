@@ -5,7 +5,12 @@ from typing import NewType
 from uuid import UUID
 
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
-from easyaudit_next.review_core.domain.ids import ActionItemId, ActivityId, FindingId, ReviewCaseId
+from easyaudit_next.review_core.domain.ids import (
+    ActionItemId,
+    ActivityId,
+    FindingId,
+    ReviewCaseId,
+)
 
 NotificationId = NewType("NotificationId", UUID)
 

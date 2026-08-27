@@ -20,7 +20,6 @@ from easyaudit_next.review_core.application.mutation_results import (
     RectificationSubmissionResult,
 )
 from easyaudit_next.review_core.domain.models import (
-    DepartmentActor,
     FindingLifecycle,
     ParticipantActor,
     ScenarioKey,
@@ -252,7 +251,10 @@ class NotificationOrchestrator:
                     actor_kind=ActorKind.DEPARTMENT,
                     source=PermissionSource.DEPARTMENT_MEMBERSHIP,
                 )
-                for user_id in users_by_department.get(participant.department_id, set()):
+                for user_id in users_by_department.get(
+                    participant.department_id,
+                    set(),
+                ):
                     finding_grants[user_id].add(grant)
 
         actions = tuple(
@@ -286,7 +288,10 @@ class NotificationOrchestrator:
                         actor_kind=ActorKind.DEPARTMENT,
                         source=PermissionSource.DEPARTMENT_MEMBERSHIP,
                     )
-                    for user_id in users_by_department.get(assignee.department_id, set()):
+                    for user_id in users_by_department.get(
+                        assignee.department_id,
+                        set(),
+                    ):
                         action_grants[user_id].add(grant)
 
         recipients: list[UserId] = []

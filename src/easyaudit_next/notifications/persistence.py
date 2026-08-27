@@ -33,7 +33,11 @@ from easyaudit_next.platform.domain.ids import OrganizationId, UserId
 class NotificationRecord(Base):
     __tablename__ = "notifications"
     __table_args__ = (
-        UniqueConstraint("id", "organization_id", name="uq_notifications_id_organization"),
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_notifications_id_organization",
+        ),
         ForeignKeyConstraint(
             ["recipient_user_id", "organization_id"],
             ["users.id", "users.organization_id"],
@@ -62,8 +66,14 @@ class NotificationRecord(Base):
             "num_nonnulls(review_case_id, finding_id, action_item_id) = 1",
             name="ck_notifications_exactly_one_subject",
         ),
-        CheckConstraint("kind = btrim(kind) AND kind <> ''", name="ck_notifications_kind"),
-        CheckConstraint("title = btrim(title) AND title <> ''", name="ck_notifications_title"),
+        CheckConstraint(
+            "kind = btrim(kind) AND kind <> ''",
+            name="ck_notifications_kind",
+        ),
+        CheckConstraint(
+            "title = btrim(title) AND title <> ''",
+            name="ck_notifications_title",
+        ),
         UniqueConstraint(
             "organization_id",
             "recipient_user_id",
@@ -90,20 +100,31 @@ class NotificationRecord(Base):
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
     organization_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey("organizations.id", name="fk_notifications_organization", ondelete="RESTRICT"),
+        ForeignKey(
+            "organizations.id",
+            name="fk_notifications_organization",
+            ondelete="RESTRICT",
+        ),
     )
     recipient_user_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
     kind: Mapped[str] = mapped_column(String(100))
     origin_activity_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey("activities.id", name="fk_notifications_origin_activity", ondelete="RESTRICT"),
+        ForeignKey(
+            "activities.id",
+            name="fk_notifications_origin_activity",
+            ondelete="RESTRICT",
+        ),
     )
     review_case_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     finding_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     action_item_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     title: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -133,7 +154,9 @@ class SqlAlchemyNotificationRepository:
                 }
             )
         statement = postgresql_insert(NotificationRecord).values(values)
-        statement = statement.on_conflict_do_nothing(constraint="uq_notifications_delivery")
+        statement = statement.on_conflict_do_nothing(
+            constraint="uq_notifications_delivery"
+        )
         self._session.execute(statement)
 
     def list_for_recipient(
@@ -151,7 +174,10 @@ class SqlAlchemyNotificationRepository:
                     NotificationRecord.organization_id == organization_id,
                     NotificationRecord.recipient_user_id == recipient_user_id,
                 )
-                .order_by(NotificationRecord.created_at.desc(), NotificationRecord.id.desc())
+                .order_by(
+                    NotificationRecord.created_at.desc(),
+                    NotificationRecord.id.desc(),
+                )
                 .limit(limit)
                 .offset(offset)
             )

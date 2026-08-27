@@ -23,7 +23,11 @@ def upgrade() -> None:
         sa.Column(
             "organization_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("organizations.id", name="fk_notifications_organization", ondelete="RESTRICT"),
+            sa.ForeignKey(
+                "organizations.id",
+                name="fk_notifications_organization",
+                ondelete="RESTRICT",
+            ),
             nullable=False,
         ),
         sa.Column("recipient_user_id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -50,7 +54,11 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("read_at", sa.DateTime(timezone=True), nullable=True),
-        sa.UniqueConstraint("id", "organization_id", name="uq_notifications_id_organization"),
+        sa.UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_notifications_id_organization",
+        ),
         sa.ForeignKeyConstraint(
             ["recipient_user_id", "organization_id"],
             ["users.id", "users.organization_id"],
@@ -79,8 +87,14 @@ def upgrade() -> None:
             "num_nonnulls(review_case_id, finding_id, action_item_id) = 1",
             name="ck_notifications_exactly_one_subject",
         ),
-        sa.CheckConstraint("kind = btrim(kind) AND kind <> ''", name="ck_notifications_kind"),
-        sa.CheckConstraint("title = btrim(title) AND title <> ''", name="ck_notifications_title"),
+        sa.CheckConstraint(
+            "kind = btrim(kind) AND kind <> ''",
+            name="ck_notifications_kind",
+        ),
+        sa.CheckConstraint(
+            "title = btrim(title) AND title <> ''",
+            name="ck_notifications_title",
+        ),
         sa.UniqueConstraint(
             "organization_id",
             "recipient_user_id",
@@ -179,7 +193,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS trg_notifications_immutable ON notifications")
     op.execute("DROP FUNCTION IF EXISTS enforce_notification_immutability()")
-    op.execute("DROP TRIGGER IF EXISTS trg_notifications_origin_organization ON notifications")
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_notifications_origin_organization ON notifications"
+    )
     op.execute("DROP FUNCTION IF EXISTS enforce_notification_origin_organization()")
     op.drop_index("ix_notifications_unread", table_name="notifications")
     op.drop_index("ix_notifications_inbox", table_name="notifications")
