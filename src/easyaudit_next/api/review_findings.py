@@ -17,7 +17,10 @@ from easyaudit_next.platform.domain.ids import DepartmentId, UserId
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
 )
-from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
+from easyaudit_next.review_core.application.review_planning import (
+    ConcurrentCaseTransitionError,
+    ReviewAuthorizationError,
+)
 from easyaudit_next.review_core.domain.ids import FindingId, ReviewCaseId
 from easyaudit_next.review_core.domain.models import (
     DepartmentActor,
@@ -66,7 +69,10 @@ def _raise_api_error(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    if isinstance(exc, (ConcurrentFindingTransitionError, IntegrityError)):
+    if isinstance(
+        exc,
+        (ConcurrentCaseTransitionError, ConcurrentFindingTransitionError, IntegrityError),
+    ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(
@@ -101,7 +107,13 @@ def create_finding(
             payload.scenario_data,
             description=payload.description,
         )
-    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+    except (
+        ConcurrentCaseTransitionError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _finding_response(finding)
 
