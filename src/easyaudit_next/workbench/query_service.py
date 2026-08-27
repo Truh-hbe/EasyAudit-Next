@@ -82,50 +82,54 @@ class WorkbenchQueryService:
         finding_participants = self._load_finding_participants(actor)
         action_assignees = self._load_action_assignees(actor)
 
-        assigned_action_ids = {record.action_item_id for record in action_assignees}
+        assigned_action_ids = {
+            assignee.action_item_id for assignee in action_assignees
+        }
         actions = self._load_actions(actor, assigned_action_ids)
-        action_by_id = {record.id: record for record in actions}
+        action_by_id = {action.id: action for action in actions}
 
-        relationship_finding_ids = {record.finding_id for record in finding_participants}
-        relationship_finding_ids.update(record.finding_id for record in actions)
+        relationship_finding_ids = {
+            participant.finding_id for participant in finding_participants
+        }
+        relationship_finding_ids.update(action.finding_id for action in actions)
         findings = self._load_findings(actor, relationship_finding_ids)
-        finding_by_id = {record.id: record for record in findings}
+        finding_by_id = {finding.id: finding for finding in findings}
 
-        case_ids = {record.case_id for record in case_members}
-        case_ids.update(record.case_id for record in findings)
+        case_ids = {case_member.case_id for case_member in case_members}
+        case_ids.update(finding.case_id for finding in findings)
         cases = self._load_cases(actor, case_ids)
-        case_by_id = {record.id: record for record in cases}
+        case_by_id = {review_case.id: review_case for review_case in cases}
 
         versions = self._load_scenario_versions(actor, cases)
-        version_by_id = {record.id: record for record in versions}
+        version_by_id = {version.id: version for version in versions}
         scenarios = self._load_scenarios(actor, versions)
-        scenario_by_id = {record.id: record for record in scenarios}
+        scenario_by_id = {scenario.id: scenario for scenario in scenarios}
 
         case_grants: dict[UUID, set[RoleGrant]] = defaultdict(set)
         case_role_keys: dict[UUID, set[str]] = defaultdict(set)
-        for record in case_members:
-            case_grants[record.case_id].add(
+        for case_member in case_members:
+            case_grants[case_member.case_id].add(
                 RoleGrant(
-                    role_key=record.role_key,
+                    role_key=case_member.role_key,
                     actor_kind=ActorKind.USER,
                     source=PermissionSource.DIRECT,
                 )
             )
-            case_role_keys[record.case_id].add(record.role_key)
+            case_role_keys[case_member.case_id].add(case_member.role_key)
 
         finding_grants: dict[UUID, set[RoleGrant]] = defaultdict(set)
         finding_relationships: dict[UUID, set[RelationshipKey]] = defaultdict(set)
-        for record in finding_participants:
-            grant, relationship = self._participant_fact(record)
-            finding_grants[record.finding_id].add(grant)
-            finding_relationships[record.finding_id].add(relationship)
+        for participant in finding_participants:
+            grant, relationship = self._participant_fact(participant)
+            finding_grants[participant.finding_id].add(grant)
+            finding_relationships[participant.finding_id].add(relationship)
 
         action_grants: dict[UUID, set[RoleGrant]] = defaultdict(set)
         action_relationships: dict[UUID, set[RelationshipKey]] = defaultdict(set)
-        for record in action_assignees:
-            grant, relationship = self._assignee_fact(record)
-            action_grants[record.action_item_id].add(grant)
-            action_relationships[record.action_item_id].add(relationship)
+        for assignee in action_assignees:
+            grant, relationship = self._assignee_fact(assignee)
+            action_grants[assignee.action_item_id].add(grant)
+            action_relationships[assignee.action_item_id].add(relationship)
 
         finding_grants_by_case: dict[UUID, set[RoleGrant]] = defaultdict(set)
         for finding_id, grants in finding_grants.items():
@@ -300,37 +304,43 @@ class WorkbenchQueryService:
 
         due_soon_cases: list[WorkbenchCaseDeadline] = []
         overdue_cases: list[WorkbenchCaseDeadline] = []
-        for item in case_responsibilities:
-            if item.planned_end_at is None or item.lifecycle not in _CASE_DEADLINE_LIFECYCLES:
+        for case_item in case_responsibilities:
+            if (
+                case_item.planned_end_at is None
+                or case_item.lifecycle not in _CASE_DEADLINE_LIFECYCLES
+            ):
                 continue
-            deadline = WorkbenchCaseDeadline(
-                id=item.id,
-                title=item.title,
-                lifecycle=item.lifecycle,
-                deadline=item.planned_end_at,
+            case_deadline = WorkbenchCaseDeadline(
+                id=case_item.id,
+                title=case_item.title,
+                lifecycle=case_item.lifecycle,
+                deadline=case_item.planned_end_at,
             )
-            if item.planned_end_at < captured_at:
-                overdue_cases.append(deadline)
-            elif item.planned_end_at <= captured_at + _DUE_SOON_WINDOW:
-                due_soon_cases.append(deadline)
+            if case_item.planned_end_at < captured_at:
+                overdue_cases.append(case_deadline)
+            elif case_item.planned_end_at <= captured_at + _DUE_SOON_WINDOW:
+                due_soon_cases.append(case_deadline)
 
         due_soon_actions: list[WorkbenchActionDeadline] = []
         overdue_actions: list[WorkbenchActionDeadline] = []
-        for item in action_responsibilities:
-            if item.due_at is None or item.lifecycle not in _ACTION_DEADLINE_LIFECYCLES:
+        for action_item in action_responsibilities:
+            if (
+                action_item.due_at is None
+                or action_item.lifecycle not in _ACTION_DEADLINE_LIFECYCLES
+            ):
                 continue
-            deadline = WorkbenchActionDeadline(
-                id=item.id,
-                finding_id=item.finding_id,
-                case_id=item.case_id,
-                title=item.title,
-                lifecycle=item.lifecycle,
-                deadline=item.due_at,
+            action_deadline = WorkbenchActionDeadline(
+                id=action_item.id,
+                finding_id=action_item.finding_id,
+                case_id=action_item.case_id,
+                title=action_item.title,
+                lifecycle=action_item.lifecycle,
+                deadline=action_item.due_at,
             )
-            if item.due_at < captured_at:
-                overdue_actions.append(deadline)
-            elif item.due_at <= captured_at + _DUE_SOON_WINDOW:
-                due_soon_actions.append(deadline)
+            if action_item.due_at < captured_at:
+                overdue_actions.append(action_deadline)
+            elif action_item.due_at <= captured_at + _DUE_SOON_WINDOW:
+                due_soon_actions.append(action_deadline)
 
         due_soon_cases.sort(key=lambda item: (item.deadline, str(item.id)))
         due_soon_actions.sort(key=lambda item: (item.deadline, str(item.id)))
@@ -443,7 +453,7 @@ class WorkbenchQueryService:
         actor: User,
         cases: tuple[ReviewCaseRecord, ...],
     ) -> tuple[ScenarioVersionRecord, ...]:
-        version_ids = {record.scenario_version_id for record in cases}
+        version_ids = {review_case.scenario_version_id for review_case in cases}
         if not version_ids:
             return ()
         return tuple(
@@ -460,7 +470,7 @@ class WorkbenchQueryService:
         actor: User,
         versions: tuple[ScenarioVersionRecord, ...],
     ) -> tuple[ScenarioRecord, ...]:
-        scenario_ids = {record.scenario_id for record in versions}
+        scenario_ids = {version.scenario_id for version in versions}
         if not scenario_ids:
             return ()
         return tuple(
