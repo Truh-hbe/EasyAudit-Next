@@ -18,7 +18,10 @@ from easyaudit_next.api.review_contracts import (
     RectificationSubmissionResponse,
     SubmissionResponse,
 )
-from easyaudit_next.composition import build_rectification_service
+from easyaudit_next.composition import (
+    build_notification_orchestrator,
+    build_rectification_service,
+)
 from easyaudit_next.platform.domain.ids import DepartmentId, UserId
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
@@ -220,13 +223,15 @@ def add_action_assignee(
         else DepartmentActor(DepartmentId(payload.actor_id))
     )
     service = build_rectification_service(session)
+    notifications = build_notification_orchestrator(session)
     try:
-        assignee = service.add_assignee(
+        result = service.add_assignee_result(
             identity.user,
             ActionItemId(action_item_id),
             assignee_actor,
             payload.role,
         )
+        notifications.action_assignee_added(result)
     except (
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
@@ -235,7 +240,7 @@ def add_action_assignee(
         IntegrityError,
     ) as exc:
         _raise_api_error(exc)
-    return _assignee_response(assignee)
+    return _assignee_response(result.assignee)
 
 
 @review_rectification_router.get(
@@ -353,13 +358,15 @@ def submit_rectification(
     session: DatabaseSession,
 ) -> RectificationSubmissionResponse:
     service = build_rectification_service(session)
+    notifications = build_notification_orchestrator(session)
     try:
-        submission, finding = service.submit_rectification(
+        result = service.submit_rectification_result(
             identity.user,
             FindingId(finding_id),
             payload.action,
             payload.payload,
         )
+        notifications.rectification_submitted(result)
     except (
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
@@ -369,8 +376,8 @@ def submit_rectification(
     ) as exc:
         _raise_api_error(exc)
     return RectificationSubmissionResponse(
-        submission=_submission_response(submission),
-        finding=_finding_response(finding),
+        submission=_submission_response(result.submission),
+        finding=_finding_response(result.finding),
     )
 
 

@@ -14,7 +14,10 @@ from easyaudit_next.api.review_contracts import (
     ReviewPlanCreateRequest,
     ReviewPlanResponse,
 )
-from easyaudit_next.composition import build_review_planning_service
+from easyaudit_next.composition import (
+    build_notification_orchestrator,
+    build_review_planning_service,
+)
 from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.review_core.application.review_planning import (
     ConcurrentCaseTransitionError,
@@ -239,16 +242,18 @@ def add_review_case_member(
     session: DatabaseSession,
 ) -> CaseMemberResponse:
     service = build_review_planning_service(session)
+    notifications = build_notification_orchestrator(session)
     try:
-        member = service.add_case_member(
+        result = service.add_case_member_result(
             identity.user,
             ReviewCaseId(case_id),
             UserId(payload.user_id),
             payload.role_key,
         )
+        notifications.case_member_added(result)
     except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
         _raise_api_error(exc)
-    return _member_response(member)
+    return _member_response(result.member)
 
 
 @review_planning_router.post(
