@@ -38,13 +38,61 @@ CI must prove:
 - delete is not exposed as an ordinary API operation; and
 - only `read_at` has the narrow mutable semantics required by M3.2.
 
+## Exact origin Activity propagation
+
+For every event-backed M3.2 trigger, the exact `ActivityId` created by that business mutation must be surfaced synchronously to the collaboration orchestration layer.
+
+`Notification.origin_activity_id` must come from that exact Activity instance/id. It must not be recovered after the mutation through any Activity lookup or inference.
+
+The required dependency shape is:
+
+```text
+Review Core mutation
+        ↓
+create exact Activity A
+        ↓
+Scenario-neutral mutation result
+(entity/result + ActivityId(A))
+        ↓
+M3.2 collaboration orchestration
+        ↓
+Notification.origin_activity_id = ActivityId(A)
+```
+
+Implementation may use operation-specific mutation result types or an equivalently type-safe generic result. The Activity identity is application-operation output and must not be added as a new property of CaseMember/FindingParticipant/ActionAssignee/Submission entities.
+
+The following implementations are a hard Gate failure:
+
+- `ORDER BY occurred_at/created_at DESC LIMIT 1` to recover the Activity;
+- query by `subject + event_type` after the mutation;
+- timestamp matching;
+- Activity-history scanning; or
+- any other post-mutation query that guesses which Activity belongs to the current operation.
+
+CI must prove this contract for the four required triggers:
+
+- Case membership added;
+- Finding participant added;
+- Action assignee added; and
+- Finding submitted for verification.
+
+At minimum, tests must verify:
+
+- each operation result exposes the exact Activity identity created by that operation;
+- the persisted Notification references that exact identity;
+- concurrent or near-concurrent operations with the same subject and event type cannot cross-bind their Notification provenance;
+- Notification orchestration does not execute a latest-Activity, subject/event-type, timestamp, or history-scan recovery query; and
+- Review Core application code exposes only Scenario-neutral mutation results and does not import or depend on Notification repositories/services/templates.
+
+This Activity identity is also the provenance/idempotency origin used by the Notification uniqueness invariant. Binding a Notification to the wrong Activity is a data-integrity failure even if the user-visible title/body happen to be the same.
+
 ## Event/Notification transaction atomicity
 
 For every M3.2 trigger integrated into an existing request path, the business mutation, its append-only Activity, and required in-app Notification inserts use the same request transaction.
 
 PostgreSQL integration tests must prove both directions:
 
-1. successful business mutation commits its Activity and all required Notification rows together; and
+1. successful business mutation commits its exact Activity and all required Notification rows together; and
 2. forced Notification persistence failure rolls back the business mutation and Activity rather than leaving a committed event without its required M3.2 notification.
 
 M3.2 must not move external delivery into this transaction because external delivery is outside scope.
@@ -58,7 +106,7 @@ The first implementation must cover at least these business occurrences:
 - Action assignee added; and
 - Finding submitted for verification.
 
-Each occurrence must use the existing Activity produced by the M2 write path as the durable event/idempotency origin rather than inventing a competing lifecycle event log.
+Each occurrence must use the exact existing Activity identity surfaced by the M2 write path as the durable event/idempotency origin rather than inventing a competing lifecycle event log or re-querying Activity after the mutation.
 
 Approval/rejection informational notifications, Case completion notifications, comments/mentions, deadline reminders, repeated overdue reminders, escalation, and user preferences remain outside the required Gate unless separately added to scope before implementation.
 
@@ -150,6 +198,8 @@ At minimum:
 - different recipients may each receive one row from the same Activity.
 
 The database must enforce the deduplication key or an equivalent stable uniqueness invariant. String matching on title/body is not acceptable.
+
+Concurrency-safe idempotency must not rely on `SELECT before INSERT`. A uniqueness race must be handled with PostgreSQL atomic conflict semantics or an equivalently safe persistence strategy without poisoning the surrounding business transaction and forcing an otherwise valid mutation to roll back solely because the same logical Notification already exists.
 
 ## Inbox API
 
@@ -247,6 +297,8 @@ Org B
 The proof must show:
 
 - direct relationship events create the correct user-specific Notifications;
+- every Notification is anchored to the exact Activity surfaced by its triggering mutation, not a recovered Activity row;
+- two same-subject/same-event-type mutations cannot cross-bind Notification provenance;
 - Department fan-out includes C and excludes D/F/H as appropriate;
 - verification submission notifies E and excludes F/G/H;
 - one Activity cannot duplicate the same recipient/kind Notification;
