@@ -67,7 +67,7 @@ class AutomaticReminderEvaluator:
             CollaborationRecipientIntent.CASE_DEADLINE,
         )
 
-        current = self._load_case(organization_id, review_case_id, refresh=True)
+        current = self._load_case(organization_id, review_case_id, guard=True)
         if not self._case_is_overdue(current, evaluated_at):
             return AutomaticReminderEvaluation(eligible=False)
         assert current is not None
@@ -125,7 +125,7 @@ class AutomaticReminderEvaluator:
             action_item_id=action.id,
         )
 
-        current = self._load_action(organization_id, action_item_id, refresh=True)
+        current = self._load_action(organization_id, action_item_id, guard=True)
         if not self._action_is_overdue(current, evaluated_at):
             return AutomaticReminderEvaluation(eligible=False)
         assert current is not None
@@ -158,14 +158,14 @@ class AutomaticReminderEvaluator:
         organization_id: OrganizationId,
         review_case_id: UUID,
         *,
-        refresh: bool = False,
+        guard: bool = False,
     ) -> ReviewCaseRecord | None:
         statement = select(ReviewCaseRecord).where(
             ReviewCaseRecord.organization_id == organization_id,
             ReviewCaseRecord.id == review_case_id,
         )
-        if refresh:
-            statement = statement.execution_options(populate_existing=True)
+        if guard:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         return self._session.scalar(statement)
 
     def _load_action(
@@ -173,14 +173,14 @@ class AutomaticReminderEvaluator:
         organization_id: OrganizationId,
         action_item_id: UUID,
         *,
-        refresh: bool = False,
+        guard: bool = False,
     ) -> ActionItemRecord | None:
         statement = select(ActionItemRecord).where(
             ActionItemRecord.organization_id == organization_id,
             ActionItemRecord.id == action_item_id,
         )
-        if refresh:
-            statement = statement.execution_options(populate_existing=True)
+        if guard:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         return self._session.scalar(statement)
 
     @staticmethod
