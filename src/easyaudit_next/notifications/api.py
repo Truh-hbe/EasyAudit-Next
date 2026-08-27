@@ -42,7 +42,9 @@ def _notification_response(item: NotificationItem) -> NotificationResponse:
     return NotificationResponse(
         id=item.id,
         kind=item.kind,
+        origin_kind=item.origin_kind,
         origin_activity_id=item.origin_activity_id,
+        automatic_origin_key=item.automatic_origin_key,
         subject=subject,
         title=item.title,
         body=item.body,
