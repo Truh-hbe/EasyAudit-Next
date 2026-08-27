@@ -39,6 +39,14 @@ class PermissionSource(StrEnum):
     DEPARTMENT_MEMBERSHIP = "department_membership"
 
 
+class CollaborationRecipientIntent(StrEnum):
+    """Versioned collaboration responsibility semantics owned by a Scenario."""
+
+    FINDING_RECTIFICATION = "finding_rectification"
+    ACTION_EXECUTION = "action_execution"
+    CASE_DEADLINE = "case_deadline"
+
+
 @dataclass(frozen=True, slots=True)
 class RoleSpecification:
     """Versioned rules for one Scenario relationship role."""
@@ -231,6 +239,16 @@ class ReviewCaseCreationPolicy(Protocol):
 
 class AuthorizationPolicy(Protocol):
     def allows(self, permission: str, context: AuthorizationContext) -> bool: ...
+
+
+class CollaborationRecipientPolicy(Protocol):
+    """Scenario-owned answer to who should receive a collaboration intent."""
+
+    def is_recipient(
+        self,
+        intent: CollaborationRecipientIntent,
+        context: AuthorizationContext,
+    ) -> bool: ...
 
 
 class SubmissionPolicy(Protocol):
