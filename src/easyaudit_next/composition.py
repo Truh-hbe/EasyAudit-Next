@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
+from easyaudit_next.collaboration.nudge import ManualNudgeService
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
 from easyaudit_next.notifications.service import NotificationService
@@ -102,6 +103,16 @@ def build_notification_orchestrator(session: Session) -> NotificationOrchestrato
     """Wire M3.2 collaboration orchestration outside Review Core."""
 
     return NotificationOrchestrator(
+        session,
+        build_scenario_registry(),
+        build_notification_service(session),
+    )
+
+
+def build_manual_nudge_service(session: Session) -> ManualNudgeService:
+    """Wire M3.4 human nudge orchestration against exact Scenario recipient semantics."""
+
+    return ManualNudgeService(
         session,
         build_scenario_registry(),
         build_notification_service(session),
