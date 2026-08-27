@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from easyaudit_next.collaboration.automatic_reminder import AutomaticReminderEvaluator
 from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
 from easyaudit_next.collaboration.nudge import ManualNudgeService
+from easyaudit_next.collaboration.reminder_sweep import AutomaticReminderSweep
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
 from easyaudit_next.notifications.service import NotificationService
@@ -128,3 +129,9 @@ def build_automatic_reminder_evaluator(session: Session) -> AutomaticReminderEva
         build_scenario_registry(),
         build_notification_service(session),
     )
+
+
+def build_automatic_reminder_sweep(session: Session) -> AutomaticReminderSweep:
+    """Wire one scheduler-neutral sweep; the caller still owns clock and cadence."""
+
+    return AutomaticReminderSweep(session, build_automatic_reminder_evaluator(session))
