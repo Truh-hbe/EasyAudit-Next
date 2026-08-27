@@ -266,6 +266,7 @@ class RecipientResolver:
             if exclude_user_id is not None and user_id == exclude_user_id:
                 continue
             if action_item_id is not None:
+                assert finding_id is not None
                 context = snapshot.action_context(user_id, finding_id, action_item_id)
             elif finding_id is not None:
                 context = snapshot.finding_context(user_id, finding_id)
