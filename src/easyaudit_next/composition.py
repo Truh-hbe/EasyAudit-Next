@@ -23,6 +23,7 @@ from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
 from easyaudit_next.scenarios.process_review import PROCESS_REVIEW_V1
+from easyaudit_next.workbench.query_service import WorkbenchQueryService
 
 
 def build_scenario_registry() -> ScenarioRegistry:
@@ -73,3 +74,9 @@ def build_verification_closure_service(session: Session) -> VerificationClosureS
         SqlAlchemyVerificationClosureRepository(session),
         build_scenario_registry(),
     )
+
+
+def build_workbench_query_service(session: Session) -> WorkbenchQueryService:
+    """Wire the M3.1 read side without expanding Review Core repositories."""
+
+    return WorkbenchQueryService(session, build_scenario_registry())
