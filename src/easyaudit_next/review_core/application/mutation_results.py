@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from easyaudit_next.review_core.domain.ids import ActivityId
 from easyaudit_next.review_core.domain.models import (
     ActionAssignee,
+    CaseMember,
     Finding,
     FindingParticipant,
-    CaseMember,
     Submission,
 )
 
