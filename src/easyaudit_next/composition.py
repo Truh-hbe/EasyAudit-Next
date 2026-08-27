@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
+from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
 from easyaudit_next.notifications.service import NotificationService
 from easyaudit_next.platform.persistence.repositories import (
@@ -83,6 +84,12 @@ def build_workbench_query_service(session: Session) -> WorkbenchQueryService:
     """Wire the M3.1 read side without expanding Review Core repositories."""
 
     return WorkbenchQueryService(session, build_scenario_registry())
+
+
+def build_management_query_service(session: Session) -> ManagementQueryService:
+    """Wire the M3.3 management read side against exact Scenario policies."""
+
+    return ManagementQueryService(session, build_scenario_registry())
 
 
 def build_notification_service(session: Session) -> NotificationService:
