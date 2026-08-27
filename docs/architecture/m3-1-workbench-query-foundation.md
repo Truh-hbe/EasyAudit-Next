@@ -52,6 +52,51 @@ Relationship rows are candidate facts, not final authorization decisions. A cand
 
 For Process Review v1 this means, among other things, that a `verifying` Finding belongs in `verification_queue` only when the exact policy allows `verify_finding`; the query must not hard-code `role_key == reviewer` as the authorization truth.
 
+## Authorization scope: bulk reads, target-specific contexts
+
+M3.1 may bulk-fetch relationship facts, but it must never broaden the authorization target while doing so.
+
+The existing M2 helper can intentionally aggregate Finding grants across a Case when the authorization target is the Case. That aggregation is not safe as a generic Workbench context for child resources.
+
+For example:
+
+```text
+Case X
+├── Finding A: caller = owner
+└── Finding B: caller has no owner authority
+```
+
+A Case-wide merged `finding_role_grants={owner}` must not be reused to authorize Finding B.
+
+The required shape is:
+
+```text
+bulk SQL fetch
+    ↓
+group facts in memory
+    ↓
+case_grants[case_id]
+finding_grants[finding_id]
+action_grants[action_item_id]
+    ↓
+assemble AuthorizationContext for the exact target
+    ↓
+ScenarioPolicy.authorization.allows(...)
+```
+
+Target granularity is fixed as follows:
+
+- Case authorization may use facts belonging to that Case, because the Case itself is the target.
+- Finding authorization uses the parent Case grants, only that Finding's grants, and only Action grants whose parent is that Finding.
+- Action authorization uses the parent Case grants, the parent Finding grants, and only that Action's grants.
+- Verification authorization uses the target Finding context, never a Case-wide Finding/Action permission bag.
+
+Therefore:
+
+> **Bulk is a database-read optimization, not an authorization-scope optimization.**
+
+This rule preserves the existing `AuthorizationContext` and Scenario Contract. M3.1 does not add a new permission model.
+
 ## Responsibility semantics
 
 ### ReviewCase responsibilities
@@ -82,7 +127,7 @@ Candidate rows are Findings with:
 Finding.lifecycle = verifying
 ```
 
-For every candidate, M3.1 resolves the parent ReviewCase's exact `(scenario_key, scenario_version)`, derives the current user's AuthorizationContext from persisted Case/Finding/Action relationships, and asks that Scenario Policy whether `verify_finding` is allowed.
+For every candidate, M3.1 resolves the parent ReviewCase's exact `(scenario_key, scenario_version)`, derives a target-specific AuthorizationContext from persisted Case/Finding/Action relationships, and asks that Scenario Policy whether `verify_finding` is allowed.
 
 Only authorized Findings are returned.
 
@@ -146,7 +191,9 @@ src/easyaudit_next/workbench/
 
 The query layer may read persistence models directly or through a dedicated read repository. It must not expand `ReviewCoreRepository` merely to support product projections.
 
-The implementation should avoid the existing per-aggregate authorization helpers becoming an N+1 query loop across dozens of resources. Candidate relationship facts should be fetched in bulk, grouped in memory, and then evaluated with the exact Scenario Policy.
+The implementation should avoid the existing per-aggregate authorization helpers becoming an N+1 query loop across dozens of resources. Candidate relationship facts should be fetched in bulk, grouped in memory by target resource, and then evaluated with the exact Scenario Policy.
+
+Query-count tests must prove category-bounded behavior. They must not freeze an exact SQL statement count as a permanent public contract; changing from 5 to 50 or 100 returned resources must not produce a corresponding linear increase in SQL statements.
 
 ## Required reverse-lookup indexes
 
@@ -164,7 +211,7 @@ findings(organization_id, lifecycle, case_id)
 action_items(organization_id, due_at, lifecycle)
 ```
 
-Exact index shapes may be adjusted after PostgreSQL query-plan tests, but M3.1 must not solve read performance by denormalizing a second responsibility table.
+These are candidate shapes, not a checklist. Existing indexes must be reused where they already support the real query, and exact index shapes must be justified by PostgreSQL query plans or the executed query pattern. M3.1 must not create redundant indexes merely to match this document, and it must not solve read performance by denormalizing a second responsibility table.
 
 ## API privacy contract
 
