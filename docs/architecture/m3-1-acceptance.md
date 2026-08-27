@@ -35,6 +35,36 @@ M3.1 is ready for Final Architecture Review only when CI proves all of the follo
 - Platform administrator status is absent from the Workbench authorization decision.
 - Existing `AuthorizationContext`, RoleGrant actor kind, and permission source semantics are preserved.
 
+## Target-scoped authorization facts
+
+Bulk database reads must not broaden authorization scope.
+
+CI must prove all of the following:
+
+- Case authorization contexts contain only relationship facts belonging to that Case.
+- Finding authorization contexts contain the parent Case grants, only the target Finding grants, and only Action grants whose parent is that Finding.
+- Action authorization contexts contain the parent Case grants, the parent Finding grants, and only the target Action grants.
+- Verification uses the target Finding context rather than a Case-wide merged Finding/Action grant bag.
+- A bulk query may load many relationship rows at once, but those facts are grouped by target before `ScenarioPolicy.authorization.allows(...)` is called.
+
+Same-Case isolation is a hard gate. At minimum CI must include examples equivalent to:
+
+```text
+Case X
+├── Finding A: caller has a role that authorizes A
+└── Finding B: caller has another candidate relationship that does not authorize B
+```
+
+and:
+
+```text
+Finding Y
+├── Action A: caller has a role that authorizes A
+└── Action B: caller has another candidate relationship that does not authorize B
+```
+
+Workbench must return A and exclude B in each case. The test should use a Scenario authorization rule capable of exposing the bug if grants are merged too broadly, rather than relying only on Process Review v1's current reviewer rule.
+
 ## Relationship semantics
 
 - Direct CaseMember roles for one Case are aggregated without duplicate Case rows.
@@ -70,11 +100,14 @@ CI must prove:
 
 ## Query performance foundation
 
-- M3.1 adds reverse-lookup indexes required for user/department Workbench queries.
+- M3.1 adds only reverse-lookup indexes justified by the executed Workbench queries; candidate index shapes are not a checklist.
+- Existing indexes are reused where they already support the access path; redundant indexes are not added merely to match the architecture document.
 - PostgreSQL integration tests inspect or exercise the candidate queries against real PostgreSQL.
 - Workbench does not call per-resource repository helpers in an N+1 loop for every Case/Finding/Action.
 - Candidate relationship facts are fetched in bulk and grouped before Scenario authorization evaluation.
 - Query count is bounded by query category rather than linearly increasing with the number of returned resources.
+- CI compares materially different resource counts, such as 5 and 50/100, and proves SQL statement growth is not proportional to resource count.
+- The test must not define one exact SQL statement number as a permanent API/architecture contract; a small implementation-level upper bound is acceptable as a regression guard.
 
 ## Deterministic ordering
 
