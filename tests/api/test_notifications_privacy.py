@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 import easyaudit_next.notifications.api as notification_api
@@ -38,17 +39,22 @@ def _identity() -> CurrentIdentity:
 
 
 class _MissingNotificationService:
-    def mark_read(self, organization_id: object, user_id: object, notification_id: object) -> None:
+    def mark_read(
+        self,
+        organization_id: object,
+        user_id: object,
+        notification_id: object,
+    ) -> None:
         raise LookupError("Notification not found")
 
 
-def test_foreign_or_unknown_notification_id_is_non_disclosing_not_found(monkeypatch: object) -> None:
+def test_foreign_or_unknown_notification_id_is_non_disclosing_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = create_app()
     app.dependency_overrides[require_business_identity] = _identity
     app.dependency_overrides[get_database_session] = object
-
-    setattr_fn = getattr(monkeypatch, "setattr")
-    setattr_fn(
+    monkeypatch.setattr(
         notification_api,
         "build_notification_service",
         lambda session: _MissingNotificationService(),
