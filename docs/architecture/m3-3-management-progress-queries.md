@@ -253,6 +253,65 @@ At minimum each returned Case summary should include:
 
 The endpoint must not expose Notification state as management truth.
 
+## Authorization-safe external pagination
+
+External pagination is defined over the final authorized management collection, never over raw direct-CaseMember candidates.
+
+The observable collection semantics are equivalent to:
+
+```text
+direct CaseMember candidates
+        ↓
+organization-scoped persisted facts
+        ↓
+exact historical ScenarioVersion
+        ↓
+target-specific AuthorizationContext
+        ↓
+ScenarioPolicy.authorization.allows("manage_case_members", ...)
+        +
+ScenarioPolicy.authorization.allows("view_case", ...)
+        ↓
+AUTHORIZED MANAGEMENT SET
+        ↓
+authorized child projection
+        ↓
+requested filters
+        ↓
+deterministic ordering
+        ↓
+external limit / offset (or cursor)
+        ↓
+response
+```
+
+The implementation is free to scan candidate SQL in bounded chunks or batches. It is **not** required to load every candidate into memory in one operation. However, internal batching must be observationally equivalent to authorizing the complete relevant candidate set before applying the API's external pagination semantics.
+
+The following implementation shape is forbidden:
+
+```text
+candidate SQL
+    ↓
+external LIMIT / OFFSET
+    ↓
+exact Scenario authorization
+    ↓
+discard unauthorized rows
+```
+
+An unauthorized candidate ReviewCase must therefore:
+
+- not consume an external page position;
+- not reduce page fullness when enough later authorized Cases exist;
+- not enter any externally reported `total_count`/`total` value;
+- not affect `has_more`;
+- not advance or otherwise affect `next_cursor`; and
+- not change the relative page placement of authorized Cases merely because hidden candidates are inserted or removed.
+
+If the first API uses only `limit`/`offset`, those values count positions in the authorized, filtered, deterministically ordered management collection. If a later revision uses a cursor, the same rule applies: cursor progression is defined over visible authorized rows, not hidden candidate rows.
+
+This is both a correctness and privacy boundary. A caller must not be able to infer hidden same-Organization CaseMember candidates from short pages, gaps, totals, cursor behavior, or authorized rows drifting between pages.
+
 ## Progress detail query
 
 `GET /api/v1/management/review-cases/{case_id}/progress` returns a read-only drill-down for one managed Case.
@@ -325,6 +384,8 @@ Action lifecycle/deadline aggregates
 
 The exact SQL shape is implementation-owned, but SQL statement growth must be category-bounded rather than proportional to returned Case count or child resource count.
 
+Authorization-safe external pagination does not require one unbounded all-candidates query. Candidate discovery and fact loading may use bounded internal batches so long as hidden candidates never consume external page positions or affect external pagination metadata.
+
 PostgreSQL integration tests must compare materially different data sizes and prove that returning more managed Cases does not introduce per-Case query loops.
 
 M3.3 may add read-side indexes justified by actual executed queries or PostgreSQL plans. It must not add denormalized management tables or redundant indexes merely to match a design sketch.
@@ -339,6 +400,7 @@ The management API must not expose:
 - same-Organization Cases the caller is not authorized to manage;
 - existence of a Case merely because its UUID is known;
 - hidden Finding or Action counts;
+- pagination gaps, short pages, totals, or cursor movement caused by unauthorized candidate Cases;
 - `system_admin` bypass data; or
 - aggregate totals that include unauthorized resources.
 
@@ -379,4 +441,4 @@ M3.3 does not add:
 
 ## End state
 
-M3.3 is complete when an authenticated user can query only the ReviewCases that the exact historical Scenario Policy authorizes them to manage, obtain factual Case/Finding/Action progress and overdue projections with no hidden-child leakage, and do so with category-bounded PostgreSQL queries while Review Core, Notification semantics, and M3.4 reminder behavior remain unchanged.
+M3.3 is complete when an authenticated user can query only the ReviewCases that the exact historical Scenario Policy authorizes them to manage, obtain factual Case/Finding/Action progress and overdue projections with no hidden-child leakage, paginate the final authorized management collection without hidden-candidate side channels, and do so with category-bounded PostgreSQL queries while Review Core, Notification semantics, and M3.4 reminder behavior remain unchanged.
