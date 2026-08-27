@@ -28,6 +28,7 @@ from easyaudit_next.platform.domain.ids import OrganizationId, UserId
 from easyaudit_next.platform.persistence.repositories import SqlAlchemyUserRepository
 from easyaudit_next.review_core.domain.models import (
     AssignmentRole,
+    DepartmentActor,
     FindingSeverity,
     Scenario,
     ScenarioKey,
@@ -73,7 +74,7 @@ class ReminderFixture:
 
 
 def _seed_reminder_fixture(engine: Engine) -> ReminderFixture:
-    organization_id, _, ids = seed_process_review_users(engine)
+    organization_id, department_id, ids = seed_process_review_users(engine)
     with Session(engine, expire_on_commit=False) as session:
         users = SqlAlchemyUserRepository(session)
         lead = users.get(ids["lead"])
@@ -119,6 +120,13 @@ def _seed_reminder_fixture(engine: Engine) -> ReminderFixture:
             finding.id,
             UserActor(owner.id),
             "owner",
+            occurred_at=NOW,
+        )
+        findings.add_participant_result(
+            lead,
+            finding.id,
+            DepartmentActor(department_id),
+            "responsible_department",
             occurred_at=NOW,
         )
         finding = findings.transition_finding(
