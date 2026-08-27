@@ -96,9 +96,9 @@ class WorkbenchQueryService:
         cases = self._load_cases(actor, case_ids)
         case_by_id = {record.id: record for record in cases}
 
-        versions = self._load_scenario_versions(cases)
+        versions = self._load_scenario_versions(actor, cases)
         version_by_id = {record.id: record for record in versions}
-        scenarios = self._load_scenarios(versions)
+        scenarios = self._load_scenarios(actor, versions)
         scenario_by_id = {record.id: record for record in scenarios}
 
         case_grants: dict[UUID, set[RoleGrant]] = defaultdict(set)
@@ -174,7 +174,10 @@ class WorkbenchQueryService:
                 ),
             )
 
-        def action_context(action: ActionItemRecord, finding: FindingRecord) -> AuthorizationContext:
+        def action_context(
+            action: ActionItemRecord,
+            finding: FindingRecord,
+        ) -> AuthorizationContext:
             return AuthorizationContext(
                 is_active_organization_user=actor.is_active,
                 case_role_grants=frozenset(case_grants.get(finding.case_id, set())),
@@ -437,6 +440,7 @@ class WorkbenchQueryService:
 
     def _load_scenario_versions(
         self,
+        actor: User,
         cases: tuple[ReviewCaseRecord, ...],
     ) -> tuple[ScenarioVersionRecord, ...]:
         version_ids = {record.scenario_version_id for record in cases}
@@ -444,12 +448,16 @@ class WorkbenchQueryService:
             return ()
         return tuple(
             self._session.scalars(
-                select(ScenarioVersionRecord).where(ScenarioVersionRecord.id.in_(version_ids))
+                select(ScenarioVersionRecord).where(
+                    ScenarioVersionRecord.organization_id == actor.organization_id,
+                    ScenarioVersionRecord.id.in_(version_ids),
+                )
             )
         )
 
     def _load_scenarios(
         self,
+        actor: User,
         versions: tuple[ScenarioVersionRecord, ...],
     ) -> tuple[ScenarioRecord, ...]:
         scenario_ids = {record.scenario_id for record in versions}
@@ -457,7 +465,10 @@ class WorkbenchQueryService:
             return ()
         return tuple(
             self._session.scalars(
-                select(ScenarioRecord).where(ScenarioRecord.id.in_(scenario_ids))
+                select(ScenarioRecord).where(
+                    ScenarioRecord.organization_id == actor.organization_id,
+                    ScenarioRecord.id.in_(scenario_ids),
+                )
             )
         )
 
