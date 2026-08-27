@@ -1,3 +1,6 @@
+from easyaudit_next.scenarios.process_review.recipient_policy import (
+    ProcessReviewCollaborationRecipientPolicy,
+)
 from easyaudit_next.scenarios.process_review.rectification import (
     PROCESS_REVIEW_V1,
     ProcessReviewActionOperations,
@@ -13,6 +16,7 @@ from easyaudit_next.scenarios.process_review.v1 import (
 __all__ = [
     "PROCESS_REVIEW_V1",
     "ProcessReviewActionOperations",
+    "ProcessReviewCollaborationRecipientPolicy",
     "ProcessReviewFindingOperations",
     "ProcessReviewPermission",
     "ProcessReviewRectificationPermission",
