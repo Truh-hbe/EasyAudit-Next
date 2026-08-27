@@ -30,6 +30,11 @@ DOWNSTREAM_IMPORT_PREFIXES = (
     "easyaudit_next.notifications",
     "easyaudit_next.workbench",
 )
+FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS = {
+    "submit_rectification",
+    "update_assigned_action",
+    "transition_case",
+}
 
 
 def imported_modules(tree: ast.AST) -> list[str]:
@@ -48,6 +53,14 @@ def imports_name(tree: ast.AST, module: str, name: str) -> bool:
             if any(alias.name == name for alias in node.names):
                 return True
     return False
+
+
+def string_literals(tree: ast.AST) -> set[str]:
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
 
 
 def main() -> None:
@@ -96,10 +109,21 @@ def main() -> None:
                 f"not query ActivityRecord: {path}"
             )
 
+        if path.is_relative_to(COLLABORATION_ROOT):
+            coupled = string_literals(tree).intersection(
+                FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS
+            )
+            if coupled:
+                raise SystemExit(
+                    "Generic collaboration code must use Scenario recipient intents rather than "
+                    f"recipient permission coupling: {path}: {sorted(coupled)}"
+                )
+
     print(
         "Architecture check passed "
         f"({len(domain_files)} domain/scenario files; Scenario imports are composition-only; "
-        "Review Core is downstream-independent; Notification provenance is propagated)."
+        "Review Core is downstream-independent; Notification provenance is propagated; "
+        "recipient responsibility remains Scenario-owned)."
     )
 
 

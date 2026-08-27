@@ -1,6 +1,9 @@
 from sqlalchemy.orm import Session
 
+from easyaudit_next.collaboration.automatic_reminder import AutomaticReminderEvaluator
 from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
+from easyaudit_next.collaboration.nudge import ManualNudgeService
+from easyaudit_next.collaboration.reminder_sweep import AutomaticReminderSweep
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
 from easyaudit_next.notifications.service import NotificationService
@@ -106,3 +109,29 @@ def build_notification_orchestrator(session: Session) -> NotificationOrchestrato
         build_scenario_registry(),
         build_notification_service(session),
     )
+
+
+def build_manual_nudge_service(session: Session) -> ManualNudgeService:
+    """Wire M3.4 human nudge orchestration against exact Scenario recipient semantics."""
+
+    return ManualNudgeService(
+        session,
+        build_scenario_registry(),
+        build_notification_service(session),
+    )
+
+
+def build_automatic_reminder_evaluator(session: Session) -> AutomaticReminderEvaluator:
+    """Wire one-occurrence M3.4 deadline evaluation without scheduler/cadence ownership."""
+
+    return AutomaticReminderEvaluator(
+        session,
+        build_scenario_registry(),
+        build_notification_service(session),
+    )
+
+
+def build_automatic_reminder_sweep(session: Session) -> AutomaticReminderSweep:
+    """Wire one scheduler-neutral sweep; the caller still owns clock and cadence."""
+
+    return AutomaticReminderSweep(session, build_automatic_reminder_evaluator(session))

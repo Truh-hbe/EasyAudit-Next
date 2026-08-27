@@ -67,6 +67,15 @@ class NotificationRecord(Base):
             name="ck_notifications_exactly_one_subject",
         ),
         CheckConstraint(
+            "num_nonnulls(origin_activity_id, automatic_origin_key) = 1",
+            name="ck_notifications_exactly_one_origin",
+        ),
+        CheckConstraint(
+            "automatic_origin_key IS NULL OR "
+            "(automatic_origin_key = btrim(automatic_origin_key) AND automatic_origin_key <> '')",
+            name="ck_notifications_automatic_origin_key",
+        ),
+        CheckConstraint(
             "kind = btrim(kind) AND kind <> ''",
             name="ck_notifications_kind",
         ),
@@ -74,12 +83,24 @@ class NotificationRecord(Base):
             "title = btrim(title) AND title <> ''",
             name="ck_notifications_title",
         ),
-        UniqueConstraint(
+        Index(
+            "uq_notifications_activity_delivery",
             "organization_id",
             "recipient_user_id",
             "origin_activity_id",
             "kind",
-            name="uq_notifications_delivery",
+            unique=True,
+            postgresql_where=text("origin_activity_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_notifications_automatic_delivery",
+            "organization_id",
+            "recipient_user_id",
+            "kind",
+            text("COALESCE(review_case_id, finding_id, action_item_id)"),
+            "automatic_origin_key",
+            unique=True,
+            postgresql_where=text("automatic_origin_key IS NOT NULL"),
         ),
         Index(
             "ix_notifications_inbox",
@@ -108,14 +129,16 @@ class NotificationRecord(Base):
     )
     recipient_user_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True))
     kind: Mapped[str] = mapped_column(String(100))
-    origin_activity_id: Mapped[UUID] = mapped_column(
+    origin_activity_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey(
             "activities.id",
             name="fk_notifications_origin_activity",
             ondelete="RESTRICT",
         ),
+        nullable=True,
     )
+    automatic_origin_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     review_case_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     finding_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     action_item_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
@@ -147,6 +170,7 @@ class SqlAlchemyNotificationRepository:
                     "recipient_user_id": draft.recipient_user_id,
                     "kind": draft.kind.value,
                     "origin_activity_id": draft.origin_activity_id,
+                    "automatic_origin_key": draft.automatic_origin_key,
                     "title": draft.title,
                     "body": draft.body,
                     "created_at": draft.created_at,
@@ -154,10 +178,7 @@ class SqlAlchemyNotificationRepository:
                 }
             )
         statement = postgresql_insert(NotificationRecord).values(values)
-        statement = statement.on_conflict_do_nothing(
-            constraint="uq_notifications_delivery"
-        )
-        self._session.execute(statement)
+        self._session.execute(statement.on_conflict_do_nothing())
 
     def list_for_recipient(
         self,

@@ -4,12 +4,15 @@ from uuid import UUID, uuid4
 
 from easyaudit_next.notifications.models import (
     ActionItemNotificationSubject,
+    ActivityNotificationOrigin,
+    AutomaticReminderNotificationOrigin,
     FindingNotificationSubject,
     NotificationDraft,
     NotificationId,
     NotificationInboxPage,
     NotificationItem,
     NotificationKind,
+    NotificationOrigin,
     NotificationSubject,
     ReviewCaseNotificationSubject,
 )
@@ -39,6 +42,61 @@ class NotificationService:
         body: str,
         created_at: datetime | None = None,
     ) -> None:
+        """Preserve the M3.2 Activity-backed delivery contract."""
+
+        self._deliver(
+            organization_id=organization_id,
+            recipients=recipients,
+            kind=kind,
+            origin=ActivityNotificationOrigin(origin_activity_id),
+            subject=subject,
+            title=title,
+            body=body,
+            created_at=created_at,
+        )
+
+    def deliver_automatic(
+        self,
+        *,
+        organization_id: OrganizationId,
+        recipients: Iterable[UserId],
+        kind: NotificationKind,
+        automatic_origin_key: str,
+        subject: NotificationSubject,
+        title: str,
+        body: str,
+        created_at: datetime | None = None,
+    ) -> None:
+        """Persist a timer/policy delivery without fabricating Review Activity provenance."""
+
+        if kind not in {
+            NotificationKind.AUTOMATIC_CASE_REMINDER,
+            NotificationKind.AUTOMATIC_ACTION_REMINDER,
+        }:
+            raise ValueError("Automatic origin is only valid for automatic reminder kinds")
+        self._deliver(
+            organization_id=organization_id,
+            recipients=recipients,
+            kind=kind,
+            origin=AutomaticReminderNotificationOrigin(automatic_origin_key),
+            subject=subject,
+            title=title,
+            body=body,
+            created_at=created_at,
+        )
+
+    def _deliver(
+        self,
+        *,
+        organization_id: OrganizationId,
+        recipients: Iterable[UserId],
+        kind: NotificationKind,
+        origin: NotificationOrigin,
+        subject: NotificationSubject,
+        title: str,
+        body: str,
+        created_at: datetime | None,
+    ) -> None:
         now = created_at or datetime.now(UTC)
         if now.utcoffset() is None:
             raise ValueError("Notification created_at must include UTC offset")
@@ -49,7 +107,7 @@ class NotificationService:
                 organization_id=organization_id,
                 recipient_user_id=recipient,
                 kind=kind,
-                origin_activity_id=origin_activity_id,
+                origin=origin,
                 subject=subject,
                 title=title,
                 body=body,
@@ -106,12 +164,21 @@ class NotificationService:
             subject = ActionItemNotificationSubject(ActionItemId(record.action_item_id))
         else:
             raise RuntimeError("Persisted Notification has no typed subject")
+
+        origin: NotificationOrigin
+        if record.origin_activity_id is not None:
+            origin = ActivityNotificationOrigin(ActivityId(record.origin_activity_id))
+        elif record.automatic_origin_key is not None:
+            origin = AutomaticReminderNotificationOrigin(record.automatic_origin_key)
+        else:
+            raise RuntimeError("Persisted Notification has no typed origin")
+
         return NotificationItem(
             id=NotificationId(record.id),
             organization_id=OrganizationId(record.organization_id),
             recipient_user_id=UserId(record.recipient_user_id),
             kind=NotificationKind(record.kind),
-            origin_activity_id=ActivityId(record.origin_activity_id),
+            origin=origin,
             subject=subject,
             title=record.title,
             body=record.body,

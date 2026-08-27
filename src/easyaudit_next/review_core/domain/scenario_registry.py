@@ -7,6 +7,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemOperationPolicy,
     ActionItemWorkflowPolicy,
     AuthorizationPolicy,
+    CollaborationRecipientPolicy,
     FindingOperationPolicy,
     FindingWorkflowPolicy,
     ReviewCaseCreationPolicy,
@@ -49,6 +50,9 @@ class ScenarioPolicy(Protocol):
 
     @property
     def authorization(self) -> AuthorizationPolicy: ...
+
+    @property
+    def collaboration_recipients(self) -> CollaborationRecipientPolicy: ...
 
     @property
     def submission_policy(self) -> SubmissionPolicy: ...
