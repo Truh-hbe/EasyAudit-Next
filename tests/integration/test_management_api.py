@@ -77,7 +77,12 @@ def _seed_process_review_api_shape(
     finding_id = uuid4()
 
     with Session(engine) as session, session.begin():
-        session.add(OrganizationRecord(id=organization_id, name=f"Management API {organization_id}"))
+        session.add(
+            OrganizationRecord(
+                id=organization_id,
+                name=f"Management API {organization_id}",
+            )
+        )
         session.flush()
         session.add_all(
             [
