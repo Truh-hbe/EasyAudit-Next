@@ -24,9 +24,11 @@ FORBIDDEN_DOMAIN_IMPORT_PREFIXES = (
     "easyaudit_next.review_core.persistence",
 )
 SCENARIO_IMPORT_PREFIX = "easyaudit_next.scenarios"
-COLLABORATION_IMPORT_PREFIXES = (
-    "easyaudit_next.notifications",
+DOWNSTREAM_IMPORT_PREFIXES = (
     "easyaudit_next.collaboration",
+    "easyaudit_next.management",
+    "easyaudit_next.notifications",
+    "easyaudit_next.workbench",
 )
 
 
@@ -77,10 +79,10 @@ def main() -> None:
                     f"{path}: {module}"
                 )
             if path.is_relative_to(REVIEW_CORE_ROOT) and module.startswith(
-                COLLABORATION_IMPORT_PREFIXES
+                DOWNSTREAM_IMPORT_PREFIXES
             ):
                 raise SystemExit(
-                    "Review Core must not depend on Collaboration/Notification: "
+                    "Review Core must not depend on collaboration/read-side modules: "
                     f"{path}: {module}"
                 )
 
@@ -97,7 +99,7 @@ def main() -> None:
     print(
         "Architecture check passed "
         f"({len(domain_files)} domain/scenario files; Scenario imports are composition-only; "
-        "Review Core is collaboration-independent; Notification provenance is propagated)."
+        "Review Core is downstream-independent; Notification provenance is propagated)."
     )
 
 
