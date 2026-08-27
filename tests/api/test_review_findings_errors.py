@@ -43,7 +43,9 @@ class _CaseConflictFindingService:
         raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
 
 
-def test_create_finding_maps_stale_case_conflict_to_http_409(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_finding_maps_stale_case_conflict_to_http_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         review_findings_api,
         "build_finding_lifecycle_service",
