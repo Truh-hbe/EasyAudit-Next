@@ -58,7 +58,11 @@ def _case_id(session: Session, finding_id: UUID) -> UUID:
     return case_id
 
 
-def _unused_user_id(session: Session, organization_id: OrganizationId, excluded: set[UUID]) -> UserId:
+def _unused_user_id(
+    session: Session,
+    organization_id: OrganizationId,
+    excluded: set[UUID],
+) -> UserId:
     value = session.scalar(
         select(UserRecord.id)
         .where(
