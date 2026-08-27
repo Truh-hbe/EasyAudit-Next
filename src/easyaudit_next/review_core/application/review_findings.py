@@ -6,6 +6,7 @@ from easyaudit_next.platform.domain.ids import DepartmentId, UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import DepartmentRepository, UserRepository
 from easyaudit_next.review_core.application.authorization import build_authorization_context
+from easyaudit_next.review_core.application.mutation_results import FindingParticipantAddedResult
 from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
 from easyaudit_next.review_core.domain.ids import ActivityId, FindingId, ReviewCaseId
 from easyaudit_next.review_core.domain.models import (
@@ -151,6 +152,23 @@ class FindingLifecycleService:
         *,
         occurred_at: datetime | None = None,
     ) -> FindingParticipant:
+        return self.add_participant_result(
+            actor,
+            finding_id,
+            participant_actor,
+            role_key,
+            occurred_at=occurred_at,
+        ).participant
+
+    def add_participant_result(
+        self,
+        actor: User,
+        finding_id: FindingId,
+        participant_actor: ParticipantActor,
+        role_key: str,
+        *,
+        occurred_at: datetime | None = None,
+    ) -> FindingParticipantAddedResult:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
         if not policy.authorization.allows(
             MANAGE_FINDING_PARTICIPANTS_PERMISSION,
@@ -183,9 +201,10 @@ class FindingLifecycleService:
         )
         self._repository.add_finding_participant(participant)
         actor_kind, actor_id = self._participant_identity(participant_actor)
+        activity_id = ActivityId(uuid4())
         self._repository.add_activity(
             Activity(
-                id=ActivityId(uuid4()),
+                id=activity_id,
                 organization_id=actor.organization_id,
                 subject=FindingActivitySubject(finding.id),
                 event_type="finding.participant_added",
@@ -198,7 +217,10 @@ class FindingLifecycleService:
                 },
             )
         )
-        return participant
+        return FindingParticipantAddedResult(
+            participant=participant,
+            activity_id=activity_id,
+        )
 
     def transition_finding(
         self,

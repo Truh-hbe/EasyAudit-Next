@@ -6,6 +6,7 @@ from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import UserRepository
 from easyaudit_next.review_core.application.authorization import build_authorization_context
+from easyaudit_next.review_core.application.mutation_results import CaseMemberAddedResult
 from easyaudit_next.review_core.domain.ids import (
     ActivityId,
     ReviewCaseId,
@@ -212,6 +213,23 @@ class ReviewPlanningService:
         *,
         occurred_at: datetime | None = None,
     ) -> CaseMember:
+        return self.add_case_member_result(
+            actor,
+            case_id,
+            user_id,
+            role_key,
+            occurred_at=occurred_at,
+        ).member
+
+    def add_case_member_result(
+        self,
+        actor: User,
+        case_id: ReviewCaseId,
+        user_id: UserId,
+        role_key: str,
+        *,
+        occurred_at: datetime | None = None,
+    ) -> CaseMemberAddedResult:
         review_case, policy, context = self._case_context(actor, case_id)
         if not policy.authorization.allows(MANAGE_CASE_MEMBERS_PERMISSION, context):
             raise ReviewAuthorizationError("lead role required to manage CaseMember")
@@ -232,9 +250,10 @@ class ReviewPlanningService:
             joined_at=now,
         )
         self._repository.add_case_member(member)
+        activity_id = ActivityId(uuid4())
         self._repository.add_activity(
             Activity(
-                id=ActivityId(uuid4()),
+                id=activity_id,
                 organization_id=actor.organization_id,
                 subject=ReviewCaseActivitySubject(review_case.id),
                 event_type="review_case.member_added",
@@ -243,7 +262,7 @@ class ReviewPlanningService:
                 metadata={"user_id": str(target.id), "role_key": role_key},
             )
         )
-        return member
+        return CaseMemberAddedResult(member=member, activity_id=activity_id)
 
     def transition_case(
         self,

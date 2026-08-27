@@ -1,5 +1,8 @@
 from sqlalchemy.orm import Session
 
+from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
+from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
+from easyaudit_next.notifications.service import NotificationService
 from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
     SqlAlchemyUserRepository,
@@ -80,3 +83,19 @@ def build_workbench_query_service(session: Session) -> WorkbenchQueryService:
     """Wire the M3.1 read side without expanding Review Core repositories."""
 
     return WorkbenchQueryService(session, build_scenario_registry())
+
+
+def build_notification_service(session: Session) -> NotificationService:
+    """Wire recipient-local Notification persistence and inbox operations."""
+
+    return NotificationService(SqlAlchemyNotificationRepository(session))
+
+
+def build_notification_orchestrator(session: Session) -> NotificationOrchestrator:
+    """Wire M3.2 collaboration orchestration outside Review Core."""
+
+    return NotificationOrchestrator(
+        session,
+        build_scenario_registry(),
+        build_notification_service(session),
+    )

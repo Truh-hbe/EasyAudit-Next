@@ -9,6 +9,10 @@ from easyaudit_next.platform.domain.repositories import DepartmentRepository, Us
 from easyaudit_next.review_core.application.authorization import (
     build_rectification_authorization_context,
 )
+from easyaudit_next.review_core.application.mutation_results import (
+    ActionAssigneeAddedResult,
+    RectificationSubmissionResult,
+)
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
     FindingLifecycleService,
@@ -276,6 +280,23 @@ class RectificationService:
         *,
         occurred_at: datetime | None = None,
     ) -> ActionAssignee:
+        return self.add_assignee_result(
+            actor,
+            action_item_id,
+            assignee_actor,
+            role,
+            occurred_at=occurred_at,
+        ).assignee
+
+    def add_assignee_result(
+        self,
+        actor: User,
+        action_item_id: ActionItemId,
+        assignee_actor: ParticipantActor,
+        role: AssignmentRole,
+        *,
+        occurred_at: datetime | None = None,
+    ) -> ActionAssigneeAddedResult:
         action_item, finding, review_case, policy, context = self._action_context(
             actor,
             action_item_id,
@@ -308,9 +329,10 @@ class RectificationService:
         )
         self._repository.add_action_assignee(assignee)
         actor_kind, actor_id = self._participant_identity(assignee_actor)
+        activity_id = ActivityId(uuid4())
         self._repository.add_activity(
             Activity(
-                id=ActivityId(uuid4()),
+                id=activity_id,
                 organization_id=actor.organization_id,
                 subject=ActionItemActivitySubject(action_item.id),
                 event_type="action_item.assignee_added",
@@ -323,7 +345,7 @@ class RectificationService:
                 },
             )
         )
-        return assignee
+        return ActionAssigneeAddedResult(assignee=assignee, activity_id=activity_id)
 
     def list_assignees(
         self,
@@ -481,6 +503,24 @@ class RectificationService:
         *,
         occurred_at: datetime | None = None,
     ) -> tuple[Submission, Finding]:
+        result = self.submit_rectification_result(
+            actor,
+            finding_id,
+            action,
+            payload,
+            occurred_at=occurred_at,
+        )
+        return result.submission, result.finding
+
+    def submit_rectification_result(
+        self,
+        actor: User,
+        finding_id: FindingId,
+        action: str,
+        payload: dict[str, object],
+        *,
+        occurred_at: datetime | None = None,
+    ) -> RectificationSubmissionResult:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
         if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
             raise ReviewAuthorizationError("Finding is not visible to this user")
@@ -537,9 +577,10 @@ class RectificationService:
             payload=dict(payload),
         )
         self._repository.add_submission(submission)
+        activity_id = ActivityId(uuid4())
         self._repository.add_activity(
             Activity(
-                id=ActivityId(uuid4()),
+                id=activity_id,
                 organization_id=actor.organization_id,
                 subject=SubmissionActivitySubject(submission.id),
                 event_type=decision.activity_event_type,
@@ -553,7 +594,11 @@ class RectificationService:
                 },
             )
         )
-        return submission, updated_finding
+        return RectificationSubmissionResult(
+            submission=submission,
+            finding=updated_finding,
+            activity_id=activity_id,
+        )
 
     def list_rectification_submissions(
         self,

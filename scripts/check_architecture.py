@@ -4,10 +4,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "src" / "easyaudit_next"
 SCENARIO_ROOT = SOURCE_ROOT / "scenarios"
+REVIEW_CORE_ROOT = SOURCE_ROOT / "review_core"
+COLLABORATION_ROOT = SOURCE_ROOT / "collaboration"
 COMPOSITION_ROOT = SOURCE_ROOT / "composition.py"
 DOMAIN_DIRECTORIES = (
     SOURCE_ROOT / "platform" / "domain",
-    SOURCE_ROOT / "review_core" / "domain",
+    REVIEW_CORE_ROOT / "domain",
     SCENARIO_ROOT,
 )
 FORBIDDEN_DOMAIN_IMPORT_PREFIXES = (
@@ -22,6 +24,10 @@ FORBIDDEN_DOMAIN_IMPORT_PREFIXES = (
     "easyaudit_next.review_core.persistence",
 )
 SCENARIO_IMPORT_PREFIX = "easyaudit_next.scenarios"
+COLLABORATION_IMPORT_PREFIXES = (
+    "easyaudit_next.notifications",
+    "easyaudit_next.collaboration",
+)
 
 
 def imported_modules(tree: ast.AST) -> list[str]:
@@ -32,6 +38,14 @@ def imported_modules(tree: ast.AST) -> list[str]:
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.append(node.module)
     return modules
+
+
+def imports_name(tree: ast.AST, module: str, name: str) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            if any(alias.name == name for alias in node.names):
+                return True
+    return False
 
 
 def main() -> None:
@@ -51,19 +65,39 @@ def main() -> None:
 
     source_files = sorted(SOURCE_ROOT.rglob("*.py"))
     for path in source_files:
-        if path.is_relative_to(SCENARIO_ROOT) or path == COMPOSITION_ROOT:
-            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for module in imported_modules(tree):
-            if module.startswith(SCENARIO_IMPORT_PREFIX):
+            if (
+                not path.is_relative_to(SCENARIO_ROOT)
+                and path != COMPOSITION_ROOT
+                and module.startswith(SCENARIO_IMPORT_PREFIX)
+            ):
                 raise SystemExit(
                     "Scenario modules may only be imported by the composition root: "
                     f"{path}: {module}"
                 )
+            if path.is_relative_to(REVIEW_CORE_ROOT) and module.startswith(
+                COLLABORATION_IMPORT_PREFIXES
+            ):
+                raise SystemExit(
+                    "Review Core must not depend on Collaboration/Notification: "
+                    f"{path}: {module}"
+                )
+
+        if path.is_relative_to(COLLABORATION_ROOT) and imports_name(
+            tree,
+            "easyaudit_next.review_core.persistence.models",
+            "ActivityRecord",
+        ):
+            raise SystemExit(
+                "Collaboration orchestration must consume exact ActivityId output, "
+                f"not query ActivityRecord: {path}"
+            )
 
     print(
         "Architecture check passed "
-        f"({len(domain_files)} domain/scenario files; Scenario imports are composition-only)."
+        f"({len(domain_files)} domain/scenario files; Scenario imports are composition-only; "
+        "Review Core is collaboration-independent; Notification provenance is propagated)."
     )
 
 

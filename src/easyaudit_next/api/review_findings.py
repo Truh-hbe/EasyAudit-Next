@@ -12,7 +12,10 @@ from easyaudit_next.api.review_contracts import (
     FindingResponse,
     FindingTransitionRequest,
 )
-from easyaudit_next.composition import build_finding_lifecycle_service
+from easyaudit_next.composition import (
+    build_finding_lifecycle_service,
+    build_notification_orchestrator,
+)
 from easyaudit_next.platform.domain.ids import DepartmentId, UserId
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
@@ -190,16 +193,18 @@ def add_finding_participant(
         else DepartmentActor(DepartmentId(payload.actor_id))
     )
     service = build_finding_lifecycle_service(session)
+    notifications = build_notification_orchestrator(session)
     try:
-        participant = service.add_participant(
+        result = service.add_participant_result(
             identity.user,
             FindingId(finding_id),
             participant_actor,
             payload.role_key,
         )
+        notifications.finding_participant_added(result)
     except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
         _raise_api_error(exc)
-    return _participant_response(participant)
+    return _participant_response(result.participant)
 
 
 @review_findings_router.post(
