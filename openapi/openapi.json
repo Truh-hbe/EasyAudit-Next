@@ -32,6 +32,9 @@
     "/api/v1/me/sessions/{session_id}": {
       "delete": {"operationId": "revokeMySession", "tags": ["me"]}
     },
+    "/api/v1/me/workbench": {
+      "get": {"operationId": "getMyWorkbench", "tags": ["workbench"]}
+    },
     "/api/v1/admin/organization": {
       "get": {"operationId": "getAdminOrganization", "tags": ["admin"]}
     },
