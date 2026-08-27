@@ -289,7 +289,7 @@ def _scoped_registry() -> ScenarioRegistry:
 def test_bulk_authorization_remains_target_scoped_within_one_case(
     postgres_engine: Engine,
 ) -> None:
-    with Session(postgres_engine) as session, session.begin():
+    with Session(postgres_engine, expire_on_commit=False) as session, session.begin():
         organization_id, department_id, caller_id = _seed_identity(session)
         version_id = _seed_scenario(session, organization_id, "scoped_test")
         review_case = _case(
@@ -371,7 +371,7 @@ def test_bulk_authorization_remains_target_scoped_within_one_case(
 def test_process_review_workbench_projects_responsibilities_deadlines_and_privacy(
     postgres_engine: Engine,
 ) -> None:
-    with Session(postgres_engine) as session, session.begin():
+    with Session(postgres_engine, expire_on_commit=False) as session, session.begin():
         organization_id, department_id, caller_id = _seed_identity(session)
         version_id = _seed_scenario(session, organization_id, "process_review")
 
