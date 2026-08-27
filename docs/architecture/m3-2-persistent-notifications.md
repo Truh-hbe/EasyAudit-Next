@@ -130,6 +130,8 @@ Review Core mutation
         ↓
 Activity append
         ↓
+return exact mutation result + Activity identity
+        ↓
 resolve Notification recipients
         ↓
 insert Notification rows
@@ -144,6 +146,66 @@ Likewise, if Notification persistence fails before commit, the request transacti
 This atomicity applies only to first-party in-app persistence. Future external delivery such as email/webhook must not be placed inside the Review Core transaction.
 
 M3.2 must not implement this by database triggers that contain Scenario or recipient business logic.
+
+## Exact origin Activity propagation
+
+For every event-backed Notification, `origin_activity_id` must come from the exact `Activity` instance created by the triggering mutation in the current request transaction.
+
+The collaboration orchestration layer must receive that identity synchronously from the Review Core application operation. It must not attempt to reconstruct provenance after the mutation has returned.
+
+The required dependency shape is:
+
+```text
+Review Core mutation
+        ↓
+create exact Activity A
+        ↓
+Scenario-neutral mutation result
+(entity/result + ActivityId(A))
+        ↓
+M3.2 collaboration orchestration
+        ↓
+recipient resolution
+        ↓
+Notification.origin_activity_id = ActivityId(A)
+```
+
+The exact implementation type may be operation-specific, for example:
+
+```text
+CaseMemberAddedResult
+├── member
+└── activity_id
+
+FindingParticipantAddedResult
+├── participant
+└── activity_id
+
+ActionAssigneeAddedResult
+├── assignee
+└── activity_id
+
+RectificationSubmissionResult
+├── submission
+├── finding
+└── activity_id
+```
+
+or an equivalently type-safe Scenario-neutral application result.
+
+`ActivityId` is application-operation output. It must not be added as a new property of `CaseMember`, `FindingParticipant`, `ActionAssignee`, `Submission`, or other Review Core entities merely to support Notification.
+
+The following provenance-recovery patterns are forbidden:
+
+- selecting the latest Activity for a subject;
+- querying Activity by `subject + event_type` after the mutation;
+- timestamp matching;
+- scanning Activity history and choosing a probable row; or
+- any other post-mutation lookup that guesses which Activity belongs to the current operation.
+
+This rule is required even when all writes share one transaction. Concurrent requests may create the same event type for the same subject, and timestamp/order-based recovery can bind a Notification to the wrong Activity. Because Activity identity participates in Notification idempotency and audit provenance, such a mismatch is a data-integrity failure.
+
+Review Core may therefore expose Scenario-neutral mutation results containing the exact created Activity identity. This does not make Review Core depend on Notification. The dependency remains one-way: Review Core produces generic operation facts; M3.2 consumes them.
 
 ## Trigger catalog for the first slice
 
@@ -232,6 +294,8 @@ A user who qualifies through both direct and department facts still receives one
 
 Idempotency is not implemented by querying for a matching title/body string.
 
+The exact Activity identity supplied by the triggering mutation is the provenance and idempotency origin. Notification code must not derive a replacement Activity identity from a later query.
+
 ## Notification does not grant live subject access
 
 A Notification is historical delivery evidence. The recipient may keep seeing the message that was legitimately delivered to them, even if later business relationships change.
@@ -281,9 +345,11 @@ Exact physical shapes remain query-plan driven. M3.2 must not add unrelated Revi
 The intended dependency direction is:
 
 ```text
-Review Core writes + Activity
+Review Core application operation
         ↓
-application/composition orchestration
+Scenario-neutral mutation result + exact ActivityId
+        ↓
+application/composition collaboration orchestration
         ↓
 notifications module
         ↓
@@ -296,7 +362,9 @@ The notification module may consume Scenario-neutral persisted business facts an
 
 Do not add Notification-specific methods to the base `ReviewCoreRepository` merely for recipient resolution. Dedicated query/repository helpers are allowed inside the notifications slice.
 
-If application orchestration needs a Scenario-neutral business result or Activity identity to keep Notification creation in the same transaction, that integration must remain generic; Review Core must not contain `send_notification`, `email`, or Notification template branches.
+Review Core application operations may expose Scenario-neutral mutation results containing the exact Activity identity they already create. They must not call `send_notifications()`, depend on `NotificationRepository`, render Notification templates, or otherwise import the notifications module.
+
+The collaboration orchestration layer consumes the mutation result and creates Notification rows in the same request-scoped Session/transaction. It must never recover `origin_activity_id` by querying Activity after the mutation.
 
 ## Explicitly out of scope
 
@@ -318,4 +386,4 @@ M3.4 may later use the persistent Notification foundation to create reminder Not
 
 ## End state
 
-M3.2 is complete when PostgreSQL proves that selected existing business events atomically create deduplicated, organization-safe, user-specific Notification rows; department recipient fan-out preserves source semantics; verification-ready fan-out obeys exact Scenario authorization; users can list and mark only their own notifications as read; and M1/M2/M3.1 business semantics remain unchanged.
+M3.2 is complete when PostgreSQL proves that selected existing business events atomically create deduplicated, organization-safe, user-specific Notification rows whose `origin_activity_id` is the exact Activity identity surfaced by the triggering mutation; department recipient fan-out preserves source semantics; verification-ready fan-out obeys exact Scenario authorization; users can list and mark only their own notifications as read; and M1/M2/M3.1 business semantics remain unchanged.
