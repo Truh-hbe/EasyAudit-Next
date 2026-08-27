@@ -26,7 +26,7 @@ Acceptance must prove:
 - no ReviewCase/Finding/ActionItem lifecycle state or transition is added or modified;
 - no Submission rule or M2 concurrency/lock protocol is changed;
 - no generic Finding deadline is added;
-- Review Core domain/application and Scenario implementations do not import collaboration/reminder/notification/scheduler modules;
+- Review Core domain/application and Scenario implementations do not import collaboration/reminder/notification/scheduler persistence/orchestration modules;
 - no reminder/nudge methods are added to the base `ReviewCoreRepository`;
 - `system_admin` receives no implicit business nudge authority and no implicit reminder delivery;
 - Notification does not become an authorization source; and
@@ -65,7 +65,7 @@ A manual nudge:
 - may occur whether or not the target is due soon/overdue;
 - changes no Review Core lifecycle or responsibility relationship;
 - creates exactly one append-only Activity for one successful logical nudge occurrence;
-- creates zero or more user-specific Notification rows only after recipient resolution succeeds; and
+- creates **one or more** user-specific deduplicated Notification rows after recipient resolution succeeds; and
 - never accepts arbitrary client-selected recipient IDs in the first slice.
 
 ReviewCase manual nudge remains out of scope.
@@ -91,41 +91,127 @@ Required negative cases:
 
 A custom Scenario must prove M3.4 does not compare `role_key == "lead"` or use Process Review role names as sender authorization.
 
-## Manual Finding recipient resolution
+## Hard recipient semantic boundary: authorization != responsibility
 
-For one target Finding, each active candidate user must be evaluated with the exact historical Scenario Policy and target-specific context for:
+Acceptance must treat these as separate concepts:
 
 ```text
-submit_rectification
+AuthorizationPolicy.allows(permission, context)
+= whether a user may perform a business capability
+
+Reminder / nudge recipient semantics
+= whether a user should receive a collaboration message for one recipient intent
+```
+
+The generic M3.4 layer must not itself assert that:
+
+```text
+transition_case == CASE_DEADLINE responsibility
+submit_rectification == FINDING_RECTIFICATION responsibility
+update_assigned_action == ACTION_EXECUTION responsibility
+```
+
+Instead, recipient semantics belong to the exact historical ScenarioVersion.
+
+The first recipient intents are:
+
+```text
+FINDING_RECTIFICATION
+ACTION_EXECUTION
+CASE_DEADLINE
+```
+
+The physical implementation may later be a Scenario recipient capability, versioned collaboration policy, or equivalent typed contract. This Gate freezes semantic ownership, not the final Protocol spelling.
+
+For `process_review@1`, the Scenario is allowed to map those intents to its current existing permissions:
+
+```text
+FINDING_RECTIFICATION
+→ submit_rectification
+
+ACTION_EXECUTION
+→ update_assigned_action
+
+CASE_DEADLINE
+→ transition_case
+```
+
+That mapping must be owned by `process_review@1`, not by generic reminder/nudge orchestration.
+
+## Manual Finding recipient resolution
+
+For one target Finding, generic M3.4 asks the exact persisted ScenarioVersion for recipients of:
+
+```text
+FINDING_RECTIFICATION
 ```
 
 Acceptance must prove:
 
-- Process Review v1 currently resolves its legitimate rectification submitter(s) without role-name comparisons;
-- a same-Organization user who can view the Finding but cannot submit rectification does not receive the nudge;
-- `system_admin` without exact Scenario authority does not receive it;
+- Process Review v1 currently resolves its legitimate rectification recipient(s) through its Scenario-owned mapping without generic role-name or permission coupling;
+- a same-Organization user who can view the Finding but is not selected by the Scenario recipient semantics does not receive the nudge;
+- `system_admin` without exact Scenario recipient responsibility does not receive it;
 - another Organization never receives it;
 - the sender is excluded from self-delivery; and
-- a custom Scenario with different rectification responsibility still resolves correctly without M3.4 code changes.
+- a custom Scenario with different rectification recipient semantics resolves correctly without M3.4 orchestration changes.
 
-If the final recipient set is empty, the command must fail before Activity/Notification persistence.
+If the final deduplicated recipient set is empty, the command must fail before Activity or Notification persistence.
 
 ## Manual ActionItem recipient resolution
 
-For one target ActionItem, each active candidate user must be evaluated for:
+For one target ActionItem, generic M3.4 asks the exact persisted ScenarioVersion for recipients of:
 
 ```text
-update_assigned_action
+ACTION_EXECUTION
 ```
 
 Acceptance must prove:
 
-- Process Review v1 primary/collaborator behavior works only through Scenario authorization;
-- unrelated same-Finding or same-Case grants cannot authorize sibling Action recipients;
+- Process Review v1 current primary/collaborator behavior works through its Scenario-owned recipient mapping;
+- unrelated same-Finding or same-Case grants cannot cause sibling Action recipients;
 - inactive users are excluded;
 - cross-Organization users are excluded;
 - the sender is excluded from self-delivery; and
-- a custom Scenario can change valid Action responsibility without requiring hard-coded role updates in M3.4.
+- a custom Scenario can change valid Action recipient responsibility without requiring hard-coded role or permission changes in M3.4.
+
+## Recipient responsibility divergence test
+
+A custom Scenario Acceptance is a hard Gate requirement and must deliberately make **authorization broader than recipient responsibility**.
+
+At minimum it must express this shape:
+
+```text
+Case role A
+→ may transition Case
+→ should receive CASE_DEADLINE reminder
+
+Case role B
+→ may also transition Case
+→ must NOT receive CASE_DEADLINE reminder
+```
+
+For example:
+
+```text
+transition_case authorization:
+lead + auditor
+
+CASE_DEADLINE recipients:
+lead only
+```
+
+The test must prove that role B is genuinely authorized for the transition operation while being excluded from the automatic Case deadline recipient set.
+
+This is the anti-coupling test for M3.4. An implementation equivalent to:
+
+```python
+if policy.authorization.allows("transition_case", context):
+    recipients.add(user)
+```
+
+in generic M3.4 must fail Acceptance.
+
+Equivalent divergence coverage should be possible for Finding/Action recipient intents if future implementation structure risks the same coupling.
 
 ## Recipient snapshot semantics
 
@@ -136,8 +222,9 @@ Acceptance must prove that later changes to:
 - Case membership;
 - Finding participants;
 - Action assignees;
-- department membership; or
-- Scenario-derived authority
+- department membership;
+- Scenario authorization; or
+- Scenario recipient semantics
 
 do not rewrite historical Notification recipients already persisted.
 
@@ -157,14 +244,24 @@ All Notifications emitted by that nudge must reference that exact Activity ident
 The required chain is:
 
 ```text
-manual nudge
-  -> exact Activity N
-  -> recipient resolution/delivery
-  -> Notification.origin_activity_id = N
+manual nudge sender authorization
+        ↓
+recipient resolution
+        ↓
+require non-empty deduplicated recipient set
+        ↓
+append exact Activity N
+        ↓
+create one-or-more Notification rows
+        ↓
+Notification.origin_activity_id = ActivityId(N)
+        ↓
+commit
 ```
 
 Hard Gate failures include:
 
+- appending Activity before recipient resolution/non-empty validation;
 - latest-Activity lookup;
 - subject + event_type lookup after append;
 - timestamp matching;
@@ -180,8 +277,10 @@ A manual nudge Activity and all required in-app Notifications commit atomically.
 
 Acceptance must prove both directions:
 
-1. successful nudge commits exactly one Activity plus all deduplicated recipient Notifications; and
+1. successful nudge commits exactly one Activity plus **one or more** deduplicated recipient Notifications; and
 2. forced Notification persistence failure rolls back the manual nudge Activity.
+
+A zero-recipient attempt must fail before Activity persistence and leave both Activity and Notification counts unchanged.
 
 The transaction must not modify ReviewCase/Finding/ActionItem lifecycle, responsibility relationships, Submission rows, Workbench truth, or management progress facts.
 
@@ -238,26 +337,31 @@ The seven-day M3.3 due-soon window is not automatically a delivery rule. Exact d
 
 ### ReviewCase
 
-Current active candidates must be evaluated with exact historical Scenario authorization for:
+Generic M3.4 asks the exact persisted ScenarioVersion for recipients of:
 
 ```text
-transition_case
+CASE_DEADLINE
 ```
+
+For Process Review v1, its Scenario-owned mapping may currently delegate to `transition_case`, but generic M3.4 must not directly equate transition authorization with deadline responsibility.
 
 ### ActionItem
 
-Current active candidates must be evaluated for:
+Generic M3.4 asks the exact persisted ScenarioVersion for recipients of:
 
 ```text
-update_assigned_action
+ACTION_EXECUTION
 ```
+
+For Process Review v1, its Scenario-owned mapping may currently delegate to `update_assigned_action`, but generic M3.4 must not directly own that equivalence.
 
 Acceptance for the later implementation must prove:
 
 - exact historical ScenarioVersion is used, not latest version/key-only lookup;
 - custom Scenario behavior can differ from Process Review v1;
+- the authorization-vs-responsibility divergence test passes;
 - no hard-coded `lead`, `primary`, or `collaborator` recipient shortcut exists;
-- target-specific authorization prevents sibling grant leakage;
+- target-specific facts prevent sibling grant leakage;
 - inactive users are excluded;
 - `system_admin` is not an implicit recipient; and
 - cross-Organization recipients are impossible.
@@ -369,7 +473,7 @@ Recipient resolution may bulk-read candidate relationship facts, but SQL must be
 
 Acceptance should compare small and large candidate sets and prove there is no obvious N+1 growth.
 
-Bulk reads never permit one combined same-Case grant bag to authorize sibling targets.
+Bulk reads never permit one combined same-Case grant bag to influence sibling targets.
 
 No speculative Review Core indexes may be added without PostgreSQL query evidence.
 
@@ -420,7 +524,9 @@ architecture check: pass
 OpenAPI check: pass
 ```
 
-The implementation PR must add PostgreSQL tests for M3.4-specific concurrency, exact provenance, dedupe, recipient isolation, and no-lifecycle-side-effect guarantees.
+The design head that precedes this P1/P2 documentation correction had CI #179 completed successfully. The corrected documentation-only head must also be green before being treated as the fixed implementation-entry head.
+
+The implementation PR must add PostgreSQL tests for M3.4-specific concurrency, exact provenance, dedupe, recipient isolation, authorization-vs-responsibility divergence, and no-lifecycle-side-effect guarantees.
 
 ## Gate exit decision
 
@@ -428,13 +534,14 @@ This first Architecture & Acceptance Gate is releasable for implementation only 
 
 1. **manual nudge** is an explicit, Activity-backed human collaboration action;
 2. **automatic reminder** is a timer/policy delivery and does not fabricate Review Activity;
-3. manual sender authority comes from existing exact Scenario management semantics, not role names/platform role;
-4. recipient resolution uses exact historical Scenario authorization and target-specific contexts;
-5. manual Finding recipients are current `submit_rectification`-authorized users;
-6. manual/automatic Action recipients are current `update_assigned_action`-authorized users;
-7. automatic Case recipients are current `transition_case`-authorized users;
-8. Notification dedupe has separate stable logical origins for Activity-backed and automatic reminder deliveries;
-9. no generic Finding deadline, reminder workflow entity, scheduler, or cadence is introduced in this Gate; and
-10. M2/M3.1/M3.2/M3.3 semantics remain stable.
+3. manual sender authority comes from existing exact Scenario management authorization, not role names/platform role;
+4. authorization permission and reminder/nudge recipient responsibility are distinct concepts;
+5. recipient resolution is owned by the exact historical ScenarioVersion through versioned recipient intents/semantics and target-specific facts;
+6. `process_review@1` may map `FINDING_RECTIFICATION`, `ACTION_EXECUTION`, and `CASE_DEADLINE` to existing permissions, but generic M3.4 does not own those mappings;
+7. a custom Scenario proves `can transition Case != must receive Case deadline reminder` without M3.4 changes;
+8. manual execution order is `authorize -> resolve recipients -> reject empty -> Activity -> one-or-more Notifications -> commit`;
+9. Notification dedupe has separate stable logical origins for Activity-backed and automatic reminder deliveries;
+10. no generic Finding deadline, reminder workflow entity, scheduler, or cadence is introduced in this Gate; and
+11. M2/M3.1/M3.2/M3.3 semantics remain stable.
 
 Until that review occurs, the PR remains Draft and M3.4 implementation must not begin.
