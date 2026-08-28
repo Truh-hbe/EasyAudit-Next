@@ -159,12 +159,12 @@ test('Notification 未读视图来自 server unread_only query and mark-read ref
   )
 
   await page.goto('/me/notifications')
-  await expect(page.getByText('Current all-page read row')).toBeVisible()
-  await expect(page.getByText('Server-only unread row')).toHaveCount(0)
+  await expect(page.getByText('Current all-page read row', { exact: true })).toBeVisible()
+  await expect(page.getByText('Server-only unread row', { exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: /未读/ }).click()
-  await expect(page.getByText('Server-only unread row')).toBeVisible()
-  await expect(page.getByText('Current all-page read row')).toHaveCount(0)
+  await expect(page.getByText('Server-only unread row', { exact: true })).toBeVisible()
+  await expect(page.getByText('Current all-page read row', { exact: true })).toHaveCount(0)
   expect(requestedModes).toContain('true')
 
   await page.getByRole('button', { name: '标记已读' }).click()
@@ -188,10 +188,10 @@ test('historical Notification does not grant current Finding access', async ({ p
   )
 
   await page.goto('/me/notifications')
-  await expect(page.getByText('Historical receipt remains visible')).toBeVisible()
+  await expect(page.getByText('Historical receipt remains visible', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: '打开当前目标' }).click()
   await expect(page.getByRole('heading', { name: 'Finding 不可用' })).toBeVisible()
-  await expect(page.getByText('Historical receipt remains visible')).toHaveCount(0)
+  await expect(page.getByText('Historical receipt remains visible', { exact: true })).toHaveCount(0)
 })
 
 test('late Management response cannot overwrite a newer server filter result', async ({ page }) => {
