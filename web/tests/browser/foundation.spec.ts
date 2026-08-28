@@ -318,10 +318,10 @@ test('ReviewCase route change binds rendered and subordinate state to the newly 
   await expect(page.getByRole('heading', { name: 'Authorized Case A' })).toBeVisible()
   await expect(page.getByText('Case A Member')).toBeVisible()
 
-  await page.evaluate(() => {
-    window.history.pushState({}, '', '/review-cases/case-b')
-    window.dispatchEvent(new PopStateEvent('popstate'))
-  })
+  await page.evaluate(`
+    history.pushState({}, '', '/review-cases/case-b')
+    dispatchEvent(new PopStateEvent('popstate'))
+  `)
 
   await expect(page).toHaveURL(/\/review-cases\/case-b$/)
   await expect(page.getByText('正在确认当前 ReviewCase 授权…')).toBeVisible()
