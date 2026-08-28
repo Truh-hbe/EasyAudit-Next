@@ -135,13 +135,16 @@ export function FindingDetailPage() {
   const [commandMessage, setCommandMessage] = useState<string | null>(null)
 
   useEffect(() => {
+    setCommandMessage(null)
+  }, [findingId])
+
+  useEffect(() => {
     setReviewCase(idleChild)
     setParticipants(idleChild)
     setActions(idleChild)
     setSubmissions(idleChild)
     setActivities(idleChild)
     setCandidateState({ status: 'idle' })
-    setCommandMessage(null)
 
     if (findingId === undefined) {
       setPrimary({ status: 'unavailable', findingId })
