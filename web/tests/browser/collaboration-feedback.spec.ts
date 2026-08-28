@@ -175,10 +175,9 @@ test('Action command feedback is retained for refetch but cleared when the route
   await expect(page.getByRole('status')).toContainText('Action A stale transition')
   await expect(page.getByRole('heading', { name: 'Action A' })).toBeVisible()
 
-  await page.evaluate(() => {
-    window.history.pushState({}, '', '/action-items/action-b')
-    window.dispatchEvent(new PopStateEvent('popstate'))
-  })
+  await page.evaluate(
+    "history.pushState({}, '', '/action-items/action-b'); dispatchEvent(new PopStateEvent('popstate'))",
+  )
 
   await expect(page.getByRole('heading', { name: 'Action B' })).toBeVisible()
   await expect(page.getByRole('status')).toHaveCount(0)
