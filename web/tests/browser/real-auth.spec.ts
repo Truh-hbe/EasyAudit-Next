@@ -10,6 +10,8 @@ function apiPath(url: string): string {
   return new URL(url).pathname
 }
 
+test.describe.configure({ retries: 0 })
+
 test('real PostgreSQL + FastAPI credential readiness journey', async ({ page, context }) => {
   const authorizationHeaders: Array<string | undefined> = []
   page.on('request', (request) => {
@@ -135,8 +137,12 @@ test('real PostgreSQL + FastAPI credential readiness journey', async ({ page, co
   expect(secondLoginResponse.status()).toBe(200)
   const secondLogin = (await secondLoginResponse.json()) as { session_id: string }
 
-  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
   await expect(page.getByRole('navigation', { name: '主要导航' })).toBeVisible()
+  await expect(page.getByText('当前仅提供产品结构入口；本页没有读取、推断或缓存业务领域状态。')).toBeVisible()
+  const authenticatedPath = new URL(page.url()).pathname
+  expect(
+    authenticatedPath === '/me/workbench' || authenticatedPath.startsWith('/review-cases'),
+  ).toBe(true)
 
   const revokeResponse = await context.request.delete(
     `${BASE_URL}/api/v1/me/sessions/${secondLogin.session_id}`,
