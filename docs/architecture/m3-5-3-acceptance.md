@@ -15,12 +15,15 @@ The Gate PR itself is documentation-only. Before architecture approval, the diff
 M3.5.3 passes only if implementation remains downstream of M2/M3 truth:
 
 - Review Core lifecycle and Scenario authorization semantics are unchanged;
+- the existing FindingParticipant participant-management invariant is strengthened with a final concurrency serialization guard before relationship persistence;
 - no new Action approval/rejection workflow is introduced;
 - no WorkItem/Todo or Product-owned assignment truth is created;
 - no Notification/Management/Reminder Product Surface leaks into this slice;
 - no new deadline/overdue rule is computed by React;
 - no binary storage infrastructure is introduced;
 - the exact Scenario UI registry remains the only Scenario-specific React extension boundary.
+
+The FindingParticipant guard is accepted only as concurrency enforcement of already-existing Scenario semantics. It must not change who is authorized, which Finding lifecycles allow participant management, or which role/actor-kind combinations are valid.
 
 Architecture/dependency tests must continue to prove backend modules do not import Product Surface code and generic React resource modules do not embed distributed Scenario identity branching.
 
@@ -160,7 +163,7 @@ Frontend tests must show loading, no-results, error and selection states without
 
 ## J. Participant mutation acceptance
 
-Adding a participant uses the existing Finding command.
+Adding a participant uses the existing Finding command, strengthened so the existing terminal-Finding invariant remains true under PostgreSQL concurrency.
 
 Mandatory behavior:
 
@@ -168,9 +171,41 @@ Mandatory behavior:
 - 403 preserves current server relationship list and shows refusal;
 - 409/422 does not locally add the actor;
 - duplicate/invalid relationship errors remain authoritative;
-- no local removal/edit behavior exists without a backend command.
+- no local removal/edit behavior exists without a backend command;
+- an early authorization/lifecycle snapshot is insufficient to persist a FindingParticipant relationship fact;
+- immediately before relationship persistence, the backend serializes against concurrent terminal Finding transition, refreshes the persisted Finding state, and re-checks current exact-Scenario participant-management operation state;
+- if a competing terminal transition committed first, participant creation aborts as a stale/concurrency conflict and maps to `409 Conflict`;
+- an aborted stale participant mutation persists no FindingParticipant, no `finding.participant_added` Activity, and no related Notification delivery fact.
 
-At least one test must deliberately render an assignment affordance for a user who later loses authority, return authoritative refusal, and prove the UI does not persist the local participant.
+The Gate does not require one repository method name. PostgreSQL `SELECT ... FOR UPDATE` plus refreshed ORM state is acceptable, as is an equivalent serialization mechanism, provided the same invariant is proven.
+
+A real PostgreSQL concurrency counterexample is mandatory:
+
+```text
+Tx A
+add participant
+→ initial Finding/context read is non-terminal
+→ authorization / preliminary validation passes
+→ pause before final persisted Finding guard
+
+Tx B
+VERIFYING → CLOSED
+or
+OPEN → VOIDED
+→ commit before Tx A obtains/completes its final guard
+
+Tx A
+→ final guard observes refreshed terminal Finding
+→ participant-management operation rejected
+→ FindingParticipant NOT inserted
+→ finding.participant_added Activity NOT inserted
+→ related Notification NOT created
+→ stale/concurrency response = 409
+```
+
+The test must prove database state after both transactions, not only an exception mapper. It must fail if the implementation merely repeats an unlocked read or trusts the pre-final snapshot.
+
+At least one frontend test must deliberately render an assignment affordance for a user who later loses authority or whose Finding becomes ineligible, return authoritative refusal/conflict, and prove the UI does not persist the local participant.
 
 ## K. Action list/detail acceptance
 
@@ -381,6 +416,8 @@ Shared Product API behavior must distinguish and safely handle:
 422 → validation/business input failure
 ```
 
+A FindingParticipant request whose earlier non-terminal snapshot becomes stale before the final relationship write is specifically a `409`, not a successful write and not a client-authoritative 422 reinterpretation.
+
 M3.5.3 must not add one-off raw `fetch()` error handling that bypasses the shared Product API boundary.
 
 After 409/refusal that indicates stale business state, affected server data is refetched before further semantic action. Blind automatic mutation retry is forbidden.
@@ -401,6 +438,8 @@ rectification submit   → Finding + Submission history + relevant Actions
 verification submit    → Finding + Submission history + Activity as rendered
 reopen                 → Finding + Activity as rendered
 ```
+
+A stale/conflicted participant add also refetches the current Finding and participant list before another semantic mutation is attempted.
 
 Logout/session identity change continues to clear protected Product caches per M3.5.1.
 
@@ -450,7 +489,9 @@ PostgreSQL pytest regression
 web typecheck/lint/build/test pipeline established by M3.5.1/2
 ```
 
-M3.5.3 adds focused backend PostgreSQL tests for any read prerequisites and focused React tests for Finding/Action behavior.
+M3.5.3 adds focused backend PostgreSQL tests for any read prerequisites and for the FindingParticipant final serialization counterexample, plus focused React tests for Finding/Action behavior.
+
+The FindingParticipant concurrency proof must exercise real PostgreSQL transaction interleaving and assert the final persisted relationship, Activity, and Notification facts; an in-memory/mock-only test is insufficient.
 
 Final Review must verify the exact candidate head, not an earlier successful run.
 
