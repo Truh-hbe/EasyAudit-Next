@@ -19,7 +19,7 @@ docs/architecture/m3-5-2-workbench-review-case-surface.md
 docs/architecture/m3-5-2-acceptance.md
 ```
 
-Any `web/**`, backend source, migration, package, lockfile, or CI change is executable implementation and is forbidden before Gate approval.
+Any `web/**`, backend executable source, migration, package/lockfile, or CI change is forbidden before Gate approval.
 
 ## Upstream preservation
 
@@ -45,15 +45,15 @@ ReviewCase visibility/lifecycle = Review Core + exact Scenario authorization
 
 ## No-second-Workbench acceptance
 
-Executable tests must prove the `/me/workbench` UI is populated from exactly:
+Executable tests must prove `/me/workbench` is populated from:
 
 ```http
 GET /api/v1/me/workbench
 ```
 
-and does not reconstruct personal work by querying broad Case/Finding/Action collections.
+and is not reconstructed from broad Case/Finding/Action collections.
 
-A valid fixture must include at least one item in multiple distinct server categories, for example:
+A valid fixture should contain multiple distinct server categories, for example:
 
 ```text
 case_responsibilities
@@ -64,9 +64,9 @@ due_soon
 overdue
 ```
 
-The UI membership must match the server response even when role/lifecycle combinations would tempt client inference.
+Rendered membership must match the server response even where role/lifecycle combinations would tempt client inference.
 
-Acceptance fails if frontend code contains business selection equivalent to:
+Acceptance fails for logic equivalent to:
 
 ```ts
 if (case.role === "lead") work.push(case)
@@ -74,48 +74,46 @@ if (finding.lifecycle === "verifying") verification.push(finding)
 if (action.dueAt < Date.now()) overdue.push(action)
 ```
 
-Presentation grouping, labels, empty sections, sorting, and display filtering remain allowed.
+Presentation grouping, labels, sorting/filtering and empty-state choices remain allowed.
 
-## Workbench original-resource navigation
+## Original-resource navigation
 
-Tests must prove each server-projected item navigates to its original resource identity:
+Tests must prove server-projected items navigate to original identities:
 
 ```text
-Case → /review-cases/:caseId
+Case    → /review-cases/:caseId
 Finding → /findings/:findingId
-Action → /action-items/:actionItemId
+Action  → /action-items/:actionItemId
 ```
 
-No Workbench item gets an independent detail lifecycle or domain route.
+No Workbench item gets an independent lifecycle or detail aggregate. Finding/Action destinations may remain explicit M3.5.3 placeholders.
 
-Finding/Action destinations may remain explicit M3.5.3 placeholders in this slice.
-
-## Workbench stale-link authorization counterexample
+## Stale Workbench link authorization counterexample
 
 A real backend/browser Acceptance must cover:
 
 ```text
 T0
 User A has current relationship
-→ GET /me/workbench includes Case C
+→ /me/workbench includes Case C
 
 T1
-server-side relationship is changed/removed by an authorized setup actor
+server-side relationship changes/removes A's current access
 
 T2
-User A follows the old Workbench link to /review-cases/C
-→ Product Surface performs normal current Case GET
+A follows old Workbench link to /review-cases/C
+→ browser performs normal current Case GET
 → backend refuses/non-discloses current access
-→ Case detail is not rendered from stale Workbench data
+→ no Case detail is rendered from stale Workbench data
 ```
 
-After refusal, the browser must not reveal cached/stale:
+After refusal the browser must not reveal stale:
 
 ```text
 Case title
 lifecycle
 scenario_data
-members
+member identities
 Findings
 management progress
 Activity
@@ -127,21 +125,19 @@ A stale Workbench pointer is never a capability token.
 
 `/review-cases` must consume the existing authorized Case collection endpoint.
 
-Tests must prove:
+Tests prove:
 
 - only server-returned Cases render;
-- each row links to the original Case route;
-- generic lifecycle/timing text comes from response fields;
-- no management scope or platform role broadens the list; and
-- no client-generated percent-complete field is introduced.
+- each row links to the original Case;
+- lifecycle/timing comes from server fields;
+- platform role or management scope does not broaden the list; and
+- no frontend canonical percent-complete field is introduced.
 
-`system_admin` without business relationships remains unable to use frontend navigation as a business bypass.
+`system_admin` without business relationships gets no frontend business bypass.
 
 ## ReviewCase detail authorization ordering
 
-For `/review-cases/:caseId`, the ordinary Case GET is the primary authorization gate.
-
-Required ordering:
+For `/review-cases/:caseId`, ordinary Case GET is the primary authorization gate:
 
 ```text
 route entered
@@ -151,14 +147,14 @@ route entered
    │    → subordinate reads may proceed
    └── unauthorized/non-disclosing missing
         → safe unavailable state
-        → no members/Findings/progress/Activity details shown from cache
+        → no members/Findings/progress/Activity details from cache
 ```
 
-Tests must include a known unauthorized/foreign Case UUID and verify no resource existence/detail leakage beyond the established backend behavior.
+Tests include known unauthorized same-org and foreign-org Case IDs and verify no detail leakage beyond established backend behavior.
 
 ## Case server-field fidelity
 
-A visible Case fixture must prove the UI consumes server fields including:
+A visible Case fixture proves UI consumption of:
 
 ```text
 title
@@ -173,13 +169,11 @@ closed_at
 created_at
 ```
 
-The UI may format timestamps consistently but must not derive a competing lifecycle/deadline classification.
+Timestamp formatting is presentation-only. No competing lifecycle/deadline classification is derived.
 
 ## Scenario UI registry acceptance
 
-M3.5.2 cannot pass without an executable centralized Scenario UI registry.
-
-Tests must prove exact registration and lookup by:
+M3.5.2 cannot pass without a centralized executable Scenario UI registry keyed exactly by:
 
 ```text
 (scenario_key, scenario_version)
@@ -191,142 +185,124 @@ At minimum:
 process_review@1 → ProcessReviewV1 Case adapter
 ```
 
-The `process_review@1` adapter may render existing Case `scenario_data` fields:
-
-```text
-area_code
-review_type
-```
-
-Generic Case/Workbench code must not contain distributed Process Review identity checks.
+The adapter may render existing `area_code` and `review_type` Case scenario fields. Generic Workbench/Case code must not contain distributed `process_review` identity branches.
 
 ### Exact-version counterexample
 
-A unit/component test must register at least two distinguishable adapters, e.g.:
+A unit/component test must distinguish at least:
 
 ```text
 process_review@1 → AdapterV1
 process_review@2 → AdapterV2
 ```
 
-then request:
-
-```text
-process_review@99
-```
+then request `process_review@99`.
 
 Expected:
 
 ```text
 not AdapterV1
 not AdapterV2
-not latest
-not nearest
-not key-only fallback
+not latest / nearest / key-only fallback
 
-→ generic Case fields remain visible if server authorization succeeded
-→ Scenario-specific section explicitly says unsupported/unavailable
-→ Scenario-specific editing is absent/disabled
+generic Case fields remain visible if Case authorization succeeded
+Scenario-specific section explicitly unsupported/unavailable
+Scenario-specific editing absent/disabled
 ```
 
-The registry must not own authorization, lifecycle, overdue, recipient, or provenance logic.
+Registry adapters do not own authorization, lifecycle, overdue, management scope, recipient, or provenance truth.
 
 ## Findings-on-Case acceptance
 
-The Case Findings section consumes:
+The Findings section consumes:
 
 ```http
 GET /api/v1/review-cases/{case_id}/findings
 ```
 
-Tests must prove returned Finding rows retain original identity and server fields such as title/severity/lifecycle/raised_at.
+Returned rows retain original Finding identity and server title/severity/lifecycle/raised_at.
 
-M3.5.2 must not add:
+M3.5.2 adds no Finding transition, participant mutation, rectification/verification form, Action work, or Finding scenario editing.
 
-```text
-Finding transition commands
-participant mutation
-rectification forms
-verification forms
-Action work
-Finding scenario editing
-```
+No canonical Case progress/closure total is recomputed from this list when M3.3 already owns aggregates.
 
-No canonical Case progress/closure total may be recomputed from this list when M3.3 owns those aggregates.
+## Member display identity acceptance
 
-## Member read acceptance
+The baseline Case member relationship response has `user_id / role_key / joined_at` but no `display_name`, while general User APIs are system-admin-only.
 
-The members section consumes:
-
-```http
-GET /api/v1/review-cases/{case_id}/members
-```
-
-Acceptance must prove:
-
-- returned members render as relationship facts;
-- role keys may be displayed but do not create client authorization;
-- no add/remove/change member mutation UI is introduced in M3.5.2.
-
-A source review check should reject frontend logic equivalent to:
-
-```ts
-member.role_key === "lead" && enableManageButton
-```
-
-as business authority.
-
-## Optional management-progress acceptance
-
-The M3.3 progress endpoint has narrower management authorization than ordinary Case visibility.
-
-Acceptance must include two users against the same visible Case shape:
-
-```text
-User M
-→ ordinary Case GET authorized
-→ management progress GET authorized
-→ server factual progress summary renders
-
-User V
-→ ordinary Case GET authorized
-→ management progress GET non-disclosing 404
-→ Case remains visible
-→ management progress section omitted/unavailable
-→ no TypeScript fallback recomputation
-```
-
-This is a hard counterexample against coupling `view_case` to `manage_case_members`.
-
-When progress is available, tests should verify the UI displays returned server facts such as:
-
-```text
-deadline_bucket
-Finding lifecycle counts
-Action lifecycle counts
-overdue count
-due-soon count
-```
-
-without inventing `overallProgress` or a second deadline formula.
-
-## ReviewCase Activity read prerequisite acceptance
-
-If implementation adds the Gate-approved endpoint:
-
-```http
-GET /api/v1/review-cases/{case_id}/activities
-```
-
-it must be read-only and preserve current Case authorization.
-
-### Authorization proof
+M3.5.2 may introduce the Gate-approved **Case-scoped display identity enrichment** only after current Case visibility succeeds.
 
 PostgreSQL/API tests must prove:
 
 ```text
 authorized Case viewer
-→ endpoint returns allowed Case-subject Activity rows
+→ member relationship rows resolve display_name for exactly those member user_ids
+
+unauthorized/foreign Case
+→ no member relationship or display identity is disclosed
+```
+
+The Product Surface must not call:
+
+```http
+GET /api/v1/admin/users
+GET /api/v1/admin/users/{user_id}
+```
+
+for ordinary Case rendering.
+
+No organization-wide ordinary-user directory may be introduced.
+
+Acceptance also confirms:
+
+- CaseMember remains the authoritative relationship;
+- display_name is presentation identity only;
+- no member mutation UI is added;
+- frontend role checks such as `role_key === "lead" → canManage` are absent.
+
+A source/diff review must reject any client or backend shortcut that converts this enrichment into new authorization semantics.
+
+## Optional management-progress acceptance
+
+M3.3 progress authorization is narrower than ordinary Case visibility.
+
+Acceptance includes two users against a visible Case shape:
+
+```text
+User M
+→ ordinary Case GET authorized
+→ management progress authorized
+→ returned server progress summary renders
+
+User V
+→ ordinary Case GET authorized
+→ management progress non-disclosing 404
+→ Case remains visible
+→ summary omitted/unavailable
+→ no TypeScript fallback recomputation
+```
+
+When progress exists, UI displays returned server facts such as deadline_bucket, Finding lifecycle counts, Action lifecycle counts, overdue count and due-soon count.
+
+No `overallProgress` or alternate deadline rule is added.
+
+## ReviewCase Activity read prerequisite acceptance
+
+Implementation may add:
+
+```http
+GET /api/v1/review-cases/{case_id}/activities
+```
+
+only as the Gate-approved read-only ReviewCase-subject history.
+
+### Authorization proof
+
+PostgreSQL/API tests prove:
+
+```text
+authorized Case viewer
+→ endpoint returns allowed ReviewCase-subject Activity rows
 
 known unauthorized same-org Case
 → non-disclosing refusal
@@ -335,7 +311,7 @@ foreign-org Case UUID
 → non-disclosing refusal
 ```
 
-No Activity data may be returned merely because the Activity row exists.
+Activity existence never grants access.
 
 ### Subject-isolation proof
 
@@ -348,28 +324,15 @@ ActionItem-subject Activity X
 Submission-subject Activity S
 ```
 
-The M3.5.2 Case Activity endpoint must return only `A`.
+The Case Activity endpoint returns only `A`.
 
-It must not leak child event type, child IDs, actor/payload, or even child count through this endpoint.
+It must not leak child event type, child IDs, actor, metadata, or child count through this endpoint.
 
-This counterexample is required even if `process_review@1` currently lets a lead see all Findings, because the contract must remain safe for future Scenario versions.
+This counterexample is required even if `process_review@1` currently lets a lead view all Findings, because future Scenario versions may differ.
 
-### Append-only/no-side-effect proof
+### Metadata exclusion proof
 
-Before/after the Activity GET, verify no durable state changes:
-
-```text
-Activity count unchanged
-ReviewCase lifecycle unchanged
-Notification state unchanged
-Session business state unchanged
-```
-
-No migration or new Activity persistence table is permitted.
-
-### DTO fidelity
-
-The browser/API DTO may expose only existing Activity facts required for presentation, such as:
+The first M3.5.2 Activity wire DTO is exactly presentation-safe and metadata-free:
 
 ```text
 id
@@ -378,14 +341,32 @@ subject_id
 event_type
 actor_id
 occurred_at
-safe existing payload/metadata if included
 ```
 
-No second event taxonomy, Notification mapping, or inferred business status.
+Tests/OpenAPI review must confirm `metadata` is not emitted by this endpoint.
+
+A later Product need for Activity metadata requires explicit field-by-field review rather than generic JSON exposure.
+
+### Append-only/no-side-effect proof
+
+Before/after Activity GET verify:
+
+```text
+Activity count unchanged
+ReviewCase lifecycle unchanged
+Notification state unchanged
+no durable product/timeline row created
+```
+
+No migration or new Activity persistence table is permitted.
+
+### Ordering proof
+
+Multiple Case-subject Activities with equal/different `occurred_at` values must return in the documented deterministic order using `occurred_at` plus stable Activity ID tie-breaker.
 
 ## Case mutation exclusion acceptance
 
-Source/diff review must confirm M3.5.2 adds no Product Surface controls for:
+Source/diff review confirms M3.5.2 Product Surface adds no controls for:
 
 ```text
 create Case
@@ -393,27 +374,25 @@ transition Case
 add/change/remove Case member
 ```
 
-and no frontend lifecycle/permission matrix is added to decide such controls.
+and no frontend workflow/permission matrix to decide such controls.
 
-Existing backend mutation endpoints remain unchanged; absence of UI commands in this slice is intentional.
+Existing backend command endpoints remain unchanged; their absence from this Product slice is intentional.
 
 ## Shared API client acceptance
 
-All M3.5.2 business requests must pass through the existing shared API boundary.
+All M3.5.2 business requests pass through the existing shared API boundary. Feature code must not scatter raw `fetch()` calls.
 
-Feature code must not scatter direct raw `fetch()` calls.
-
-Tests/source review must confirm:
+Tests/source review confirm:
 
 - `/api/v1/*` remains relative/same-origin;
-- central 401 still transitions Session to anonymous;
-- normal 404 does not become Session expiry;
-- wire DTOs mirror backend shape rather than create a second domain model;
+- central 401 still moves Session to anonymous;
+- normal 404 is not Session expiry;
+- wire DTOs mirror backend transport rather than form a second domain model;
 - no auth/session token enters browser storage.
 
 ## Loading / error / optional-section independence
 
-Component/browser tests must cover:
+Component/browser tests cover:
 
 ```text
 Workbench loading
@@ -425,29 +404,25 @@ Scenario unsupported exact version
 management progress unavailable while Case remains visible
 ```
 
-A failure in optional management progress must not erase an authorized Case or trigger client progress reconstruction.
-
-A subordinate read failure must surface safely without displaying stale data from another Case/user.
+A subordinate/optional request failure must surface safely without displaying stale data from another Case/user or fabricating fallback truth.
 
 ## Logout/session-expiry/user-boundary regression
 
-M3.5.1 already established protected-state isolation. M3.5.2 must prove newly introduced business data participates in the same boundary.
-
-At minimum:
+M3.5.2 business data must participate in the M3.5.1 protected-state boundary:
 
 ```text
 User A loads Workbench / Case A
 → logout or Session 401
 → protected Workbench/Case data disappears
 → User B logs in in same browser context
-→ no User A Case title, relationships, progress, Activity, or Scenario data appears
+→ no A Case title, relationships, display names, progress, Activity, or Scenario data appears
 ```
 
-If a query cache is introduced, this test must prove its protected entries are cleared/inaccessible across the user boundary.
+If a query cache is introduced, this must prove protected entries clear/become inaccessible across users.
 
 ## Real browser Acceptance
 
-Final M3.5.2 evidence must run through the existing real chain:
+Final M3.5.2 evidence runs through:
 
 ```text
 fresh PostgreSQL
@@ -457,7 +432,7 @@ fresh PostgreSQL
 → real Chromium
 ```
 
-Mocked component tests remain useful but cannot replace this proof.
+Mocked component tests cannot replace this proof.
 
 The real-browser fixture should exercise at least:
 
@@ -465,10 +440,10 @@ The real-browser fixture should exercise at least:
 1. authenticated Workbench populated from M3.1 projection
 2. Workbench Case link → real current Case authorization
 3. visible Case generic fields + exact Scenario section
-4. members + visible Findings
-5. manager-only progress success
-6. visible non-manager Case with progress 404 but Case still visible
-7. Case-subject Activity read
+4. human-readable Case members + visible Findings
+5. manager progress success
+6. visible non-manager progress 404 while Case remains visible
+7. metadata-free Case-subject Activity read
 8. stale Workbench link after relationship loss → current authorization refusal
 9. hard reload re-fetches current Workbench/Case server truth
 10. logout/session boundary removes protected M3.5.2 data
@@ -476,24 +451,15 @@ The real-browser fixture should exercise at least:
 
 ## Responsive/accessibility regression
 
-M3.5.5 owns final responsive product proof, but M3.5.2 implementation must have at least one desktop and one narrow-browser check for Workbench and Case viewing.
+M3.5.5 owns final responsive Product proof, but M3.5.2 must have at least one desktop and one narrow-browser check for Workbench and Case viewing.
 
-At minimum verify:
+Verify primary Workbench sections, Case header, Findings/members/Activity sections, and original-resource links remain reachable; status meaning uses text beyond color; loading/empty/error text remains readable and keyboard navigation works for primary links.
 
-```text
-primary Workbench sections reachable
-Case header readable
-Findings/members/Activity sections reachable
-original-resource links keyboard reachable
-status labels use text, not color only
-loading/empty/error text readable
-```
-
-No UI redesign/design-system expansion is required.
+No design-system expansion is required.
 
 ## CI acceptance
 
-The implementation candidate must keep all existing normal pipeline checks green:
+The implementation candidate keeps all normal pipeline checks green:
 
 ```text
 backend:
@@ -516,7 +482,7 @@ real browser:
 PostgreSQL + FastAPI + HTTPS Vite + Chromium M3.5.2 journey
 ```
 
-If a new Activity read API is added, OpenAPI must be updated/generated through the existing contract check rather than bypassed.
+Any member identity/API or Activity read-contract addition must be included in the existing OpenAPI contract check.
 
 ## Implementation diff boundary
 
@@ -529,18 +495,20 @@ web/src/features/review-cases/** or equivalent
 web/src/scenarios/** or equivalent exact registry
 ProductShell route replacement for M3.5.2
 frontend tests/browser fixtures
+narrow Case member display-identity read enrichment + tests
 narrow read-only Case Activity query/API + tests
-composition/main registration only if needed for that read API
+composition/main registration only if needed for those read APIs
 CI only if Acceptance harness needs a bounded addition
 ```
 
-Unexpected scope requiring separate review includes:
+Unexpected scope requiring separate review:
 
 ```text
 migration
 Review Core lifecycle/Scenario authorization changes
 Notification/Reminder code
 M3.3 semantics changes
+organization-wide ordinary-user directory
 Finding/Action mutation Product UI
 new business entities
 new frontend auth model
@@ -551,22 +519,25 @@ new frontend auth model
 M3.5.2 cannot pass Final Review unless all are true:
 
 ```text
-Workbench comes directly from M3.1                     ✅
-no frontend work-membership reconstruction             ✅
-Workbench links re-enter current resource auth          ✅
-ReviewCase generic truth comes from server              ✅
-Scenario adapter lookup exact by key + version          ✅
-unknown Scenario UI version fails closed                ✅
-Finding/member sections remain original read resources  ✅
-management progress remains optional/narrow-authorized   ✅
-no client overdue/progress fallback                     ✅
-Case Activity API is read-only + Case-subject-only       ✅
-no hidden child Activity leakage                        ✅
-no Case mutation UI/role matrix in this slice           ✅
-shared same-origin API/session contract preserved        ✅
-protected business data clears across Session/user       ✅
-real PostgreSQL/FastAPI browser Acceptance               ✅
-exact-head / fixed-base-tree CI green                    ✅
+Workbench comes directly from M3.1                         ✅
+no frontend work-membership reconstruction                 ✅
+Workbench links re-enter current resource auth              ✅
+ReviewCase generic truth comes from server                  ✅
+Scenario adapter lookup exact by key + version              ✅
+unknown Scenario UI version fails closed                    ✅
+Finding rows remain original read resources                 ✅
+Case member names are Case-scoped server enrichment          ✅
+no ordinary-user org directory/admin API shortcut           ✅
+management progress remains optional/narrow-authorized       ✅
+no client overdue/progress fallback                         ✅
+Case Activity API is read-only + Case-subject-only           ✅
+Activity DTO excludes generic metadata JSON                  ✅
+no hidden child Activity leakage                            ✅
+no Case mutation UI/role matrix in this slice               ✅
+shared same-origin API/session contract preserved            ✅
+protected business data clears across Session/user           ✅
+real PostgreSQL/FastAPI browser Acceptance                   ✅
+fixed-base / fixed-head-tree CI green                        ✅
 ```
 
-M3.5.3 remains locked until this slice passes Final Review and is merged.
+M3.5.3 remains locked until M3.5.2 passes Final Review and is merged.
