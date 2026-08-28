@@ -224,10 +224,9 @@ async function stubProduct(page: Page) {
 }
 
 async function expectNoDocumentOverflow(page: Page) {
-  await expect.poll(() => page.evaluate(() => ({
-    clientWidth: document.documentElement.clientWidth,
-    scrollWidth: document.documentElement.scrollWidth,
-  }))).toSatisfy(({ clientWidth, scrollWidth }) => scrollWidth <= clientWidth + 1)
+  await expect.poll(() => page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  )).toBeLessThanOrEqual(1)
 }
 
 test('M3.5.5 narrow product route matrix keeps essential controls inside the document viewport', async ({ page }) => {
