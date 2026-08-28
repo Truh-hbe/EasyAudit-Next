@@ -8,154 +8,179 @@ main@141b8ff38432584fce7a6fce916610a540ef4ef4
 
 This Acceptance belongs to `m3-5-4-notification-management-reminder-surface.md` and is frozen before executable implementation begins.
 
-M3.5.4 is accepted only if the Product Surface consumes M3.2 Notification, M3.3 Management and M3.4 Reminder/Nudge without creating competing frontend business truth.
+M3.5.4 is complete only if React consumes M3.2/M3.3/M3.4 truth without creating competing business state, while the already-frozen parent M3.5 `未读 / 全部` Notification Center is implemented with pagination-correct server semantics.
 
 ## A. Gate diff acceptance
 
-Before executable implementation is unlocked:
+Before implementation unlock:
 
 ```text
 changed files == 2
 ```
 
-and the exact paths are:
+and exactly:
 
 ```text
 docs/architecture/m3-5-4-notification-management-reminder-surface.md
 docs/architecture/m3-5-4-acceptance.md
 ```
 
-Forbidden before Gate approval:
+Forbidden before Gate PASS:
 
 ```text
 web/**
 src/easyaudit_next/**
 alembic/**
 package / lockfile
-GitHub Actions / CI
+workflow / CI
 OpenAPI generated artifacts
 ```
 
-## B. Upstream contract acceptance
+## B. Frozen API surface
 
-The implementation must consume exactly the existing first-slice APIs unless a separately reviewed prerequisite is approved.
-
-Notification:
+Existing Notification APIs:
 
 ```http
 GET  /api/v1/me/notifications?limit=&offset=
 POST /api/v1/me/notifications/{notification_id}/read
 ```
 
-Management:
+Approved additive query prerequisite:
+
+```http
+GET /api/v1/me/notifications?unread_only=true|false&limit=&offset=
+```
+
+Existing Management APIs:
 
 ```http
 GET /api/v1/management/review-cases
 GET /api/v1/management/review-cases/{case_id}/progress
 ```
 
-Manual nudge:
+Existing manual nudge APIs:
 
 ```http
 POST /api/v1/findings/{finding_id}/nudge
 POST /api/v1/action-items/{action_item_id}/nudge
 ```
 
-Acceptance fails if frontend implementation requires an unreviewed endpoint for:
+No other Product API expansion is approved by this Gate.
+
+## C. Unread query prerequisite acceptance
+
+The narrow Notification extension must satisfy all of:
+
+1. `unread_only` is optional and defaults to `false`.
+2. `false` preserves current M3.2 inbox behavior and ordering.
+3. `true` constrains the current recipient's organization-scoped inbox to `read_at IS NULL`.
+4. unread filtering happens **before** `limit / offset`.
+5. deterministic existing Notification ordering is preserved.
+6. `unread_count` remains the current recipient's global unread count.
+7. response schema is unchanged.
+8. no Notification schema/migration is introduced.
+9. no mark-unread/delete/archive semantics are introduced.
+10. no recipient/user ID can be supplied by the client.
+
+Mandatory PostgreSQL/query counterexample:
 
 ```text
-arbitrary recipient selection
-mark unread / archive / delete
-Notification capability checks
-client-generated reminder provenance
-management task mutation
-scheduler/cadence administration
-Finding deadline
+ordered inbox:
+U1, R1, U2, R2, U3
+
+unread_only=true
+limit=2 offset=0 → U1, U2
+limit=2 offset=2 → U3
 ```
 
-## C. Notification inbox ownership acceptance
-
-`GET /me/notifications` is recipient-local historical delivery truth.
-
-Tests must prove:
-
-1. Product Surface calls only the current-user inbox endpoint; no recipient/user ID is supplied by React.
-2. Rows come from the server `items` in their returned order.
-3. The UI renders `title`, `body`, `kind`, `created_at`, `read_at` and typed subject without turning Notification into a Todo/WorkItem.
-4. `unread_count` is rendered only as server-owned global unread count.
-5. `unread_count` is never treated as total inbox size.
-6. another user's Notification ID cannot be used to update local inbox truth when the server returns 404.
-7. logout/login identity change clears protected Notification rows from the prior user.
-
-No test may seed “authorization” by placing a Notification in local React state.
-
-## D. Notification pagination acceptance
-
-The existing inbox exposes `limit` and `offset`, but no total count.
-
-Tests must show:
+The implementation fails if it performs:
 
 ```text
-page 0 response
-→ UI renders exactly server page 0
-
-next offset request
-→ UI renders/appends according to the chosen presentation strategy
-→ no fabricated total
+limit/offset full inbox
+→ filter unread afterwards
 ```
 
-If pages are accumulated for infinite-scroll style presentation, acceptance requires:
+because that would make unread page membership depend on read rows.
 
-- deterministic server order remains intact;
-- duplicate page responses do not create duplicate Notification rows;
-- changing identity/resetting the inbox discards accumulated pages;
-- a late response from an old offset/session cannot overwrite the current inbox.
+## D. Notification Center All / Unread acceptance
 
-The UI may say “more may be available” based on a full page. It must not assert an authoritative next page solely from `items.length == limit`.
-
-## E. Unread presentation acceptance
-
-The current server API has no unread-only pagination filter.
-
-Therefore acceptance fails if Product copy or state claims that filtering the current loaded page is the complete unread inbox.
-
-If the Product exposes an **未读** control, tests must prove either:
+The first Product Center exposes two real server-backed views:
 
 ```text
-explicit wording/state = current loaded page filter
+全部 → unread_only=false
+未读 → unread_only=true
 ```
 
-or another equally clear non-authoritative presentation.
-
-The global unread badge/count must continue to come from server `unread_count`.
+Browser tests must prove switching views issues the correct backend query and does not reuse page membership from the other view.
 
 Counterexample:
 
 ```text
-server page contains 0 unread rows
-server unread_count = 7
+All page contains no unread rows at current offset
+unread_count > 0
 ```
 
-The UI must not conclude “没有未读通知” globally from the page contents.
+The UI must not claim globally “没有未读通知”; the Unread view must query `unread_only=true`.
 
-## F. Mark-read acceptance
+`unread_count` is never treated as inbox total.
 
-Mark read is the only Notification mutation in M3.5.4.
+## E. Notification ownership acceptance
+
+The Product calls only `/me/notifications`; React supplies no recipient ID.
 
 Tests must prove:
 
-- unread Notification → POST exact Notification ID → server response/refetch owns `read_at`;
-- already-read Notification → idempotent server response remains safe;
-- server 404 leaves no fabricated `read_at` success;
-- a failed mark-read does not decrement `unread_count` optimistically as durable truth;
-- a successful mark-read updates/refetches inbox state coherently using server facts;
-- mark-read creates no Activity, Workbench item, management fact or lifecycle transition in React.
+- rows come only from server `items`;
+- another user's Notification cannot be read/marked through local state;
+- 404 on mark-read creates no local success;
+- logout/login clears protected inbox state;
+- a late response from user/session A cannot populate user/session B's inbox.
 
-If optimistic visual feedback is used, it must be rollback-safe and never become the only persisted truth. A simple server-confirmed update is preferred for this slice.
+Notification remains delivery history, not Workbench/current ownership.
 
-## G. Notification typed-subject navigation acceptance
+## F. Notification pagination acceptance
 
-The Product maps only the closed subject wire kind:
+For each view, React consumes server `limit` and `offset` without inventing a total.
+
+If pages are accumulated:
+
+- order remains server order;
+- duplicate page responses do not duplicate rows;
+- changing All/Unread resets or correctly partitions pagination state;
+- changing identity resets accumulated pages;
+- an old offset/view response cannot overwrite the current view.
+
+`items.length == limit` may mean another page is possible, not guaranteed.
+
+## G. Mark-read acceptance
+
+Mandatory behavior:
+
+```text
+unread row
+→ POST exact notification_id/read
+→ server response/refetch owns read_at
+```
+
+Tests cover:
+
+- unread success;
+- already-read idempotent success;
+- 404 refusal;
+- server-confirmed `unread_count` refresh/update;
+- no Activity/lifecycle/Workbench/Management/Reminder mutation in React.
+
+A successful mark-read in Unread view removes the item only according to server-confirmed state/query refresh, not because React independently changed durable truth.
+
+## H. Typed subject navigation acceptance
+
+Route mapping uses only:
+
+```text
+subject.kind + subject.id
+```
+
+Accepted mapping:
 
 ```text
 review_case → /review-cases/:id
@@ -163,95 +188,77 @@ finding     → /findings/:id
 action_item → /action-items/:id
 ```
 
-Tests must prove:
-
-1. subject route is derived from `subject.kind + subject.id`, not title/body text;
-2. Notification `kind` is not used to guess resource type;
-3. `origin_activity_id` is not used to guess resource type;
-4. unknown future subject kind fails closed;
-5. clicking does not render resource content from the Notification payload itself.
-
-## H. Notification is not capability acceptance
-
-Mandatory current-authorization counterexample:
+Forbidden routing inference:
 
 ```text
-T0 user legitimately receives Notification for Finding F
-T1 business relationship is revoked
-T2 Notification remains in inbox
-T3 user clicks Notification
+Notification kind
+title/body text
+UUID shape
+origin_activity_id
+Activity event type
+latest Activity
+```
+
+Unknown future subject kinds fail closed.
+
+## I. Notification is not capability acceptance
+
+Mandatory counterexample:
+
+```text
+T0 Notification for Finding F delivered legitimately
+T1 user's current Finding visibility is revoked
+T2 historical Notification remains
+T3 user clicks row
 ```
 
 Required result:
 
 ```text
-Notification row remains historical delivery fact
-→ route attempts current Finding GET
-→ current backend refusal/missing state wins
+navigate to /findings/F
+→ current Finding GET is authorization gate
+→ refusal/missing wins
 → safe unavailable page
-→ no protected stale Finding content
+→ no stale protected Finding content
 ```
 
-Equivalent behavior must hold for ReviewCase and ActionItem target types through the existing resource route guards.
+Equivalent original-resource guard behavior applies to ReviewCase/ActionItem subjects.
 
-## I. Notification provenance acceptance
+## J. Notification provenance acceptance
 
-The inbox may carry:
+React may render narrow historical origin presentation from wire facts, but static/browser review must prove it does not:
 
 ```text
-origin_kind
-origin_activity_id
-automatic_origin_key
+lookup latest Activity
+scan Activity history
+match event_type/timestamp
+reconstruct origin
+invent automatic_origin_key
 ```
 
-Tests/static review must prove React does not:
+`origin_activity_id` and `automatic_origin_key` are opaque historical provenance/deduplication facts, not current responsibility or workflow truth.
 
-```text
-fetch latest Activity to explain Notification
-scan Activity history for matching event_type
-match timestamps
-reconstruct Notification origin
-invent automatic origin keys
-```
-
-For Activity-backed Notifications, the exact `origin_activity_id` is display/audit metadata only.
-
-For automatic reminders, `automatic_origin_key` is opaque backend provenance/deduplication metadata, not user-editable state.
-
-## J. Automatic reminder Notification acceptance
-
-An automatic reminder Notification may appear like any persisted inbox item.
-
-The Product may distinguish it using server `kind` / `origin_kind` presentation.
-
-It must not infer:
-
-```text
-target is still overdue
-recipient is still accountable
-next reminder will occur
-scheduler is active
-```
-
-from historical Notification existence.
-
-A user must navigate/refetch current business/management truth for current state.
+Automatic reminder Notification existence must not be presented as proof the target is still overdue or that another reminder is scheduled.
 
 ## K. Management collection acceptance
 
-`GET /management/review-cases` remains the only collection truth.
+React uses only:
 
-Tests must prove React sends only supported filters:
+```http
+GET /api/v1/management/review-cases
+```
+
+with supported filters:
 
 ```text
 review_plan_id
 lifecycle
-deadline_status
+deadline_status = all | due_soon | overdue
 limit
 offset
 ```
 
-and renders the server envelope:
+It renders the returned:
 
 ```text
 as_of
@@ -261,73 +268,57 @@ limit
 offset
 ```
 
-Acceptance fails if the Product fetches broad ReviewCases from another endpoint and rebuilds management scope in TypeScript.
+and server summary facts.
+
+Acceptance fails if React loads broad ReviewCase/Finding/Action sets and rebuilds management scope locally.
 
 ## L. Authorization-safe management pagination acceptance
 
-The frontend must preserve M3.3 authorize-before-pagination behavior.
+The established M3.3 semantics remain observable.
 
-Mandatory browser/API counterexample should retain the established pattern:
+Mandatory counterexample:
 
 ```text
-visible A
-hidden H1
-visible B
-hidden H2
-visible C
-limit = 2
+A, H1, B, H2, C
+limit=2
 ```
 
-Expected observable server-backed pages remain:
+where H1/H2 are hidden candidates.
+
+Required authorized pages:
 
 ```text
 page 1 = A, B
 page 2 = C
 ```
 
-Adding/removing hidden candidates must not alter visible page membership or authorized `total`.
+Hidden candidate insertion/removal must not alter visible page membership or authorized `total`.
 
-The Product must consume those server pages without another client authorization filter that changes pagination semantics.
+React must not add another client authorization filter that changes these server semantics.
 
 ## M. Management filter acceptance
 
-For each supported filter:
+Changing `review_plan_id`, `lifecycle`, or `deadline_status` must issue a new management query and render exactly returned results.
 
-```text
-review_plan_id
-lifecycle
-deadline_status = all | due_soon | overdue
-```
-
-browser tests must prove the filter causes a new backend management query and displays exactly returned results.
-
-React must not implement a competing overdue predicate over Case dates for the authoritative collection.
-
-Local text search/sort, if later introduced purely as presentation over the current loaded page, must be clearly non-authoritative and is not required by M3.5.4.
+React must not implement an authoritative overdue filter over raw dates.
 
 ## N. Management `as_of` acceptance
 
-Mandatory test:
+Mandatory counterexample:
 
 ```text
-server response as_of = T0
-Case C deadline_bucket = due_soon
-wall clock moves past Case deadline without refetch
+server as_of=T0
+Case C deadline_bucket=due_soon
+browser wall clock later crosses deadline
 ```
 
-Required behavior:
+Without refetch, UI remains the T0 server projection.
 
-```text
-UI continues to display server projection from T0
-```
+Freshness is obtained only by requesting a new M3.3 projection.
 
-until a fresh management request returns a new `as_of` / bucket.
+## O. Management count/deadline fidelity acceptance
 
-React must not run a timer that promotes `due_soon → overdue` as authoritative business state.
-
-## O. Management deadline/count fidelity
-
-The Product renders exact server facts only:
+Render only server-owned facts:
 
 ReviewCase:
 
@@ -341,62 +332,42 @@ deadline_bucket
 Finding counts:
 
 ```text
-total
-open
-rectifying
-verifying
-closed
-voided
+total open rectifying verifying closed voided
 ```
 
 Action counts:
 
 ```text
-total
-todo
-in_progress
-done
-cancelled
-overdue
-due_soon
+total todo in_progress done cancelled overdue due_soon
 ```
 
-Tests/static review must prove no new frontend formula for:
+Forbidden frontend canonical metrics:
 
 ```text
 Finding overdue
-Case percent complete
+overall progress percentage
 risk score
-management health score
-weighted progress
+health score
+weighted completion
 ```
 
-## P. Hidden-child aggregate privacy acceptance
+## P. Hidden-child privacy acceptance
 
-M3.3 already excludes unauthorized Findings and their Actions from management aggregates.
+If management summary says `findings.total=2`, React displays `2` even if another raw endpoint could expose a broader Case collection to a different authorization context.
 
-Frontend acceptance must preserve this by consuming counts literally.
+It must not supplement M3.3 counts by independently loading children to “complete” aggregates.
 
-It must not supplement the management response with raw child collections in order to “complete” counts.
+Hidden siblings must not leak through locally recomputed totals.
 
-Counterexample:
+## Q. Management progress acceptance
 
-```text
-server management summary says findings.total = 2
-raw Case happens to contain hidden sibling Finding H
-```
-
-The UI must show `2`, not query/derive `3`.
-
-## Q. Management progress detail acceptance
-
-The progress page uses:
+Use only:
 
 ```http
 GET /api/v1/management/review-cases/{case_id}/progress
 ```
 
-It may render:
+The Product may render:
 
 ```text
 case
@@ -405,143 +376,117 @@ overdue_actions
 due_soon_actions
 ```
 
-Tests must prove:
+Tests cover:
 
-- 404 → safe unavailable management progress state;
-- Finding rows link to `/findings/:id`;
-- Action deadline rows link to `/action-items/:id`;
-- current resource route GET remains the authorization gate after drill-through;
-- progress response never becomes a cached replacement for the original Finding/Action page.
+- 404 safe unavailable state;
+- Finding links to original `/findings/:id`;
+- Action links to original `/action-items/:id`;
+- drill-through rechecks current original-resource authorization;
+- progress DTO never replaces original business detail truth.
 
 ## R. Manual nudge placement acceptance
 
-M3.5.4 may expose `催一下` on:
+Allowed `催一下` surfaces:
 
 ```text
 Finding detail
 ActionItem detail
-management progress Finding/Action rows
+management progress Finding/Action shortcuts
 ```
 
-Every affordance must call one of exactly:
+Every affordance invokes only:
 
 ```http
 POST /findings/{finding_id}/nudge
 POST /action-items/{action_item_id}/nudge
 ```
 
-A management shortcut must send the original Finding/Action ID. No management-specific nudge aggregate/endpoint may be invented.
+using the original resource ID.
 
-ReviewCase-level manual nudge is out of scope.
+No ReviewCase manual nudge.
 
 ## S. No recipient picker acceptance
 
-Static/browser tests must prove no M3.5.4 UI or request body contains arbitrary recipient selection.
-
-Forbidden concepts include:
+Static/browser network tests prove no request body or client state contains:
 
 ```text
 recipient_user_ids
 recipient_department_ids
 selectedRecipients
-role_key for nudge
-permission for nudge
-recipient intent selector
+role_key for recipient selection
+permission for recipient selection
+recipient-intent selector
 ```
 
-The network request body for both nudge endpoints must be empty apart from normal transport metadata.
+Both nudge requests are bodyless business commands.
 
 ## T. Nudge sender authorization acceptance
 
-Button visibility is not authority.
+Button presence is presentation only.
 
-Mandatory counterexamples:
+Mandatory stale counterexample:
 
 ```text
-button rendered from stale UI
-→ sender relationship revoked before click
+button rendered
+→ sender business relationship revoked
+→ click
 → backend 404
-→ UI shows authoritative failure/refetch
+→ authoritative failure/refetch
 → no local nudge fact
 ```
 
-and:
+`system_admin` without Scenario business scope gains no client bypass.
 
-```text
-system_admin without Scenario business scope
-→ cannot gain nudge success from platform role
-```
+No React role/platform-role rule may prove nudge authority.
 
-The frontend must contain no role/platform-role rule that proves nudge permission.
+## U. Nudge recipient acceptance
 
-## U. Nudge recipient resolution acceptance
-
-The Product never receives or reconstructs recipient identities from existing first-slice nudge APIs.
-
-Success response:
+On success, React receives only:
 
 ```text
 activity_id
 recipient_count
 ```
 
-Tests must prove:
+Tests prove:
 
-- `recipient_count` may be displayed as server-confirmed delivery fan-out count;
-- sender's own inbox is not treated as success proof;
-- React does not map current Finding owner/Action assignee lists into recipients and compare against `recipient_count` as authority;
-- no recipient list is cached as future nudge authority.
+- `recipient_count` may be displayed;
+- recipient identities are neither inferred nor cached;
+- Finding owner / Action assignee lists are not transformed into canonical nudge recipients;
+- sender inbox is not used as proof of delivery.
 
-## V. Nudge success acceptance
+## V. Nudge success/failure acceptance
 
-Given a server success:
-
-```text
-POST /nudge
-→ 200 response activity_id + recipient_count
-```
-
-Product behavior must be:
+Success:
 
 ```text
-show server-confirmed success
-optionally refetch affected historical/resource views
+POST nudge
+→ activity_id + recipient_count
+→ server-confirmed success UI
+→ optional authoritative refetch
 ```
 
-It must **not**:
+React must not append fake Notification/Activity rows or create pending Reminder state.
 
-```text
-append fake Notification row
-append fake Activity row
-create pending Reminder state
-change target lifecycle
-change target responsibility
-```
-
-Backend integration tests from M3.4 remain the proof that actual Activity + Notification facts persist atomically.
-
-## W. Nudge failure acceptance
-
-At minimum tests must cover:
+Failure tests cover at minimum:
 
 ```text
 404 target/sender-scope refusal
 422 no eligible recipients
 ```
 
-Required result:
+Required:
 
-- no success banner;
-- no fake `recipient_count`;
-- no locally fabricated Activity/Notification;
-- current target/management projection may be refetched where appropriate;
-- no blind semantic retry.
+- no success banner/fake recipient count;
+- no local Activity/Notification;
+- no blind retry;
+- optional target/management refetch where useful.
 
-If a stale server fact causes future 409 semantics, it must be treated equivalently as authoritative conflict.
+Future backend 409 conflict, if separately introduced, is likewise authoritative.
 
-## X. Automatic reminder controls forbidden acceptance
+## W. Automatic reminder controls forbidden acceptance
 
-Static structure tests must prove M3.5.4 exposes no controls or API calls for:
+Static structure tests prove no Product controls/API calls for:
 
 ```text
 scheduler
@@ -552,42 +497,42 @@ next reminder
 snooze
 quiet hours
 escalation
-automatic origin key editing
-manual automatic reminder trigger
+recipient override
+automatic origin/dedup key editing
+manual automatic-reminder trigger
 ```
 
-Automatic reminders are visible only through existing persisted Notification facts and server management deadline facts.
+Automatic reminders are visible only as persisted Notification history plus current server management facts.
 
-## Y. Protected-state / route isolation acceptance
+## X. Async/route/session isolation acceptance
 
-M3.5.1–3 state-isolation rules remain mandatory.
+Mandatory browser races:
 
-Tests must cover:
+1. Notification request for user A is slow; login changes to B; A result cannot render in B inbox.
+2. All-view request is slow; switch to Unread; All result cannot overwrite Unread state.
+3. Management filter/page T0 is slow; query changes to T1; T0 cannot overwrite T1.
+4. Finding A nudge is slow; route moves to Finding B; A result cannot become B command status.
+5. mark-read for Notification A is slow; identity changes; old response cannot mutate next user's inbox.
 
-1. Notification page A request is slow; logout/login user B occurs; A's response cannot populate B's inbox.
-2. Management filter/page request T0 is slow; filter/page changes to T1; T0 response cannot overwrite T1.
-3. Nudge on Finding A is slow; route switches to Finding B; A's late success/failure must not display as B's command result.
-4. mark-read on Notification A is slow; session identity changes; A's result cannot mutate the next user's inbox state.
+Implementation may use AbortController, request sequence IDs, route epochs or equivalent; observable isolation is mandatory.
 
-Request cancellation or request-identity epochs are implementation choices; observable isolation is mandatory.
+## Y. Shared API boundary acceptance
 
-## Z. Shared API boundary acceptance
-
-All M3.5.4 network calls must flow through the existing shared frontend API boundary.
+All calls use existing shared frontend API transport.
 
 Acceptance fails if feature components:
 
 ```text
-call raw fetch independently
-redeclare inconsistent wire DTOs
-create client-side business entities for Notification/Management/Reminder
+scatter raw fetch
+redeclare divergent wire DTOs
+create client business entities for Notification/Management/Reminder
 ```
 
-Direct wire DTO typing is allowed; TypeScript types are not authorization/deadline/recipient truth.
+TypeScript DTOs remain direct wire representation, not authority.
 
-## AA. Frontend ownership acceptance
+## Z. Frontend ownership acceptance
 
-Expected bounded modules should look conceptually like:
+Bounded ownership should resemble:
 
 ```text
 features/notifications
@@ -595,66 +540,90 @@ features/management
 features/reminders | collaboration
 ```
 
-Acceptance fails if:
+`ProductShell.tsx` remains routing/navigation composition.
 
-- `ProductShell.tsx` becomes Notification/Management/Nudge business logic;
-- generic components branch on `process_review` to decide recipients or management authority;
-- M3.5.4 adds a second management workflow store;
-- Notification becomes a local Todo state machine.
+Generic pages must not branch on `process_review` to decide management scope, deadlines, recipient sets or nudge authority.
 
-## AB. No M3.5.5 leakage acceptance
+## AA. Accessibility / M3.5.5 boundary
 
-M3.5.4 should remain focused on functional Product Surface.
+New controls must retain existing baseline:
 
-It may make the minimum layout changes required to render the new pages, but must not expand into a broad final-polish program such as:
+- semantic labels;
+- keyboard reachability;
+- non-color-only read/deadline/status meaning;
+- loading/error/empty states;
+- essential narrow-width usability.
 
-```text
-theme engine
-major visual redesign
-animation system
-charting platform
-full mobile navigation redesign
-internationalization framework
-```
+M3.5.4 must not expand into M3.5.5's broad responsive/visual-polish program.
 
-Those belong to M3.5.5/future work unless strictly required for functional accessibility.
+## AB. Backend executable boundary acceptance
 
-## AC. Accessibility baseline
-
-Functional controls added in this slice must remain:
-
-- keyboard reachable;
-- semantically labeled;
-- non-color-only for read/deadline/status meaning;
-- accompanied by readable loading/error/empty states;
-- usable at the already-supported narrow browser width for essential actions.
-
-M3.5.5 will perform broader responsive/final polish; M3.5.4 must not regress the established baseline.
-
-## AD. Backend prerequisite acceptance
-
-Default expectation:
+Exactly one backend capability extension is pre-approved:
 
 ```text
-M3.5.4 backend executable changes == 0
+/me/notifications optional unread_only query
 ```
 
-If implementation discovers a genuine prerequisite, work stops and the prerequisite must be architecture-reviewed separately or explicitly added to this Gate before executable change.
+Implementation may touch only the narrow Notification query path and focused tests as necessary.
 
-A backend change is not justified merely because a richer UI would prefer:
+Expected properties:
+
+```text
+no migration
+no schema change
+no Notification kind/origin change
+no new lifecycle
+no other endpoint
+```
+
+Any additional backend requirement stops implementation for architecture review.
+
+Not approved merely for UI convenience:
 
 ```text
 inbox total
-server unread filter
-recipient preview
-manager role
+mark unread/archive/delete
+recipient preview/override
+new manager role/permission
 new KPI
-new scheduler controls
+new Finding deadline
+new scheduler/cadence
 ```
 
-## AE. Required regression / CI evidence
+## AC. Required backend tests for unread prerequisite
 
-Final executable head must pass the repository normal exact-head CI, including at minimum:
+At minimum PostgreSQL/integration tests must prove:
+
+- default query preserves current inbox;
+- unread filter occurs before pagination;
+- ordering deterministic;
+- recipient/org isolation;
+- `unread_count` remains global unread count;
+- mark-read changes membership of later unread queries only through persisted `read_at`;
+- invalid pagination still rejected by existing API bounds.
+
+## AD. Required frontend Product tests
+
+Focused unit/browser acceptance must cover:
+
+```text
+All / Unread server-backed pagination
+mark-read success/refusal
+historical Notification → currently unauthorized target
+Notification async identity isolation
+Management authoritative filters/pages/total/as_of
+management hidden-child privacy
+management drill-through
+Finding/Action nudge success
+nudge 404/422 refusal
+no recipient body/picker
+nudge route race
+no scheduler controls
+```
+
+## AE. Normal exact-head CI acceptance
+
+Final executable head must pass repository normal CI on that exact SHA:
 
 ```text
 Ruff
@@ -662,7 +631,7 @@ mypy
 architecture checks
 OpenAPI checks
 Alembic migration path
-PostgreSQL pytest regression
+PostgreSQL pytest
 frontend typecheck
 frontend lint
 frontend unit/component tests
@@ -671,28 +640,24 @@ mocked browser Product acceptance
 real PostgreSQL + FastAPI browser acceptance
 ```
 
-Focused M3.5.4 frontend tests must cover Notification, Management and nudge success/refusal/stale-state behavior.
-
-Existing M3.2/M3.3/M3.4 PostgreSQL tests remain authoritative backend regression evidence unless a separately approved backend prerequisite is introduced.
-
 ## AF. Final fixed-head review acceptance
 
 Before merge:
 
-1. PR remains open / Draft / unmerged until Final Review PASS.
-2. base must still be the intended current `main` or the feature branch must explicitly absorb any intervening prerequisite through a reviewable merge.
-3. exact candidate head is frozen.
-4. normal CI on that exact head is `completed / success`.
-5. compare against current main shows no unauthorized scope expansion.
+1. PR remains Draft/open/unmerged until Final Review PASS.
+2. base is current intended main, or any intervening prerequisite is explicitly absorbed through a reviewable merge.
+3. candidate head is fixed.
+4. exact-head normal CI is `completed / success`.
+5. compare against current main shows only approved M3.5.4 scope.
 6. Final Architecture / Implementation Review finds no P1/P2.
-7. PR exits Draft only after those conditions are satisfied.
-8. merge uses expected-head protection with the fixed candidate SHA.
-9. merge commit parents/tree/new main are verified after merge.
+7. PR exits Draft only after PASS.
+8. merge uses `expected_head_sha`.
+9. merge parents/tree/new main are verified.
 
 ## AG. Final acceptance statement
 
 M3.5.4 is complete only when:
 
-> an authenticated user can read and consume their persistent Notification history, inspect only the management progress the backend authorizes, navigate those projections back to original resources, and invoke existing Finding/Action manual nudges while Notification delivery/read state, management scope/deadlines, recipient resolution, provenance, lifecycle and authorization remain backend-owned.
+> an authenticated user can browse complete server-backed All/Unread Notification views, mark their own delivery records read, inspect only management progress authorized by M3.3, drill back to original resources, and invoke existing Finding/Action nudges while Notification delivery/read state, management scope/deadlines, recipient resolution, provenance, lifecycle and authorization remain backend-owned.
 
-If React becomes the canonical answer to “who should receive this reminder?”, “is this work overdue?”, “may this user manage/nudge it?”, or “what current work does this Notification represent?”, the Gate has failed.
+If React becomes canonical for “which Notifications are unread?”, “who should receive this nudge?”, “is this work overdue?”, “may this user manage/nudge it?”, or “what current work does this historical Notification represent?”, the Gate has failed.
