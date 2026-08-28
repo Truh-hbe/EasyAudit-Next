@@ -1,6 +1,6 @@
 # M3.5.1 — Product Shell, Authentication & Navigation Implementation Gate
 
-M3.5.1 is the first executable slice under the approved M3.5 Product Surface architecture.
+M3.5.1 is the first executable Product Surface slice under the approved M3.5 architecture.
 
 Baseline:
 
@@ -17,7 +17,7 @@ CI #224 — success
 
 This document is an **Implementation Gate only**. The Gate PR remains documentation-only until accepted. It must not yet add React source, `package.json`, Vite configuration, Node tooling, frontend CI, CORS middleware, CSRF implementation, backend authentication changes, static-file serving, reverse-proxy configuration, migrations, or new APIs.
 
-Executable M3.5.1 work begins only after this Gate is explicitly accepted.
+Executable M3.5.1 frontend work begins only after this Gate is explicitly accepted **and** the separately reviewed credential-readiness backend prerequisite described below has been accepted and merged.
 
 ## Goal
 
@@ -26,6 +26,7 @@ M3.5.1 establishes the minimum long-lived browser application foundation require
 ```text
 browser shell
 + existing server Session authentication
++ server-owned credential readiness
 + protected-route resolution
 + primary navigation
 + same-origin API client boundary
@@ -37,13 +38,11 @@ It does **not** implement Workbench business content, ReviewCase details, Findin
 
 The M3.5.1 invariant is:
 
-> **The browser may know whether it currently has an authenticated server Session and may navigate the product shell, but it does not acquire a second authentication authority, business authorization model, or domain cache.**
+> **The browser may know whether it currently has an authenticated server Session and may present a server-returned credential requirement, but it does not acquire a second authentication authority, credential authority, business authorization model, or domain cache.**
 
-## Existing authentication contract being consumed
+## Existing authentication contract and the credential-readiness prerequisite
 
-M3.5.1 must consume the already-merged M1 authentication endpoints and cookie behavior as-is.
-
-Existing endpoints:
+M3.5.1 continues to consume the already-merged M1 Session endpoints and cookie behavior:
 
 ```text
 POST /api/v1/auth/login
@@ -61,9 +60,54 @@ SameSite=Strict
 Path=/
 ```
 
-The Product Surface must not require a new browser-readable access token, refresh token, JWT, bearer token, or frontend session secret.
+However, those three endpoints are **not by themselves sufficient for the complete Product Surface authentication journey** because the merged Platform Core already contains a distinct server-owned credential posture:
 
-`LoginResponse.session_id` is metadata, not a bearer credential. The browser application must not treat it as an authentication token or persist it as one.
+```text
+LocalCredential.must_change_password
+```
+
+Normal administrator-created local users default to:
+
+```text
+must_change_password = true
+```
+
+A valid Session is intentionally allowed to exist while this requirement remains true. The current backend business dependency then enforces:
+
+```text
+authenticated Session
++ must_change_password = true
+        ↓
+BusinessIdentity
+        ↓
+403 Password change required before business APIs
+```
+
+Therefore M3.5.1 must not collapse these two facts into one:
+
+```text
+server Session is valid
+≠
+server says credential is ready for business access
+```
+
+The Product Surface must not guess credential readiness from a 403, from user role, from route history, or from frontend-only state.
+
+Before React implementation starts, a separate narrow **M3.5.1 Credential Readiness Backend Prerequisite Gate** must define and implement the server contract for:
+
+```text
+1. exposing the current authenticated user's credential requirement
+2. allowing the current authenticated user to satisfy a required password change
+3. defining current/other Session behavior after password change
+4. clearing must_change_password atomically with the credential update
+5. preserving append-only platform audit semantics
+```
+
+Exact API spelling belongs to that backend prerequisite Gate, not to React code. M3.5.1 may consume the reviewed result after it is merged; it may not invent an alternate frontend contract.
+
+The Product Surface must not require a browser-readable access token, refresh token, JWT, bearer token, or frontend session secret.
+
+`LoginResponse.session_id` remains metadata, not a bearer credential. The browser application must not treat it as an authentication token or persist it as one.
 
 ## Browser-visible same-origin contract
 
@@ -85,9 +129,9 @@ The application API client uses relative URLs such as:
 /api/v1/auth/logout
 ```
 
-It must not embed a separate production API origin into feature code.
+Any credential-readiness endpoint accepted by the prerequisite Gate must use the same relative `/api/v1/*` browser contract.
 
-The implementation must not introduce a credentialed cross-origin browser security model merely for development convenience.
+The implementation must not embed a separate production API origin into feature code or introduce a credentialed cross-origin browser security model merely for development convenience.
 
 Forbidden M3.5.1 fixes include:
 
@@ -149,7 +193,7 @@ The exact production proxy product is not frozen here.
 
 ## Frontend source boundary
 
-Executable implementation, once approved, should create one top-level frontend workspace:
+Executable implementation, once approved and unblocked by the backend prerequisite, should create one top-level frontend workspace:
 
 ```text
 web/
@@ -198,9 +242,9 @@ A server-state/query library is not required merely to implement authentication.
 
 ## Authentication state model
 
-The browser application may own only a small **session-resolution state**, not a second Session domain.
+The browser application may own only a small **Session-resolution state**, not a second Session domain.
 
-Minimum states:
+Minimum Session states remain:
 
 ```text
 resolving
@@ -208,41 +252,62 @@ anonymous
 authenticated(current user metadata)
 ```
 
-On cold start for a protected route:
+Credential readiness is an **orthogonal server-returned requirement attached to an authenticated user**, not a fourth Session lifecycle state and not a frontend authority.
+
+Conceptually:
+
+```text
+authenticated
+    │
+    ├── credential ready
+    │      → normal Product Surface shell/routes
+    │
+    └── server requires password change
+           → credential remediation UX
+           → business APIs remain server-blocked
+```
+
+The frontend may represent this requirement for rendering, but only from the reviewed server contract. It cannot set, clear, infer, or bypass it locally.
+
+On cold start for a protected route after the backend prerequisite exists:
 
 ```text
 app starts
 → auth = resolving
-→ GET /api/v1/me
-   ├── 200 → authenticated
-   └── 401 → anonymous
+→ current-user server resolution
+   ├── no valid Session → 401 → anonymous
+   └── valid Session → authenticated + server credential requirement
 ```
 
-Protected content must not render before this resolution finishes.
+Protected content must not render before Session resolution finishes.
 
-The browser must not decide an existing Session is valid merely because cached user metadata exists.
+Normal business placeholders/surfaces must not be presented as available when the server says password change is required. The user must instead reach the credential-remediation route/UX supplied by this slice.
 
-A page reload therefore re-enters `/api/v1/me` server validation.
+The browser must not decide an existing Session is valid merely because cached user metadata exists. A page reload therefore re-enters server current-user validation.
 
 ## Login behavior
 
-The login page submits credentials only to:
+The login page submits credentials only to the existing:
 
 ```text
 POST /api/v1/auth/login
 ```
 
-The browser receives the server-managed HttpOnly cookie through the normal same-origin response.
+The browser receives the server-managed HttpOnly cookie through the normal same-origin response. React does not read the cookie value and does not need to know it.
 
-React does not read the cookie value and does not need to know it.
+A successful login proves only that a valid server Session was established. It does **not** prove credential readiness.
 
-On successful login:
+After successful login, the Product Surface must consume the reviewed server credential-posture contract before deciding whether to enter normal product routes:
 
 ```text
 POST login → 200
-→ auth state becomes authenticated from server-returned user data
-→ navigate to intended protected destination when safe
-   otherwise /me/workbench
+→ authenticated Session exists
+→ resolve server credential requirement
+   ├── ready
+   │    → safe intended route or /me/workbench
+   └── password change required
+        → credential remediation UX
+        → do not bypass BusinessIdentity
 ```
 
 On invalid credentials:
@@ -256,13 +321,13 @@ On invalid credentials:
 
 Credentials must not be persisted in localStorage/sessionStorage.
 
-## Current-user identity boundary
+## Current-user identity and credential-posture boundary
 
-`GET /api/v1/me` is the browser bootstrap source for current user identity.
+The server current-user contract remains the browser bootstrap source for current identity. The separately reviewed prerequisite must additionally expose the current authenticated user's credential requirement in a server-owned form.
 
-The UI may use returned platform metadata such as display name and `platform_role` for presentation/navigation hints.
+The UI may use returned platform metadata such as display name and `platform_role` for presentation/navigation hints, and may use returned credential posture only to route the authenticated user to server-required remediation.
 
-Important distinction:
+Important distinctions:
 
 ```text
 platform_role
@@ -270,9 +335,43 @@ platform_role
 
 platform_role
 ≠ ReviewCase/Finding/Action business authorization
+
+credential requirement
+→ server-owned security posture for authenticated user
+
+credential requirement
+≠ frontend permission flag
 ```
 
-M3.5.1 must not convert `system_admin` into a global business permission shortcut.
+M3.5.1 must not convert `system_admin` into a global business permission shortcut and must not allow a local UI flag to clear `must_change_password`.
+
+## Credential remediation UX boundary
+
+M3.5.1 may implement the minimal browser UX necessary to satisfy the reviewed backend password-change requirement because that is part of making the first authenticated Product Surface usable for normally provisioned users.
+
+This UX may:
+
+```text
+show that password change is required
+collect the inputs required by the reviewed backend command
+submit only to that backend command
+show validation/server errors safely
+re-resolve current-user credential posture after success
+continue to normal Product Surface only after server reports ready
+```
+
+It must not:
+
+```text
+clear must_change_password locally
+pretend a successful local form means business access is enabled
+bypass BusinessIdentity
+change another user's credential
+invent password policy independently of the backend
+store current/new password in browser storage
+```
+
+The exact endpoint and password-change transaction semantics are prerequisites owned by the backend Gate.
 
 ## Logout behavior
 
@@ -298,7 +397,7 @@ A network/server failure must not be represented as confirmed server-side revoca
 
 ## Global 401/session-expiry behavior
 
-For authenticated Product Surface requests, a server 401 means the browser must stop treating the current session as authenticated.
+For authenticated Product Surface requests, a server 401 means the browser must stop treating the current Session as authenticated.
 
 M3.5.1 must provide one centralized path equivalent to:
 
@@ -313,6 +412,8 @@ This must not expose stale protected page content behind a login overlay.
 
 Login's own expected `401 Invalid credentials` is handled as login failure, not as an authenticated-session-expiry event.
 
+A server 403 whose reviewed meaning is `Password change required before business APIs` is **not** Session expiry and must not be converted into anonymous state. Under the final design, normal Product Surface routing should already know the server credential requirement before attempting business surfaces; a 403 remains a server-authoritative backstop, not the primary discovery mechanism.
+
 ## Shared API client boundary
 
 M3.5.1 establishes one reusable transport boundary for later slices.
@@ -324,6 +425,7 @@ same-origin relative request URLs
 JSON request/response handling
 standard error object containing HTTP status + safe detail
 401 signaling to auth/session layer
+server credential-requirement response handling without inventing authority
 AbortSignal/request cancellation support where practical
 no embedded business authorization logic
 ```
@@ -335,13 +437,14 @@ The API client must not:
 ```text
 read/write the HttpOnly cookie
 attach a custom bearer token
+clear must_change_password locally
 select reminder recipients
 infer workflow permission
 infer lifecycle transition legality
 recompute overdue truth
 ```
 
-M3.5.1 only needs typed transport contracts for the authentication/current-user APIs it consumes. Broader OpenAPI client generation may be added incrementally in later slices, but handwritten DTOs must remain wire representations.
+M3.5.1 only needs typed transport contracts for authentication/current-user/credential-remediation APIs actually accepted for this slice. Broader OpenAPI client generation may be added incrementally in later slices, but handwritten DTOs must remain wire representations.
 
 ## Product shell
 
@@ -354,6 +457,7 @@ current user display
 logout action
 main route outlet
 loading/error/session-expiry states
+credential-remediation state when server requires it
 ```
 
 It must not become a dashboard domain.
@@ -368,11 +472,13 @@ Primary areas remain the approved M3.5 information architecture:
 管理设置
 ```
 
-Default authenticated landing route:
+Default credential-ready authenticated landing route:
 
 ```text
 /me/workbench
 ```
+
+An authenticated user whose server credential requirement is unresolved or requires password change must not be treated as credential-ready merely because the shell knows their user identity.
 
 ## Navigation and slice boundaries
 
@@ -382,6 +488,7 @@ Conceptual routes:
 
 ```text
 /login
+credential-remediation route chosen by implementation
 
 /me/workbench
 /me/notifications
@@ -396,7 +503,7 @@ For example, until M3.5.2 implements Workbench:
 
 ```text
 /me/workbench
-→ authenticated shell + explicit "Workbench surface arrives in M3.5.2" state
+→ credential-ready authenticated shell + explicit "Workbench surface arrives in M3.5.2" state
 ```
 
 It must not query Cases/Findings/Actions and synthesize a temporary Workbench.
@@ -426,12 +533,21 @@ Protected routes must follow this ordering:
 
 ```text
 route entered
-→ resolve current server session
-→ if authenticated, render shell/route
-→ if anonymous, navigate to /login
+→ resolve current server Session + reviewed credential requirement
+→ no Session: /login
+→ authenticated + password change required: credential remediation UX
+→ authenticated + credential ready: render normal shell/route
 ```
 
 The application must avoid:
+
+```text
+render protected business placeholder/page
+→ later discover password-change 403
+→ redirect remediation
+```
+
+as well as:
 
 ```text
 render protected data
@@ -439,7 +555,7 @@ render protected data
 → flash hidden content
 ```
 
-A remembered intended destination may be used after successful login, but it must be an internal Product Surface path, not an arbitrary external redirect target.
+A remembered intended destination may be used after successful login and credential remediation, but it must be an internal Product Surface path, not an arbitrary external redirect target.
 
 Open-redirect behavior is forbidden.
 
@@ -447,7 +563,7 @@ Open-redirect behavior is forbidden.
 
 Visiting `/login` while a valid server Session already exists should not create a second login authority.
 
-The route may resolve `/api/v1/me` and redirect an already-authenticated user to `/me/workbench` or another safe internal destination.
+The route must resolve the server current-user/credential posture. A credential-ready user may be redirected to `/me/workbench` or another safe internal destination. A user who still requires password change must be routed to credential remediation rather than misleadingly treated as a normal credential-ready user.
 
 The browser must not decide this solely from stale local user data.
 
@@ -464,10 +580,11 @@ JWT
 password
 raw login credentials
 server Session secret
+client-owned must_change_password override
 business authorization snapshot used as authority
 ```
 
-Authentication state should be reconstructible from the server Session via `/api/v1/me`.
+Authentication and credential readiness must be reconstructible from the server after reload.
 
 ## Cache-clearing boundary
 
@@ -477,6 +594,7 @@ It must clear at least:
 
 ```text
 current-user cached data
+credential-posture cache
 protected route data owned by the current runtime
 future registered server-query caches
 sensitive transient state that should not cross users
@@ -484,23 +602,37 @@ sensitive transient state that should not cross users
 
 The mechanism may evolve as later slices add query caches, but logout/session expiry must have one reliable clearing boundary rather than feature-by-feature cleanup.
 
-## No backend auth expansion in M3.5.1
+Credential-remediation form secrets such as current/new password must be transient and must be discarded after submit/navigation/error handling as appropriate; they must never cross users through a cache.
 
-M3.5.1 must not add an endpoint solely to make the frontend easier if the existing contract already answers the question.
+## Backend credential prerequisite — mandatory before React implementation
 
-In particular, no need is currently established for:
+The previous Gate assumption that `POST login`, `POST logout`, and `GET /api/v1/me` alone are sufficient for the complete shell authentication journey is withdrawn.
+
+The merged backend currently supports a valid Session while `must_change_password=true`, and BusinessIdentity blocks business APIs with 403. M3.5.1 therefore has a real backend prerequisite, not a frontend convenience request.
+
+The separately reviewed prerequisite must establish a server-owned path for:
 
 ```text
-/api/v1/auth/token
-/api/v1/auth/refresh
-/api/v1/auth/session
-/api/v1/ui/permissions
-frontend-specific login endpoint
+current-user credential posture
++ authenticated self-service password change
++ atomic password hash/password_changed_at/must_change_password update
++ reviewed current/other Session semantics
++ platform audit facts
 ```
 
-`POST login`, `POST logout`, and `GET /api/v1/me` are sufficient for the shell authentication loop.
+M3.5.1 frontend implementation remains blocked until that prerequisite Gate passes and its executable backend implementation is merged.
 
-Any backend API change discovered during implementation must stop and return to a separate backend Gate rather than being folded casually into the React PR.
+The frontend PR itself must not opportunistically add or alter backend endpoints. If any additional backend need appears after the prerequisite is merged, implementation stops and returns to a backend Gate again.
+
+The prerequisite must not introduce:
+
+```text
+browser-readable Session tokens
+frontend JWTs
+BusinessIdentity bypass
+admin-only clearing of a user's requirement as a substitute for self-service remediation
+cross-origin auth transport
+```
 
 ## No CORS/CSRF scope expansion
 
@@ -512,7 +644,7 @@ If implementation discovers that a new browser-origin relationship is actually r
 
 ## CI boundary for executable implementation
 
-Once this Gate is approved and executable work starts, CI must preserve all existing backend checks and add deterministic frontend checks.
+Once this Gate and the backend prerequisite are approved and executable frontend work starts, CI must preserve all existing backend checks and add deterministic frontend checks.
 
 At minimum the implementation fixed head should run:
 
@@ -525,9 +657,9 @@ existing Python/PostgreSQL CI unchanged
 + production frontend build
 ```
 
-At least one browser-level acceptance test is required for the real authentication loop because HttpOnly/Secure cookie behavior cannot be proven by component tests alone.
+At least one browser-level acceptance test is required for the real authentication loop because HttpOnly/Secure cookie behavior and the credential-remediation journey cannot be proven by component tests alone.
 
-A browser framework such as Playwright is acceptable. Exact tooling is an implementation choice, but the acceptance must exercise a real browser cookie jar against the actual FastAPI auth contract.
+A browser framework such as Playwright is acceptable. Exact tooling is an implementation choice, but acceptance must exercise a real browser cookie jar against the actual FastAPI + PostgreSQL authentication/credential contract.
 
 ## Browser acceptance environment
 
@@ -543,9 +675,9 @@ Browser HTTPS origin
                     PostgreSQL
 ```
 
-Tests must not replace the real cookie with a fake localStorage token or stub the entire authentication boundary.
+Tests must not replace the real cookie with a fake localStorage token or stub the entire authentication/credential boundary.
 
-Component tests may mock APIs for presentation behavior, but the fixed-head authentication proof must include the actual backend login/session/logout path.
+Component tests may mock APIs for presentation behavior, but fixed-head authentication proof must include the actual backend login/session/current-user/password-change/logout path required by the final reviewed contracts.
 
 ## Error handling in this slice
 
@@ -553,9 +685,11 @@ M3.5.1 must provide understandable UX for:
 
 ```text
 invalid credentials
+password change required
+password-change validation/current-password failure
 session expired
 backend unavailable
-unexpected login/logout failure
+unexpected login/logout/password-change failure
 unknown frontend route
 ```
 
@@ -565,11 +699,11 @@ Error handling must not leak password values or auth secrets.
 
 This first slice already participates in the final M3.5 accessibility contract.
 
-Login and shell must provide at least:
+Login, credential remediation, and shell must provide at least:
 
 ```text
 keyboard-reachable controls
-proper labels for login fields
+proper labels for credential fields
 visible focus
 semantic navigation landmarks
 non-color-only auth/error state
@@ -578,9 +712,9 @@ screen-readable loading/error text
 
 ## Responsive minimum for shell/auth
 
-The shell and login page must remain usable at common desktop/laptop widths and narrow mobile browser widths.
+The shell, login page, and credential-remediation UX must remain usable at common desktop/laptop widths and narrow mobile browser widths.
 
-M3.5.1 does not need final visual polish, but navigation and logout must remain reachable without horizontal-layout failure.
+M3.5.1 does not need final visual polish, but navigation, logout, and required credential remediation must remain reachable without horizontal-layout failure.
 
 ## Explicit non-goals
 
@@ -606,42 +740,66 @@ PWA/offline
 full design system/theme platform
 ```
 
-## Proposed implementation scope after Gate approval
+The narrow credential-remediation UX required by the existing Platform Core safety contract is not considered later-slice business scope.
 
-A valid first executable PR may introduce only what is necessary to prove this slice, for example:
+## Proposed implementation scope after all prerequisites pass
+
+A valid first executable frontend PR may introduce only what is necessary to prove this slice, for example:
 
 ```text
 web/ React + TypeScript + Vite workspace
 package manifest + lockfile
 shared API client
-auth provider/session resolution
+auth provider/session + server credential-posture resolution
 login page
+credential-remediation page/flow
 protected route wrapper
 product shell/navigation
 route placeholders
 frontend tests
-browser auth acceptance
+browser auth/credential acceptance
 frontend CI integration
 minimal development HTTPS/proxy setup
 ```
 
-Backend executable changes are out of scope unless separately gated.
+Backend executable changes remain out of the frontend PR because the credential prerequisite is reviewed and merged separately.
 
 ## M3.5.1 final architecture test
 
-M3.5.1 succeeds when a user can open the Web product in a real browser and complete:
+M3.5.1 succeeds only when the normal administrator-provisioned user journey works, not merely a fixture with `must_change_password=false`.
+
+The critical flow is:
 
 ```text
-anonymous visit to protected route
-→ safe login page
-→ login through existing FastAPI endpoint
-→ browser receives unchanged HttpOnly Secure Session cookie
-→ Product Surface reaches authenticated shell
-→ /api/v1/me confirms identity
-→ primary navigation is usable
-→ reload preserves access only because server Session remains valid
-→ logout revokes server Session + clears cookie/client protected state
-→ protected route becomes inaccessible
+system_admin creates ordinary local user
+(default must_change_password=true)
+        ↓
+user opens Product Surface and logs in
+        ↓
+existing Secure HttpOnly server Session is established
+        ↓
+server reports password-change requirement
+        ↓
+Product Surface routes user to credential remediation
+        ↓
+BusinessIdentity remains blocked while requirement=true
+        ↓
+user completes reviewed server-owned password change
+        ↓
+server atomically clears must_change_password
++ applies reviewed Session/audit semantics
+        ↓
+Product Surface re-resolves server state
+        ↓
+credential ready
+        ↓
+normal authenticated shell + /me/workbench placeholder
+        ↓
+hard reload proves Session/current-user state remains server-owned
+        ↓
+logout revokes server Session + clears cookie/client protected state
+        ↓
+protected route becomes inaccessible
 ```
 
-while no frontend token, CORS security model, business authorization shortcut, or fake domain surface has been introduced.
+At no point may React clear `must_change_password`, bypass BusinessIdentity, persist an auth token, or infer credential readiness from frontend state.
