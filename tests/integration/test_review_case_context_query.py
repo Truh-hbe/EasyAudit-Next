@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from easyaudit_next.composition import build_review_case_context_query_service
 from easyaudit_next.notifications.persistence import NotificationRecord
-from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
+from easyaudit_next.platform.domain.ids import OrganizationId, UserId
 from easyaudit_next.platform.domain.models import PlatformRole, User
 from easyaudit_next.platform.persistence.models import OrganizationRecord, UserRecord
 from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
