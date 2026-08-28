@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
+import { nudgeFinding } from '../../api/collaboration'
 import {
   addFindingParticipant,
   createActionItem,
@@ -136,6 +137,8 @@ export function FindingDetailPage() {
   const [scenarioValues, setScenarioValues] = useState<ScenarioFormValues>({})
   const [commandBusy, setCommandBusy] = useState(false)
   const [commandMessage, setCommandMessage] = useState<string | null>(null)
+  const [nudgeBusy, setNudgeBusy] = useState(false)
+  const [nudgeMessage, setNudgeMessage] = useState<string | null>(null)
 
   useEffect(() => {
     candidateSearchSequenceRef.current += 1
@@ -149,6 +152,8 @@ export function FindingDetailPage() {
     setScenarioValues({})
     setCommandBusy(false)
     setCommandMessage(null)
+    setNudgeBusy(false)
+    setNudgeMessage(null)
   }, [findingId])
 
   useEffect(() => {
@@ -289,6 +294,30 @@ export function FindingDetailPage() {
     } finally {
       if (currentFindingIdRef.current === commandFindingId) {
         setCommandBusy(false)
+      }
+    }
+  }
+
+  async function runNudge(currentFindingId: string) {
+    const commandFindingId = findingId
+    setNudgeBusy(true)
+    setNudgeMessage(null)
+    try {
+      const result = await nudgeFinding(currentFindingId)
+      if (currentFindingIdRef.current !== commandFindingId) return
+      setNudgeMessage(
+        `服务器已确认催办：${result.recipient_count} 位接收人，Activity ${result.activity_id}。`,
+      )
+      setRevision((value) => value + 1)
+    } catch (error) {
+      if (currentFindingIdRef.current !== commandFindingId) return
+      setNudgeMessage(errorMessage(error, 'Finding 催办失败'))
+      if (error instanceof ApiError && error.status === 404) {
+        setRevision((value) => value + 1)
+      }
+    } finally {
+      if (currentFindingIdRef.current === commandFindingId) {
+        setNudgeBusy(false)
       }
     }
   }
@@ -535,6 +564,20 @@ export function FindingDetailPage() {
           {commandMessage === null ? null : <p role="status">{commandMessage}</p>}
         </section>
       )}
+
+      <section className="surface-card" aria-labelledby="finding-nudge-title">
+        <h2 id="finding-nudge-title">协作提醒</h2>
+        <p className="empty-note">按钮不证明催办权限，也不选择接收人；服务器按当前 exact Scenario 与关系事实重新授权并解析 recipient。</p>
+        <button
+          type="button"
+          className="secondary"
+          disabled={nudgeBusy}
+          onClick={() => void runNudge(finding.id)}
+        >
+          {nudgeBusy ? '正在催办…' : '催一下'}
+        </button>
+        {nudgeMessage === null ? null : <p role="status">{nudgeMessage}</p>}
+      </section>
 
       <SubmissionSection state={submissionState} />
       <ActivitySection state={activityState} />
