@@ -60,7 +60,7 @@ Invariant:
 M3.5.3 includes:
 
 - Finding detail and creation from an already-authorized ReviewCase context;
-- Finding participant assignment through the existing command;
+- Finding participant assignment through the existing command, with a final persisted Finding serialization guard before the relationship fact is created;
 - ActionItem list/detail, creation, assignee assignment and transitions;
 - rectification plan/completion Submission UX;
 - Finding verification approve/reject and reopen UX;
@@ -90,6 +90,8 @@ M3.5.4 remains Notification + Management + Reminder Product Surface. M3.5.5 rema
 ## Existing backend commands remain authoritative
 
 M3.5.3 consumes the published M2 endpoints for Finding, Action, participants, assignees, rectification Submissions, Evidence registration/listing, verification and reopen. It does not introduce Product-only replacement mutations.
+
+Where an existing mutation does not yet preserve an already-frozen Scenario invariant under concurrency, M3.5.3 may add the narrow serialization prerequisite required to make that existing command truly authoritative. This is an implementation-strengthening prerequisite, not a new lifecycle, permission, role, or Scenario semantic.
 
 Existing business endpoint semantics remain authoritative:
 
@@ -196,6 +198,61 @@ First implementation should require non-blank search text (recommended minimum 2
 
 For Process Review v1 this must preserve the existing actor-kind contract: `responsible_department` is Department-only; Finding `owner/collaborator` and Action `primary/collaborator` are direct User actors.
 
+## FindingParticipant final mutation serialization prerequisite
+
+Candidate search and an early authorization/lifecycle snapshot are not sufficient authority to create a historical FindingParticipant relationship fact.
+
+The current Process Review invariant already forbids participant management once a Finding is terminal:
+
+```text
+Finding lifecycle ∈ {closed, voided}
+→ participant management forbidden
+```
+
+M3.5.3 therefore requires FindingParticipant creation to serialize against a concurrent Finding terminal transition before the participant relationship is persisted. The required mutation shape is:
+
+```text
+initial Finding / ReviewCase read
+        ↓
+build authorization context
+        ↓
+authorization
+        ↓
+preliminary operation / role / actor validation
+        ↓
+before historical relationship fact is created:
+final persisted Finding serialization guard
+        ↓
+refresh current persisted Finding state
+        ↓
+re-check exact Scenario participant-management operation state
+        ↓
+validate role / actor against the guarded operation
+        ↓
+INSERT FindingParticipant
+        ↓
+INSERT finding.participant_added Activity
+        ↓
+Notification orchestration, when the existing command requires it
+        ↓
+commit
+```
+
+The final guard must ensure that either the participant write observes and validates the current non-terminal Finding state before its relationship fact is created, or a competing terminal transition commits first and the participant write observes that terminal state and aborts.
+
+An earlier authorization or lifecycle snapshot is explicitly insufficient. In particular, these races must not persist a participant after the terminal transition:
+
+```text
+VERIFYING → CLOSED
+OPEN      → VOIDED
+```
+
+If the request became stale because a competing Finding transition committed before the final guard, the command must create no FindingParticipant, no participant-added Activity, and no related Notification delivery fact, and the HTTP boundary must surface the stale/concurrency result as `409 Conflict` consistently with existing Finding concurrency semantics.
+
+The Gate intentionally does not freeze a repository method name or one SQL spelling. `SELECT Finding ... FOR UPDATE` with a refreshed ORM snapshot (for example `populate_existing`) is one valid PostgreSQL mechanism; an equivalent serialization mechanism is acceptable if PostgreSQL integration tests prove the same invariant.
+
+This prerequisite does not change who may manage participants, which Finding lifecycles permit management, or which role/actor-kind combinations are legal. It only makes the existing Scenario semantics durable under concurrency.
+
 ## ActionItem surface
 
 ActionItem remains a rectification action, not a second Finding. It answers:
@@ -287,6 +344,8 @@ render T0
 ```
 
 A 409 is never converted to success because local lifecycle looked valid. A 422 never causes client-side lifecycle mutation.
+
+The same `409` rule applies to FindingParticipant creation when its final serialization guard detects that the Finding became terminal after the earlier request snapshot.
 
 Successful Action mutations refresh Action detail and relevant parent Action list. Relationship changes refresh relationship views. Rectification/verification/reopen refresh Finding plus affected Submission/Action/Activity projections. No long-lived shadow lifecycle is allowed.
 
