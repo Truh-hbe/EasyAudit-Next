@@ -11,6 +11,8 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
     SqlAlchemyUserRepository,
 )
+from easyaudit_next.review_case_queries.context_service import ReviewCaseContextQueryService
+from easyaudit_next.review_case_queries.query_service import ReviewCaseCollectionQueryService
 from easyaudit_next.review_core.application.review_closure_findings import (
     ClosureAwareFindingLifecycleService,
 )
@@ -87,6 +89,22 @@ def build_workbench_query_service(session: Session) -> WorkbenchQueryService:
     """Wire the M3.1 read side without expanding Review Core repositories."""
 
     return WorkbenchQueryService(session, build_scenario_registry())
+
+
+def build_review_case_collection_query_service(
+    session: Session,
+) -> ReviewCaseCollectionQueryService:
+    """Wire the M3.5.2 bounded Product collection outside Review Core repositories."""
+
+    return ReviewCaseCollectionQueryService(session, build_scenario_registry())
+
+
+def build_review_case_context_query_service(
+    session: Session,
+) -> ReviewCaseContextQueryService:
+    """Wire Case-scoped presentation reads after canonical Case authorization."""
+
+    return ReviewCaseContextQueryService(session, build_review_planning_service(session))
 
 
 def build_management_query_service(session: Session) -> ManagementQueryService:

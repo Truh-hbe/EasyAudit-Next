@@ -61,6 +61,15 @@ class ReviewCaseResponse(BaseModel):
     created_at: datetime
 
 
+class ReviewCaseCollectionResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[ReviewCaseResponse, ...]
+    total: int
+    limit: int
+    offset: int
+
+
 class CaseMemberCreateRequest(BaseModel):
     user_id: UUID
     role_key: str = Field(min_length=1, max_length=100)
