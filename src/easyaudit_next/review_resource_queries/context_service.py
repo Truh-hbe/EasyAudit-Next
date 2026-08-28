@@ -22,18 +22,23 @@ from easyaudit_next.review_core.application.review_rectification import (
 from easyaudit_next.review_core.domain.ids import ActionItemId, FindingId
 from easyaudit_next.review_core.domain.models import (
     ActionAssignee,
+    ActionItem,
     AssignmentRole,
     DepartmentActor,
+    Finding,
     FindingParticipant,
+    ReviewCase,
     Submission,
     UserActor,
 )
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemOperationContext,
     ActorKind,
+    AuthorizationContext,
     FindingOperationContext,
     PermissionSource,
     RoleGrant,
+    RoleSpecification,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, ScenarioRegistry
 from easyaudit_next.review_core.persistence.models import ActivityRecord
@@ -272,7 +277,11 @@ class ReviewResourceContextQueryService:
             for record in records
         )
 
-    def _finding_policy_context(self, actor: User, finding_id: FindingId):
+    def _finding_policy_context(
+        self,
+        actor: User,
+        finding_id: FindingId,
+    ) -> tuple[Finding, ReviewCase, ScenarioPolicy, AuthorizationContext]:
         finding = self._finding_service.get_finding(actor, finding_id)
         review_case = self._repository.get_case(actor.organization_id, finding.case_id)
         if review_case is None:
@@ -286,7 +295,11 @@ class ReviewResourceContextQueryService:
         )
         return finding, review_case, policy, context
 
-    def _action_policy_context(self, actor: User, action_item_id: ActionItemId):
+    def _action_policy_context(
+        self,
+        actor: User,
+        action_item_id: ActionItemId,
+    ) -> tuple[ActionItem, Finding, ReviewCase, ScenarioPolicy, AuthorizationContext]:
         action_item = self._rectification_service.get_action_item(actor, action_item_id)
         finding = self._repository.get_finding(actor.organization_id, action_item.finding_id)
         if finding is None:
@@ -331,8 +344,7 @@ class ReviewResourceContextQueryService:
                 )
             )
             names.update(
-                (ActorKind.USER, user.id): user.display_name
-                for user in users
+                {(ActorKind.USER, user.id): user.display_name for user in users}
             )
         if department_ids:
             departments = tuple(
@@ -344,10 +356,12 @@ class ReviewResourceContextQueryService:
                 )
             )
             names.update(
-                (ActorKind.DEPARTMENT, department.id): department.name
-                for department in departments
+                {
+                    (ActorKind.DEPARTMENT, department.id): department.name
+                    for department in departments
+                }
             )
-        if names.keys() != identities:
+        if set(names) != identities:
             raise LookupError("Relationship display actor not found")
         return names
 
@@ -411,7 +425,7 @@ class ReviewResourceContextQueryService:
 
     @staticmethod
     def _require_role_kind(
-        specifications,
+        specifications: tuple[RoleSpecification, ...],
         role_key: str,
         actor_kind: ActorKind,
     ) -> None:
