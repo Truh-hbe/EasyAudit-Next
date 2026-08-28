@@ -18,9 +18,18 @@ from easyaudit_next.api.review_contracts import (
 from easyaudit_next.composition import (
     build_notification_orchestrator,
     build_review_case_collection_query_service,
+    build_review_case_context_query_service,
     build_review_planning_service,
 )
 from easyaudit_next.platform.domain.ids import UserId
+from easyaudit_next.review_case_queries.query_service import (
+    CaseMemberView,
+    ReviewCaseActivityView,
+)
+from easyaudit_next.review_case_queries.schemas import (
+    CaseMemberViewResponse,
+    ReviewCaseActivityResponse,
+)
 from easyaudit_next.review_core.application.review_planning import (
     ConcurrentCaseTransitionError,
     ReviewAuthorizationError,
@@ -74,6 +83,26 @@ def _member_response(member: CaseMember) -> CaseMemberResponse:
         user_id=member.user_id,
         role_key=member.role_key,
         joined_at=member.joined_at,
+    )
+
+
+def _member_view_response(member: CaseMemberView) -> CaseMemberViewResponse:
+    return CaseMemberViewResponse(
+        case_id=member.case_id,
+        user_id=member.user_id,
+        role_key=member.role_key,
+        joined_at=member.joined_at,
+        display_name=member.display_name,
+    )
+
+
+def _activity_response(activity: ReviewCaseActivityView) -> ReviewCaseActivityResponse:
+    return ReviewCaseActivityResponse(
+        id=activity.id,
+        subject_id=activity.subject_id,
+        event_type=activity.event_type,
+        actor_id=activity.actor_id,
+        occurred_at=activity.occurred_at,
     )
 
 
@@ -223,20 +252,38 @@ def get_review_case(
 
 @review_planning_router.get(
     "/review-cases/{case_id}/members",
-    response_model=list[CaseMemberResponse],
+    response_model=list[CaseMemberViewResponse],
     operation_id="listReviewCaseMembers",
 )
 def list_review_case_members(
     case_id: UUID,
     identity: BusinessIdentity,
     session: DatabaseSession,
-) -> list[CaseMemberResponse]:
-    service = build_review_planning_service(session)
+) -> list[CaseMemberViewResponse]:
+    service = build_review_case_context_query_service(session)
     try:
-        members = service.list_case_members(identity.user, ReviewCaseId(case_id))
+        members = service.list_member_views(identity.user, ReviewCaseId(case_id))
     except (ReviewAuthorizationError, LookupError) as exc:
         _raise_api_error(exc)
-    return [_member_response(member) for member in members]
+    return [_member_view_response(member) for member in members]
+
+
+@review_planning_router.get(
+    "/review-cases/{case_id}/activities",
+    response_model=list[ReviewCaseActivityResponse],
+    operation_id="listReviewCaseActivities",
+)
+def list_review_case_activities(
+    case_id: UUID,
+    identity: BusinessIdentity,
+    session: DatabaseSession,
+) -> list[ReviewCaseActivityResponse]:
+    service = build_review_case_context_query_service(session)
+    try:
+        activities = service.list_case_activities(identity.user, ReviewCaseId(case_id))
+    except (ReviewAuthorizationError, LookupError) as exc:
+        _raise_api_error(exc)
+    return [_activity_response(activity) for activity in activities]
 
 
 @review_planning_router.post(
