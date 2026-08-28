@@ -31,6 +31,9 @@ from easyaudit_next.review_core.persistence.repositories import (
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from easyaudit_next.review_resource_queries.context_service import (
+    ReviewResourceContextQueryService,
+)
 from easyaudit_next.scenarios.process_review import PROCESS_REVIEW_V1
 from easyaudit_next.workbench.query_service import WorkbenchQueryService
 
@@ -105,6 +108,19 @@ def build_review_case_context_query_service(
     """Wire Case-scoped presentation reads after canonical Case authorization."""
 
     return ReviewCaseContextQueryService(session, build_review_planning_service(session))
+
+
+def build_review_resource_context_query_service(
+    session: Session,
+) -> ReviewResourceContextQueryService:
+    """Wire target-scoped Finding/Action presentation reads outside Review Core."""
+
+    return ReviewResourceContextQueryService(
+        session,
+        build_finding_lifecycle_service(session),
+        build_rectification_service(session),
+        build_scenario_registry(),
+    )
 
 
 def build_management_query_service(session: Session) -> ManagementQueryService:
