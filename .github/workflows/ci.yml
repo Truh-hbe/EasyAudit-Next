@@ -71,3 +71,66 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run browser foundation acceptance
         run: npm run test:browser
+
+  browser-acceptance:
+    needs: [check, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: easyaudit
+          POSTGRES_USER: easyaudit
+          POSTGRES_PASSWORD: easyaudit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U easyaudit -d easyaudit"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://easyaudit:easyaudit@localhost:5432/easyaudit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Install frontend dependencies from lockfile
+        working-directory: web
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Upgrade real browser database
+        run: alembic upgrade head
+      - name: Seed credential-readiness browser user
+        run: python web/tests/browser/seed_real_acceptance.py
+      - name: Start real FastAPI backend
+        run: |
+          nohup uvicorn easyaudit_next.main:app --host 127.0.0.1 --port 8000 > /tmp/easyaudit-fastapi.log 2>&1 &
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/easyaudit-fastapi.log
+          exit 1
+      - name: Install Chromium for real browser acceptance
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Run real PostgreSQL + FastAPI browser acceptance
+        working-directory: web
+        run: npm run test:browser:real
+      - name: Print FastAPI log on acceptance failure
+        if: failure()
+        run: cat /tmp/easyaudit-fastapi.log
