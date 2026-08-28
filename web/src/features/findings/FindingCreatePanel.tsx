@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 
 import { createFinding } from '../../api/product'
@@ -34,9 +35,10 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
     )
   }
 
-  const ScenarioFields = adapter.FindingCreateFields
+  const scenarioAdapter = adapter
+  const ScenarioFields = scenarioAdapter.FindingCreateFields
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSubmitting(true)
     setMessage(null)
@@ -45,7 +47,7 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
         title,
         description: description.length > 0 ? description : null,
         severity,
-        scenario_data: adapter.buildFindingScenarioData(scenarioValues),
+        scenario_data: scenarioAdapter.buildFindingScenarioData(scenarioValues),
       })
       navigate(`/findings/${finding.id}`)
     } catch (error) {
