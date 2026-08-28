@@ -20,17 +20,17 @@ import { formatDateTime, lifecycleText } from '../../product/format'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 
 type PrimaryState =
-  | { status: 'loading' }
-  | { status: 'unavailable' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: ReviewCaseResponse }
+  | { status: 'loading'; caseId: string | undefined }
+  | { status: 'unavailable'; caseId: string | undefined }
+  | { status: 'error'; caseId: string | undefined; message: string }
+  | { status: 'ready'; caseId: string; data: ReviewCaseResponse }
 
 type SectionState<T> =
   | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'unavailable' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: T }
+  | { status: 'loading'; caseId: string }
+  | { status: 'unavailable'; caseId: string }
+  | { status: 'error'; caseId: string; message: string }
+  | { status: 'ready'; caseId: string; data: T }
 
 const idleSection = { status: 'idle' } as const
 
@@ -40,6 +40,10 @@ function sectionMessage(error: unknown, fallback: string): string {
 
 function unavailable(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 403 || error.status === 404)
+}
+
+function stateForCase<T>(state: SectionState<T>, caseId: string): SectionState<T> {
+  return state.status !== 'idle' && state.caseId === caseId ? state : idleSection
 }
 
 function MemberSection({ state }: { state: SectionState<CaseMemberViewResponse[]> }) {
@@ -135,7 +139,7 @@ function ManagementProgressSection({ state }: { state: SectionState<ManagementCa
 export function ReviewCaseDetailPage() {
   const { caseId } = useParams()
   const [revision, setRevision] = useState(0)
-  const [primary, setPrimary] = useState<PrimaryState>({ status: 'loading' })
+  const [primary, setPrimary] = useState<PrimaryState>({ status: 'loading', caseId: undefined })
   const [members, setMembers] = useState<SectionState<CaseMemberViewResponse[]>>(idleSection)
   const [findings, setFindings] = useState<SectionState<FindingResponse[]>>(idleSection)
   const [activities, setActivities] = useState<SectionState<ReviewCaseActivityResponse[]>>(idleSection)
@@ -148,66 +152,125 @@ export function ReviewCaseDetailPage() {
     setManagement(idleSection)
 
     if (caseId === undefined) {
-      setPrimary({ status: 'unavailable' })
+      setPrimary({ status: 'unavailable', caseId })
       return
     }
 
+    const requestedCaseId = caseId
     const controller = new AbortController()
-    setPrimary({ status: 'loading' })
-    void getReviewCase(caseId, controller.signal)
-      .then((data) => setPrimary({ status: 'ready', data }))
+    setPrimary({ status: 'loading', caseId: requestedCaseId })
+    void getReviewCase(requestedCaseId, controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setPrimary({ status: 'ready', caseId: requestedCaseId, data })
+        }
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
         if (unavailable(error)) {
-          setPrimary({ status: 'unavailable' })
+          setPrimary({ status: 'unavailable', caseId: requestedCaseId })
           return
         }
-        setPrimary({ status: 'error', message: sectionMessage(error, 'ReviewCase 请求失败') })
+        setPrimary({
+          status: 'error',
+          caseId: requestedCaseId,
+          message: sectionMessage(error, 'ReviewCase 请求失败'),
+        })
       })
     return () => controller.abort()
   }, [caseId, revision])
 
-  const authorizedCaseId = primary.status === 'ready' ? primary.data.id : null
+  const primaryMatchesRoute = primary.caseId === caseId
+  const authorizedCaseId =
+    primaryMatchesRoute && primary.status === 'ready' ? primary.data.id : null
   useEffect(() => {
     if (authorizedCaseId === null) return
     const controller = new AbortController()
-    setMembers({ status: 'loading' })
-    setFindings({ status: 'loading' })
-    setActivities({ status: 'loading' })
-    setManagement({ status: 'loading' })
+    setMembers({ status: 'loading', caseId: authorizedCaseId })
+    setFindings({ status: 'loading', caseId: authorizedCaseId })
+    setActivities({ status: 'loading', caseId: authorizedCaseId })
+    setManagement({ status: 'loading', caseId: authorizedCaseId })
 
     void getReviewCaseMembers(authorizedCaseId, controller.signal)
-      .then((data) => setMembers({ status: 'ready', data }))
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setMembers({ status: 'ready', caseId: authorizedCaseId, data })
+        }
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        setMembers(unavailable(error) ? { status: 'unavailable' } : { status: 'error', message: sectionMessage(error, '成员请求失败') })
+        setMembers(
+          unavailable(error)
+            ? { status: 'unavailable', caseId: authorizedCaseId }
+            : {
+                status: 'error',
+                caseId: authorizedCaseId,
+                message: sectionMessage(error, '成员请求失败'),
+              },
+        )
       })
 
     void getReviewCaseFindings(authorizedCaseId, controller.signal)
-      .then((data) => setFindings({ status: 'ready', data }))
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setFindings({ status: 'ready', caseId: authorizedCaseId, data })
+        }
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        setFindings(unavailable(error) ? { status: 'unavailable' } : { status: 'error', message: sectionMessage(error, 'Finding 请求失败') })
+        setFindings(
+          unavailable(error)
+            ? { status: 'unavailable', caseId: authorizedCaseId }
+            : {
+                status: 'error',
+                caseId: authorizedCaseId,
+                message: sectionMessage(error, 'Finding 请求失败'),
+              },
+        )
       })
 
     void getReviewCaseActivities(authorizedCaseId, controller.signal)
-      .then((data) => setActivities({ status: 'ready', data }))
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setActivities({ status: 'ready', caseId: authorizedCaseId, data })
+        }
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        setActivities(unavailable(error) ? { status: 'unavailable' } : { status: 'error', message: sectionMessage(error, 'Activity 请求失败') })
+        setActivities(
+          unavailable(error)
+            ? { status: 'unavailable', caseId: authorizedCaseId }
+            : {
+                status: 'error',
+                caseId: authorizedCaseId,
+                message: sectionMessage(error, 'Activity 请求失败'),
+              },
+        )
       })
 
     void getManagementCaseProgress(authorizedCaseId, controller.signal)
-      .then((data) => setManagement({ status: 'ready', data }))
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setManagement({ status: 'ready', caseId: authorizedCaseId, data })
+        }
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        setManagement(unavailable(error) ? { status: 'unavailable' } : { status: 'error', message: sectionMessage(error, '管理进度请求失败') })
+        setManagement(
+          unavailable(error)
+            ? { status: 'unavailable', caseId: authorizedCaseId }
+            : {
+                status: 'error',
+                caseId: authorizedCaseId,
+                message: sectionMessage(error, '管理进度请求失败'),
+              },
+        )
       })
 
     return () => controller.abort()
   }, [authorizedCaseId])
 
-  if (primary.status === 'loading') {
+  if (!primaryMatchesRoute || primary.status === 'loading') {
     return <section className="surface-page"><p className="eyebrow">M3.5.2</p><h1>ReviewCase</h1><p>正在确认当前 ReviewCase 授权…</p></section>
   }
 
@@ -231,6 +294,10 @@ export function ReviewCaseDetailPage() {
   const reviewCase = primary.data
   const scenarioAdapter = resolveCaseScenarioAdapter(reviewCase.scenario_key, reviewCase.scenario_version)
   const ScenarioSection = scenarioAdapter?.CaseScenarioSection
+  const memberState = stateForCase(members, reviewCase.id)
+  const findingState = stateForCase(findings, reviewCase.id)
+  const activityState = stateForCase(activities, reviewCase.id)
+  const managementState = stateForCase(management, reviewCase.id)
 
   return (
     <article className="surface-page" aria-labelledby="case-title">
@@ -265,10 +332,10 @@ export function ReviewCaseDetailPage() {
         <ScenarioSection reviewCase={reviewCase} />
       )}
 
-      <ManagementProgressSection state={management} />
-      <FindingSection state={findings} />
-      <MemberSection state={members} />
-      <ActivitySection state={activities} />
+      <ManagementProgressSection state={managementState} />
+      <FindingSection state={findingState} />
+      <MemberSection state={memberState} />
+      <ActivitySection state={activityState} />
     </article>
   )
 }

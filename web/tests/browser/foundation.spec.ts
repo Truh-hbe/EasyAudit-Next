@@ -277,6 +277,60 @@ test('ReviewCase primary authorization failure prevents all subordinate reads an
   expect(subordinateRequests).toBe(0)
 })
 
+test('ReviewCase route change binds rendered and subordinate state to the newly authorized Case', async ({ page }) => {
+  await stubReadySession(page)
+  let blockedSubordinateRequests = 0
+
+  await page.route('**/api/v1/review-cases/case-a', (route) =>
+    fulfillJson(route, 200, caseResponse('case-a', { title: 'Authorized Case A' })),
+  )
+  await page.route('**/api/v1/review-cases/case-a/members', (route) =>
+    fulfillJson(route, 200, [
+      {
+        case_id: 'case-a',
+        user_id: 'member-a',
+        role_key: 'observer',
+        joined_at: '2026-08-18T00:00:00Z',
+        display_name: 'Case A Member',
+      },
+    ]),
+  )
+  await page.route('**/api/v1/review-cases/case-a/findings', (route) => fulfillJson(route, 200, []))
+  await page.route('**/api/v1/review-cases/case-a/activities', (route) => fulfillJson(route, 200, []))
+  await page.route('**/api/v1/management/review-cases/case-a/progress', (route) =>
+    fulfillJson(route, 404, { detail: 'Not found' }),
+  )
+
+  await page.route('**/api/v1/review-cases/case-b/**', async (route) => {
+    blockedSubordinateRequests += 1
+    await fulfillJson(route, 500, { detail: 'must not be called' })
+  })
+  await page.route('**/api/v1/management/review-cases/case-b/progress', async (route) => {
+    blockedSubordinateRequests += 1
+    await fulfillJson(route, 500, { detail: 'must not be called' })
+  })
+  await page.route('**/api/v1/review-cases/case-b', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    await fulfillJson(route, 404, { detail: 'ReviewCase not found' })
+  })
+
+  await page.goto('/review-cases/case-a')
+  await expect(page.getByRole('heading', { name: 'Authorized Case A' })).toBeVisible()
+  await expect(page.getByText('Case A Member')).toBeVisible()
+
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '/review-cases/case-b')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
+  await expect(page).toHaveURL(/\/review-cases\/case-b$/)
+  await expect(page.getByText('正在确认当前 ReviewCase 授权…')).toBeVisible()
+  await expect(page.getByText('Authorized Case A')).toHaveCount(0)
+  await expect(page.getByText('Case A Member')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
+  expect(blockedSubordinateRequests).toBe(0)
+})
+
 test('visible Case keeps generic truth when exact Scenario UI is unsupported and management progress is unavailable', async ({ page }) => {
   await stubReadySession(page)
   await page.route('**/api/v1/review-cases/case-99', (route) =>
