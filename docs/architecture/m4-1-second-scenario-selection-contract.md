@@ -8,11 +8,11 @@ main@c54600d52e0ace0fa60eb982261ca69dceb416b7
 
 M4.1 begins only after M3.5 Product Surface is merged and frozen.
 
-This slice is **Architecture / Acceptance Gate only**. It does not authorize executable implementation yet.
+This slice is an **Architecture / Acceptance Gate only**. No executable M4 code is authorized until this Gate passes.
 
-The purpose of M4 is to prove that EasyAudit-Next is a reusable audit platform rather than a `process_review` application whose abstractions have never been exercised by a materially different Scenario.
+M4 exists to prove that EasyAudit-Next is a reusable audit platform rather than a `process_review` application whose abstractions have never been exercised by a materially different Scenario.
 
-The reference second Scenario selected for that proof is:
+The reference second Scenario is frozen as:
 
 ```text
 scenario_key: compliance_review
@@ -20,19 +20,11 @@ version:      1
 identity:     compliance_review@1
 ```
 
-The name describes a concrete compliance / special-review business contract. M4 intentionally does **not** create a catch-all `general_review` Scenario. The platform is generic; a Scenario should remain a bounded business policy.
+The platform is generic; the Scenario is deliberately concrete. M4 does not introduce a catch-all `general_review` Scenario or a universal workflow engine.
 
-## 1. Why M4 exists
+## 1. Architecture objective
 
-M2 proved one real Scenario can drive generic Review Core.
-
-M3 proved generic collaboration and management read sides can consume exact Scenario policy.
-
-M3.5 proved one coherent Product Surface can compose those capabilities without owning business truth.
-
-M4 must now prove a second real Scenario can enter the system primarily by adding Scenario-owned policy and UI adapter code rather than by copying the application.
-
-The target dependency shape is:
+The target dependency shape remains:
 
 ```text
                        Review Core
@@ -60,61 +52,48 @@ The target dependency shape is:
                  process_review@1         compliance_review@1
 ```
 
-The second Scenario must not reverse any of those arrows.
+Concrete Scenario modules depend on Review Core contracts. Review Core, generic application services, M3 read sides and generic Product pages do not branch on Scenario identity.
 
-## 2. Selected reference business shape
+## 2. Why compliance_review@1 is materially different
 
-`compliance_review@1` represents a cross-department compliance / special-review Case in which multiple authenticated audit participants can record findings against explicit criteria.
+`compliance_review@1` represents a cross-department compliance / special-review Case in which authenticated audit participants record Findings against explicit requirements.
 
-It is intentionally close enough to reuse the existing domain model, but different enough to expose Process Review assumptions.
+It is close enough to reuse ReviewCase/Finding/Action/Submission, but deliberately different enough to expose Process Review assumptions.
 
 ### Case Scenario data
-
-The initial contract requires these exact Scenario-specific Case fields:
 
 ```text
 standard_reference: non-blank string
 scope_summary:      non-blank string
 ```
 
-Examples of semantic meaning:
-
-```text
-standard_reference = governing standard / checklist / requirement set
-scope_summary      = bounded scope of this compliance review
-```
-
-These remain `scenario_data`; they do not become new generic ReviewCase columns.
+These remain `ReviewCase.scenario_data` and do not become generic columns.
 
 ### Finding Scenario data
-
-The initial contract requires:
 
 ```text
 criterion_reference: non-blank string
 finding_type:        "nonconformity" | "observation"
 ```
 
-`criterion_reference` identifies the requirement or criterion against which the finding was recorded.
+These remain `Finding.scenario_data`.
 
-`finding_type` is Scenario-owned classification. It does not add a generic Finding lifecycle state.
+`finding_type` is Scenario classification, not a lifecycle value.
 
-## 3. Material difference from process_review@1
+## 3. Required workflow difference
 
-M4 is not satisfied by changing labels or field names.
+M4 is not satisfied by changing labels or form fields.
 
-The second Scenario must exercise at least one genuinely different workflow path.
-
-The frozen difference is:
+The required difference is:
 
 ```text
-compliance_review Finding
+compliance_review@1
 
 finding_type = nonconformity
     OPEN
       ↓ issue
     RECTIFYING
-      ↓ existing Action / rectification submission rules
+      ↓ existing Action / rectification Submission rules
     VERIFYING
       ↓ approve / reject
     CLOSED / RECTIFYING
@@ -125,194 +104,318 @@ finding_type = observation
     CLOSED
 ```
 
-An accepted observation does **not** require creation of an ActionItem or a rectification Submission merely to imitate Process Review.
+An accepted observation does not require an artificial ActionItem or rectification Submission merely to imitate Process Review.
 
-This difference proves that Scenario policy can map a new command to existing generic lifecycle states without adding a new generic entity or lifecycle value.
+The same `accept_observation` action remains invalid for `process_review@1`.
 
-### Explicitly forbidden shortcut
+This proves that action semantics and lifecycle mapping are owned by the exact Scenario rather than by Review Core.
 
-Do not represent the second path as:
+## 4. Gate review discovery — direct Finding transition abstraction gap
 
-```text
-if scenario_key == "compliance_review":
-    ...
-```
+Source review of the current merged baseline found a real second-Scenario prerequisite.
 
-inside Review Core, generic application services, HTTP adapters, Workbench, Management, Notification, Reminder or generic React feature pages.
-
-The difference belongs to the exact Scenario policy / UI adapter.
-
-## 4. Identity and collaboration boundary
-
-All real participants remain first-class authenticated EasyAudit users and departments.
-
-M4 freezes:
+The existing generic `FindingLifecycleService.transition_finding()` does call exact Scenario operation/workflow policies, but then imposes Process Review-era constraints itself:
 
 ```text
-User / Department identity
-+ explicit CaseMember / FindingParticipant / ActionAssignee relationships
+required permission = issue_finding
+current lifecycle   = OPEN
+target lifecycle    ∈ {RECTIFYING, VOIDED}
 ```
 
-as the only ordinary collaboration identity model.
+Therefore a valid exact Scenario policy returning:
 
-M4 must not introduce:
+```text
+OPEN + accept_observation → CLOSED
+```
+
+would still be rejected by the generic service.
+
+This is not a reason to add a compliance-specific service. It is the abstraction defect M4 is intended to expose.
+
+## 5. Approved backend prerequisite — Scenario-owned direct Finding transition decision
+
+M4.1 approves exactly one narrow generic backend prerequisite:
+
+> The generic `/findings/{id}/transitions` application path must consume an exact Scenario-owned direct Finding transition decision rather than hard-coding the Process Review permission and target lifecycle set.
+
+The exact Python class/protocol spelling is intentionally not frozen. The semantic contract is frozen.
+
+Conceptually:
+
+```text
+current persisted Finding + ReviewCase
+        ↓
+build Scenario-neutral transition facts
+        ↓
+exact Scenario direct-transition decision
+        ↓
+required_permission
+target_lifecycle
+        ↓
+generic authorization
+        ↓
+generic CAS persistence
+        ↓
+generic finding.transitioned Activity
+```
+
+A decision-object pattern analogous to existing `CaseCreationDecision` / `SubmissionDecision` is acceptable. An equivalent design is acceptable only if the same ownership boundary is preserved.
+
+## 6. Mandatory decision input facts
+
+The current Finding transition contexts do not expose `Finding.scenario_data`. That is insufficient for a real second Scenario because `compliance_review@1` must distinguish:
+
+```text
+finding_type = observation
+finding_type = nonconformity
+```
+
+at command time.
+
+The exact Scenario decision must therefore receive current persisted Scenario-neutral facts sufficient to validate the action, including at minimum:
+
+```text
+ReviewCase lifecycle
+Finding lifecycle
+Finding scenario_data
+Finding participant role facts
+non-cancelled Action count
+whether all non-cancelled Actions are done
+reason, when supplied
+```
+
+This does **not** mean generic code interprets `finding_type`. Generic code only passes an immutable/read-only mapping of current `scenario_data` into the Scenario contract.
+
+Forbidden:
+
+```python
+if finding.scenario_data["finding_type"] == "observation":
+    ...  # in generic application service
+```
+
+Required:
+
+```text
+generic service passes scenario_data
+→ exact compliance policy interprets finding_type
+```
+
+## 7. Mandatory decision output
+
+The direct transition decision must own at least:
+
+```text
+required_permission
+target_lifecycle
+```
+
+The generic service then asks the exact Scenario authorization policy about `required_permission`.
+
+It must not continue to assume:
+
+```text
+issue_finding
+```
+
+for every direct Finding transition.
+
+For example, `compliance_review@1` may require a reviewer-oriented Scenario permission for `accept_observation`; the exact permission key is owned by the compliance policy rather than by generic code.
+
+The generic service must not maintain a target allowlist equivalent to:
+
+```text
+RECTIFYING or VOIDED only
+```
+
+The target returned by the exact Scenario decision is authoritative subject to generic CAS/concurrency persistence.
+
+## 8. Activity provenance remains generic
+
+M4.1 does not approve a new Activity schema or compliance-specific event table.
+
+The current generic transition Activity is sufficient:
+
+```text
+event_type = finding.transitioned
+metadata:
+  action
+  from_lifecycle
+  to_lifecycle
+  optional reason
+```
+
+`accept_observation` must therefore leave a real auditable Activity fact without inventing `ComplianceActivity` or relying on title/body inference.
+
+A later architecture review may choose more typed event names if independently justified; M4.1 does not require it.
+
+## 9. Process Review regression rule
+
+The generic prerequisite must preserve `process_review@1` behavior exactly.
+
+At minimum:
+
+```text
+OPEN + issue → RECTIFYING
+OPEN + void(reason) → VOIDED
+OPEN + accept_observation → rejected
+```
+
+Existing Process Review participant requirements, Action completion rules, rectification Submission validation, reviewer verification and recipient policy remain unchanged.
+
+M4 must not weaken Process Review merely to create a common denominator.
+
+## 10. Closure / concurrency boundary
+
+M4.1 does not pre-approve a new lock or transaction architecture.
+
+Existing Case closure uses the established parent Case closure guard and evaluates persisted Finding terminality. Existing formal verification/reopen uses Case→Finding locking.
+
+A direct `OPEN → CLOSED` observation transition must prove with PostgreSQL concurrency tests that the existing closure coordination remains safe.
+
+Required safety invariant:
+
+```text
+never commit ReviewCase=CLOSED while any child Finding is non-terminal
+```
+
+Required interleaving evidence includes a concurrent Case-close attempt and `accept_observation` attempt.
+
+Safe outcomes may include:
+
+```text
+Case close observes OPEN and refuses; observation later closes
+```
+
+or:
+
+```text
+observation commits CLOSED first; Case close then succeeds
+```
+
+M4.1 does not require a new parent Case lock on the direct transition path unless executable tests prove the existing serialization insufficient. If they do, implementation stops for Architecture review rather than silently adding locks.
+
+## 11. Identity and collaboration boundary
+
+All ordinary participants remain authenticated EasyAudit Users and Departments with explicit persisted business relationships.
+
+M4 must not add:
 
 ```text
 anonymous remediation token
 magic-link responsibility actor
 guest owner
+guest reviewer
 email-only assignee
 phone-only assignee
 external participant string as authorization identity
 ```
 
-This is deliberate. Cross-department collaboration should strengthen identity and relationship semantics rather than bypass them.
+Cross-department collaboration strengthens identity/relationship semantics rather than bypassing them.
 
-Organization boundaries remain hard. A User or Department from another Organization cannot be attached to a Case/Finding/Action in the current Organization.
+Organization boundaries remain hard.
 
-## 5. Case roles
+## 12. Scenario role specifications
 
-M4.1 does not create a new generic role table or platform permission taxonomy.
+M4.1 does not create a global role/permission table.
 
-The second Scenario may define code-owned immutable `RoleSpecification` values through the existing Scenario contract.
-
-The initial compliance Scenario reuses these Case role concepts:
+The compliance Scenario may reuse role keys where business meaning overlaps:
 
 ```text
 lead
- auditor
+auditor
 reviewer
 observer
+responsible_department
+owner
+collaborator
+primary
 ```
 
-Role *keys* may overlap with Process Review where the business meaning genuinely overlaps. Their authorization consequences remain Scenario-owned and are not inferred globally from the string itself.
+A shared role key does not imply shared authorization consequences. Exact Scenario policy remains authoritative.
 
-The architecture proof is not “every Scenario must invent different role names.” The proof is that a shared role key does not become global policy.
-
-## 6. Finding relationship roles
-
-The initial compliance Scenario may reuse:
-
-```text
-responsible_department  → Department relationship
-owner                   → direct User relationship
-collaborator            → direct User relationship
-```
-
-with Scenario-specific operation requirements.
-
-For `nonconformity`, issuing the Finding requires current responsibility sufficient for rectification. The expected minimum is:
+For `nonconformity`, issuing into rectification requires at minimum:
 
 ```text
 responsible_department
-+ owner
+owner
 ```
 
-For `observation`, `accept_observation` must not require an artificial owner or ActionItem solely to satisfy Process Review assumptions.
+For `observation`, `accept_observation` must not require a fake owner or ActionItem solely because Process Review does.
 
-This difference is a required M4 counterexample.
+## 13. Existing entities remain the domain model
 
-## 7. Action and rectification boundary
-
-`ActionItem` remains the generic rectification action entity.
-
-For `nonconformity`, M4 should reuse the existing generic ActionItem model and generic rectification services.
-
-M4 must not create:
+M4 reuses:
 
 ```text
+ReviewPlan
+ReviewCase
+CaseMember
+Finding
+FindingParticipant
+ActionItem
+ActionAssignee
+Submission
+Activity
+Notification
+```
+
+M4 must not add copies such as:
+
+```text
+ComplianceCase
+ComplianceFinding
 ComplianceAction
 ObservationTask
-SpecialReviewAction
-ComplianceFindingSubmission
+ComplianceSubmission
 ```
 
-merely because a second Scenario exists.
+`ActionItem` remains the rectification action entity for nonconformities.
 
-The exact Scenario policy may define different validation and authorization rules over the same entities.
-
-For `observation`, ActionItem creation is not part of the accepted direct-close path.
-
-## 8. Submission boundary
-
-Submission remains the formal immutable business payload mechanism.
-
-A second Scenario may define Scenario-owned payload validation and action semantics through the existing `SubmissionPolicy` capability.
-
-The architecture goal is:
-
-```text
-same Submission entity
-same generic service / endpoint family
-+ different exact Scenario policy
-```
-
-not a copied compliance-specific submission stack.
-
-The observation direct-close path may use the existing Finding transition command and does not require a fake Submission when no formal submission fact is needed.
-
-## 9. No new generic lifecycle values
+## 14. No new generic lifecycle values
 
 M4.1 freezes the current generic lifecycle enums.
 
-No new generic values such as:
+No values equivalent to the following are pre-approved:
 
 ```text
-FindingLifecycle.OBSERVED
+FindingLifecycle.OBSERVATION
 FindingLifecycle.ACCEPTED
 FindingLifecycle.NONCONFORMITY
 ActionItemLifecycle.WAIVED
 ReviewCaseLifecycle.COMPLIANCE_REVIEW
 ```
 
-are pre-approved.
+Scenario differences are expressed through Scenario data, action names, transition decisions, validation and authorization over existing lifecycle states.
 
-Scenario differences must first be expressed by:
+## 15. Backend extension seam
 
-```text
-Scenario data
-+ Scenario action names
-+ Scenario workflow mapping
-+ Scenario validation / authorization
-```
+The current composition root already injects one `ScenarioRegistry` into Planning, Finding, Rectification, Verification, Workbench, Management, Notification and Reminder/Nudge services.
 
-over existing generic lifecycle states.
-
-A future truly irreducible lifecycle requirement would require a separate Review Core architecture review.
-
-## 10. Backend extension seam
-
-The current composition root already wires all major generic services through one `ScenarioRegistry`.
-
-M4 implementation is expected to add a new bounded module such as:
+M4 implementation is expected to add a bounded module equivalent to:
 
 ```text
-src/easyaudit_next/scenarios/compliance_review/
+src/easyaudit_next/scenarios/compliance_review/**
 ```
 
-and register its immutable policy in the composition root.
-
-Allowed conceptual change:
+and a narrow registration:
 
 ```python
 registry.register(PROCESS_REVIEW_V1)
 registry.register(COMPLIANCE_REVIEW_V1)
 ```
 
-Forbidden conceptual change:
+Forbidden:
 
 ```python
 if case.scenario_key == "compliance_review":
     use_special_compliance_service()
 ```
 
-The composition root may know which code-defined Scenario policies are installed. Generic services must not branch on Scenario identity.
+The composition root may enumerate installed immutable policies. It must not become a workflow router.
 
-## 11. HTTP API reuse boundary
+## 16. Generic HTTP API reuse
 
-M4 is specifically intended to prove API reuse.
-
-The second Scenario should use the existing generic endpoint families for:
+The second Scenario uses existing endpoint families for:
 
 ```text
 ReviewCase creation / transition / membership
@@ -326,7 +429,7 @@ Notifications
 manual nudge
 ```
 
-M4.1 pre-approves **zero compliance-specific HTTP endpoint families**.
+M4.1 pre-approves zero compliance-specific endpoint families.
 
 Forbidden examples:
 
@@ -336,43 +439,53 @@ Forbidden examples:
 /api/v1/compliance-actions/*
 ```
 
-A genuine missing generic capability discovered during implementation stops for architecture review rather than being hidden behind a copied endpoint.
+The approved direct-transition prerequisite changes generic semantics behind the existing Finding transition endpoint; it does not create a second endpoint.
 
-## 12. M3 read-side reuse
+## 17. No copied application service stack
 
-The second Scenario must exercise the already merged M3 capabilities rather than bypassing them.
+M4 must not create copies such as:
+
+```text
+ComplianceReviewPlanningService
+ComplianceFindingLifecycleService
+ComplianceRectificationService
+ComplianceWorkbenchQueryService
+ComplianceManagementQueryService
+```
+
+Scenario policy classes are expected. Copied generic orchestration is not.
+
+## 18. M3 read-side reuse
 
 ### Workbench
 
-M3.1 continues to own personal work membership.
-
-A compliance Case/Finding/Action must appear through existing Workbench projection semantics when the exact compliance policy grants the relevant relationship/permission.
-
-No second Workbench query service is allowed.
+M3.1 remains the sole source of personal work membership. Compliance resources appear through the existing Workbench projection according to exact policy and relationships.
 
 ### Management
 
-M3.3 continues to own authorized management projection and deadline aggregates.
-
-No `ComplianceDashboardRepository` or client-side compliance KPI truth is pre-approved.
+M3.3 remains the authorized read side. No `ComplianceDashboardRepository`, client KPI truth or second management workflow is approved.
 
 ### Notification
 
-M3.2 continues to own persistent delivery history.
+M3.2 existing subjects remain sufficient:
 
-The second Scenario must not add Notification schema variants merely to identify compliance subjects; existing typed ReviewCase/Finding/Action subjects remain sufficient.
+```text
+review_case
+finding
+action_item
+```
+
+No `compliance_finding` Notification subject is needed.
 
 ### Reminder / nudge
 
-M3.4 recipient selection remains Scenario-owned.
+M3.4 recipient selection remains Scenario-owned. A compliance recipient policy may use the existing recipient capability, while React submits no recipient IDs.
 
-`compliance_review@1` may define its own recipient policy through the existing recipient capability, but React must never select recipient IDs.
+No new ReviewCase nudge, scheduler, cadence, snooze, escalation or quiet-hours behavior is part of M4.1.
 
-No new cadence/scheduler/snooze/escalation infrastructure is part of M4.1.
+## 19. Product routes remain shared
 
-## 13. Product Surface reuse
-
-M3.5 generic routes remain the product routes:
+M3.5 routes remain generic:
 
 ```text
 /review-cases/:caseId
@@ -383,98 +496,70 @@ M3.5 generic routes remain the product routes:
 /management
 ```
 
-M4 must not create a parallel compliance frontend such as:
+M4 must not create a parallel compliance frontend merely to avoid exercising the Scenario UI seam.
 
-```text
-/compliance/cases/:id
-/compliance/findings/:id
-```
+## 20. Frontend prerequisite discovered by the second Scenario
 
-unless a later product architecture review proves a route-level distinction is necessary.
-
-The expected design is one generic product shell plus exact Scenario UI adapters.
-
-## 14. Frontend extension prerequisite discovered by M4
-
-M3.5 successfully centralized Scenario-specific UI resolution, but the first adapter contract is intentionally recognized as Process Review-shaped.
-
-The current adapter requires concepts equivalent to:
+M3.5 successfully centralized exact Scenario UI lookup, but its first `ScenarioUiAdapter` remains Process Review-shaped. It directly requires concepts equivalent to:
 
 ```text
 RectificationPlanFields
 CompletionFields
 VerificationRejectFields
-approve / reject verification payload builder
+approve/reject verification payload builder
 ```
 
-and the generic Finding page currently renders command strings equivalent to:
+The generic Finding page also directly renders Process Review interaction shapes/actions.
 
-```text
-issue
-submit_plan
-submit_for_verification
-approve
-reject
-```
+That was sufficient for the first Product Surface. It is not sufficient evidence for two materially different Scenarios.
 
-That is acceptable for the first Product Surface, but a materially different second Scenario must not be added by scattering new Scenario checks through the generic page.
+M4 therefore approves one narrow frontend prerequisite:
 
-M4 therefore freezes a **narrow frontend prerequisite**:
+> Scenario-specific Finding interaction presentation must move behind the centralized exact-version Scenario UI adapter boundary before `compliance_review@1` Product behavior is complete.
 
-> Scenario-specific Finding interaction presentation must move behind the centralized exact-version Scenario UI adapter boundary before `compliance_review@1` executable Product behavior is considered complete.
+## 21. Scenario interaction adapter boundary
 
-## 15. Scenario interaction adapter shape
-
-The exact TypeScript spelling is not frozen, but the conceptual design is.
-
-A Scenario adapter may expose a scenario-specific interaction section/component receiving only:
-
-```text
-current authorized wire resource facts
-normal local form state helpers
-shared server command ports
-shared command busy/error/refetch behavior
-```
+The exact TypeScript spelling is not frozen.
 
 Conceptually:
 
 ```text
 Generic FindingDetailPage
     │
-    ├── generic title / lifecycle / participants / Actions / Activity
+    ├── generic header / lifecycle / participants / Actions / history
     │
     └── exact ScenarioInteractionSection
-            │
             ├── process_review@1 interactions
             └── compliance_review@1 interactions
 ```
 
-The interaction adapter may decide presentation such as:
+The adapter may own presentation concerns such as:
 
 ```text
-which Scenario-specific command form to show for the returned lifecycle/data
-labels
-Scenario payload fields
-Scenario command action string
+Scenario-specific fields
+labels/forms
+payload construction
+Scenario command action strings
+presentation hints from returned lifecycle/scenario_data
 ```
 
-It must **not** become authority for:
+It does not own:
 
 ```text
-whether the user is authorized
-whether a command is legal
-whether a transition actually succeeds
-which recipients receive a nudge
-whether stale state may be ignored
+authorization
+workflow legality
+recipient resolution
+server lifecycle truth
+stale-state override
 ```
 
-Every mutation still goes to the generic server command and exact backend Scenario policy.
+Every command still reaches the generic HTTP endpoint and exact backend Scenario policy.
 
-## 16. Generic command ports, not copied transport
+## 22. Shared command ports
 
-The Scenario interaction adapter must not call raw `fetch()` or create a Scenario-specific API client family.
+Scenario interaction adapters must reuse the shared Product API boundary and shared error/refetch behavior.
 
-The generic Product Surface provides shared command ports over existing API functions, for example conceptually:
+Conceptual ports may include:
 
 ```text
 transitionFinding(action, reason?)
@@ -483,67 +568,54 @@ submitVerification(action, payload)
 createAction(...)
 ```
 
-The adapter supplies Scenario-specific action/payload presentation while shared transport/error/refetch behavior stays centralized.
+Adapters do not use raw `fetch()` and do not create compliance-specific transport clients.
 
-This keeps UI extensibility separate from business authority.
-
-## 17. Exact-version UI behavior
-
-The M3.5 exact-version rule remains unchanged.
+Existing authoritative handling remains:
 
 ```text
-compliance_review@1 → ComplianceReviewV1 adapter
+401 authentication
+403/404 current access
+409 stale/concurrency
+422 validation
+success → authoritative refetch/invalidation
+route late-result isolation
+session identity isolation
+```
+
+## 23. Exact-version behavior
+
+Both backend and frontend remain exact-version only.
+
+```text
+process_review@1    → exact policy / UI adapter
+compliance_review@1 → exact policy / UI adapter
 compliance_review@99 → no fallback
+process_review@99    → no fallback
 ```
 
-For an unknown exact UI version:
+Unknown exact UI versions may show generic authorized fields, but Scenario-specific interpretation/interactions fail closed.
+
+No latest/nearest/key-only/cross-Scenario fallback is allowed.
+
+## 24. Catalog / persistence boundary
+
+Code-defined policy identity and persisted Scenario / ScenarioVersion identity must match exactly.
+
+M4.1 pre-approves **no schema migration**.
+
+If implementation requires deterministic catalog bootstrap/data migration for `compliance_review@1`, it may be reviewed only as:
 
 ```text
-generic authorized resource fields may render
-Scenario-specific fields/actions fail closed
-no latest/nearest/key-only fallback
+catalog data addition
+no schema addition solely for the second Scenario
+no rewrite of immutable historical ScenarioVersion
 ```
 
-Adding the second adapter must not weaken the existing `process_review@unknown` fail-closed behavior.
+The implementation review must explicitly prove the code policy and persisted catalog pair.
 
-## 18. Catalog / persistence boundary
+## 25. Scope of this Gate
 
-Scenario policy identity in code and persisted `Scenario` / `ScenarioVersion` catalog identity must remain consistent.
-
-M4.1 does not pre-approve a schema migration.
-
-If executable implementation requires a deterministic catalog bootstrap/data migration for `compliance_review@1`, that change must:
-
-```text
-add catalog data only
-preserve immutable ScenarioVersion semantics
-add no new schema merely for the second Scenario
-```
-
-The implementation Gate must explicitly show how code-defined policy identity and persisted catalog identity are paired.
-
-## 19. Process Review is a regression oracle
-
-M4 succeeds only if `process_review@1` remains unchanged in behavior.
-
-The second Scenario must not force simplification of Process Review invariants just to manufacture a common denominator.
-
-In particular preserve existing behavior including:
-
-```text
-Process Review issue requirements
-Action completion before verification
-rectification Submission validation
-reviewer verification
-recipient policy
-M3/M3.5 acceptance
-```
-
-The correct abstraction supports both policies; it does not weaken the first one.
-
-## 20. M4.1 scope
-
-This Gate may change only documentation:
+Before Gate PASS, the branch may change only:
 
 ```text
 docs/architecture/roadmap.md
@@ -551,20 +623,9 @@ docs/architecture/m4-1-second-scenario-selection-contract.md
 docs/architecture/m4-1-acceptance.md
 ```
 
-M4.1 Gate must not contain:
+No executable source, migration, OpenAPI, package/lockfile or workflow/CI change is allowed during Gate review.
 
-```text
-src/** executable changes
-web/** executable changes
-alembic migration
-OpenAPI change
-package / lockfile change
-workflow / CI change
-```
-
-No executable second-Scenario work begins until this Gate is reviewed and passed.
-
-## 21. Explicit non-goals
+## 26. Explicit non-goals
 
 M4.1 does not authorize:
 
@@ -583,16 +644,17 @@ new Reminder scheduler/cadence
 AI-generated compliance decisions
 ```
 
-## 22. Architecture success condition
+## 27. Architecture success condition
 
-M4 succeeds only when the repository can contain two materially different real Scenario policies while a reviewer can still say:
+M4 succeeds only when two materially different real Scenarios coexist and a reviewer can still say:
 
 ```text
 Review Core is generic.
-HTTP application services are generic.
+Generic application / HTTP services are shared.
+Direct Finding transition meaning is decided by the exact Scenario.
 Workbench/Management/Notification/Reminder remain shared.
 Product routes remain shared.
-Scenario differences are concentrated in exact Scenario policy + UI adapter modules.
+Scenario differences are concentrated in exact policy + exact UI adapter modules.
 ```
 
 The second Scenario is an architecture test, not a reason to generalize everything.
