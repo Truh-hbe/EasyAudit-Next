@@ -247,7 +247,7 @@ test('M3.5.5 narrow product route matrix keeps essential controls inside the doc
   await stubProduct(page)
 
   const routes = [
-    ['/me/workbench', '我的工作台'],
+    ['/me/workbench', '我的工作'],
     [`/review-cases/${caseId}`, longTitle],
     [`/findings/${findingId}`, longTitle],
     [`/action-items/${actionId}`, longTitle],
