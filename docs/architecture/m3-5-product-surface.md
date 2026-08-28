@@ -373,9 +373,43 @@ The exact physical implementation is intentionally not frozen in this design PR.
 
 1. generic Workbench/Case/Finding/Action/Notification/Management pages do not own Scenario identity branching;
 2. Scenario-specific rendering is resolved through one centralized adapter/registry boundary;
-3. exact Scenario version participates in adapter resolution when version changes can alter UI semantics;
+3. adapter resolution is exact by `(scenario_key, scenario_version)` whenever Scenario-specific presentation is requested; a missing exact adapter never falls back to a latest/nearest version;
 4. adding a second Scenario should primarily add a new adapter, not edits to many generic pages; and
 5. Scenario UI adapters render Scenario-specific data but do not redefine workflow authorization, lifecycle, deadline, recipient, or provenance truth.
+
+### Unknown Scenario UI versions fail closed
+
+An unknown or unregistered exact Scenario UI version must not be silently reinterpreted through another version's adapter.
+
+Forbidden behavior includes:
+
+```ts
+registry.get(scenarioKey, scenarioVersion)
+  ?? registry.getLatest(scenarioKey)
+```
+
+or any equivalent latest-version, nearest-version, key-only, or default Scenario-specific fallback.
+
+For a resource whose exact `(scenario_key, scenario_version)` has no registered UI adapter:
+
+```text
+generic resource fields
+→ may remain visible when current backend authorization permits them
+
+Scenario-specific fields
+→ explicit unsupported/read-only/unavailable presentation
+
+Scenario-specific editing
+→ fail closed
+```
+
+The Product Surface may show an explicit message such as:
+
+```text
+Unsupported Scenario UI version: process_review@3
+```
+
+It must not interpret `scenario_data` using `process_review@2` or any other adapter. This preserves the same historical-version boundary that ScenarioVersion already provides on the backend.
 
 M3.5 does **not** require a low-code form designer or universal schema engine. A small typed registry is sufficient for the first product.
 
@@ -447,9 +481,45 @@ The exact React data-fetching library is an implementation choice; introducing o
 
 M3.5 consumes the existing server authentication/session contract. The frontend does not invent a parallel token or role cache as business authority.
 
+The existing browser session contract remains unchanged:
+
+```text
+cookie name: __Host-easyaudit_session
+Secure
+HttpOnly
+SameSite=Strict
+Path=/
+```
+
+M3.5 freezes the production **browser-visible deployment contract** as same-origin:
+
+```text
+Browser
+  │
+  └── https://easyaudit.example/
+       ├── /          Product Surface / React
+       └── /api/v1/*  EasyAudit FastAPI
+```
+
+This is a browser security boundary, not a requirement that React and FastAPI run in the same process. A reverse proxy may serve them from separate internal services while preserving one external origin.
+
+Development tooling must preserve the same application contract. A Vite development server may proxy `/api/v1/*` to a local FastAPI process, but Product Surface application code still uses same-origin relative API paths and does not introduce a credentialed cross-origin transport model.
+
+M3.5 therefore does not introduce or require:
+
+```text
+broad credentialed CORS
+cross-origin session transport
+SameSite relaxation
+client-readable authentication tokens
+localStorage/sessionStorage session tokens
+```
+
+If a future deployment requires the Product Surface and API to be distinct browser origins, that change requires a separate Authentication / Browser Security Architecture Gate covering credentialed CORS, CSRF/Origin validation, cookie host/SameSite policy, and deployment-specific trust boundaries before implementation.
+
 Authentication state may be cached for UX, but server responses remain authoritative for active-session and resource access.
 
-Logout/login/session-expiry behavior must return the user to a safe authentication route without exposing stale protected content.
+Logout/login/session-expiry behavior must return the user to a safe authentication route without exposing stale protected content. Logout must also clear Product Surface caches containing protected resource data; the browser session token itself remains HttpOnly and is neither readable nor persisted by React.
 
 ## Presentation state is allowed
 
