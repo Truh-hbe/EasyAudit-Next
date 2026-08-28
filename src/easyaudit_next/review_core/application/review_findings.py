@@ -181,14 +181,11 @@ class FindingLifecycleService:
             self._finding_operation_context(review_case, finding)
         )
         grant = self._participant_grant(participant_actor, role_key)
-        if not any(
-            specification.accepts_grant(grant)
-            for specification in policy.finding_participant_role_specs
-        ):
-            raise ValueError(
-                f"Scenario does not allow FindingParticipant role {role_key!r} "
-                f"for {grant.actor_kind.value}"
-            )
+        self._validate_participant_grant(policy, grant, role_key)
+        self._require_active_participant_actor(actor, participant_actor)
+
+        finding = self._guard_participant_write(review_case, policy, finding)
+        self._validate_participant_grant(policy, grant, role_key)
         self._require_active_participant_actor(actor, participant_actor)
 
         now = occurred_at or datetime.now(UTC)
@@ -345,6 +342,46 @@ class FindingLifecycleService:
             participant_role_keys=participant_role_keys,
             reason=reason,
         )
+
+    def _guard_participant_write(
+        self,
+        review_case: ReviewCase,
+        policy: ScenarioPolicy,
+        finding: Finding,
+    ) -> Finding:
+        # A same-state CAS is a PostgreSQL serialization barrier: it locks the
+        # Finding row until this transaction completes without inventing a new
+        # lifecycle transition. A terminal transition that committed first makes
+        # the expected-lifecycle predicate fail; one that starts later must wait.
+        if not self._repository.update_finding(
+            finding,
+            expected_lifecycle=finding.lifecycle,
+        ):
+            raise ConcurrentFindingTransitionError("Concurrent Finding transition")
+        guarded = self._repository.get_finding(finding.organization_id, finding.id)
+        if guarded is None:
+            raise LookupError("Finding not found")
+        if guarded.lifecycle is not finding.lifecycle:
+            raise ConcurrentFindingTransitionError("Concurrent Finding transition")
+        policy.finding_operations.validate_participant_management(
+            self._finding_operation_context(review_case, guarded)
+        )
+        return guarded
+
+    @staticmethod
+    def _validate_participant_grant(
+        policy: ScenarioPolicy,
+        grant: RoleGrant,
+        role_key: str,
+    ) -> None:
+        if not any(
+            specification.accepts_grant(grant)
+            for specification in policy.finding_participant_role_specs
+        ):
+            raise ValueError(
+                f"Scenario does not allow FindingParticipant role {role_key!r} "
+                f"for {grant.actor_kind.value}"
+            )
 
     def _require_active_participant_actor(
         self,

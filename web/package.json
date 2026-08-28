@@ -12,7 +12,7 @@
     "typecheck": "tsc -b",
     "lint": "oxlint .",
     "test": "vitest run",
-    "test:browser": "playwright test tests/browser/foundation.spec.ts",
+    "test:browser": "playwright test tests/browser/foundation.spec.ts tests/browser/collaboration*.spec.ts",
     "test:browser:real": "playwright test tests/browser/real-auth.spec.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview"

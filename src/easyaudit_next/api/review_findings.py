@@ -202,7 +202,13 @@ def add_finding_participant(
             payload.role_key,
         )
         notifications.finding_participant_added(result)
-    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+    except (
+        ConcurrentFindingTransitionError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _participant_response(result.participant)
 
