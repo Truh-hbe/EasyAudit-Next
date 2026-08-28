@@ -1,4 +1,7 @@
-from sqlalchemy import func, select, update as sa_update
+from datetime import datetime
+
+from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import (

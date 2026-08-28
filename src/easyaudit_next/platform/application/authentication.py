@@ -8,7 +8,12 @@ from pwdlib import PasswordHash
 
 from easyaudit_next.platform.application.password_policy import validate_local_password
 from easyaudit_next.platform.domain.ids import AuthSessionId, PlatformAuditEventId, UserId
-from easyaudit_next.platform.domain.models import AuthSession, PlatformAuditEvent, User
+from easyaudit_next.platform.domain.models import (
+    AuthSession,
+    LocalCredential,
+    PlatformAuditEvent,
+    User,
+)
 from easyaudit_next.platform.domain.repositories import (
     AuthSessionRepository,
     LocalCredentialRepository,
@@ -98,7 +103,11 @@ class AuthenticationService:
         )
         user = self._users.get(credential.user_id) if credential is not None else None
         if credential is None or not final_matches or user is None or not user.is_active:
-            self._audit_login_failed(credential or coarse_credential, normalized_login, current_time)
+            self._audit_login_failed(
+                credential or coarse_credential,
+                normalized_login,
+                current_time,
+            )
             raise InvalidCredentialsError("Invalid login name or password")
 
         token = token_urlsafe(32)
@@ -239,14 +248,17 @@ class AuthenticationService:
         )
         return PasswordChangeResult(token=new_token, auth_session=rotated_session, user=user)
 
-    def _audit_login_failed(self, credential: object, login_name: str, occurred_at: datetime) -> None:
-        organization_id = getattr(credential, "organization_id", None)
-        user_id = getattr(credential, "user_id", None)
+    def _audit_login_failed(
+        self,
+        credential: LocalCredential | None,
+        login_name: str,
+        occurred_at: datetime,
+    ) -> None:
         self._audit.add(
             PlatformAuditEvent(
                 id=PlatformAuditEventId(uuid4()),
-                organization_id=organization_id,
-                target_user_id=user_id,
+                organization_id=(credential.organization_id if credential is not None else None),
+                target_user_id=credential.user_id if credential is not None else None,
                 event_type="auth.login_failed",
                 occurred_at=occurred_at,
                 metadata={"login_name": login_name},

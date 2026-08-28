@@ -122,6 +122,16 @@ def _current_user_response(user: User, must_change_password: bool) -> CurrentUse
     )
 
 
+def _department_response(department: Department) -> DepartmentResponse:
+    return DepartmentResponse(
+        id=department.id,
+        organization_id=department.organization_id,
+        name=department.name,
+        parent_id=department.parent_id,
+        is_active=department.is_active,
+    )
+
+
 def _set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=get_settings().session_cookie_name,

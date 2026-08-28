@@ -5,10 +5,7 @@ from uuid import uuid4
 from pwdlib import PasswordHash
 
 from easyaudit_next.platform.application.authentication import AuthenticationService
-from easyaudit_next.platform.application.password_policy import (
-    PasswordPolicyError,
-    validate_local_password,
-)
+from easyaudit_next.platform.application.password_policy import validate_local_password
 from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.domain.ids import DepartmentId, PlatformAuditEventId, UserId
 from easyaudit_next.platform.domain.models import (
