@@ -216,11 +216,46 @@ Acceptance must prove:
 
 1. generic Workbench/Case/Finding/Action/Notification/Management pages do not contain distributed `scenarioKey === "process_review"` business branches;
 2. `process_review@1` UI differences live in one Scenario UI adapter/module or equivalent centralized registration boundary;
-3. adapter lookup can distinguish exact Scenario versions when presentation semantics differ;
+3. adapter lookup is exact by `(scenario_key, scenario_version)` for Scenario-specific presentation and never silently falls back to latest, nearest, key-only, or another registered version;
 4. adding a test/second Scenario adapter does not require edits across many generic feature pages; and
 5. adapters render Scenario-specific fields/content only and do not decide authorization, lifecycle, overdue, recipient, or provenance truth.
 
 A test Scenario with intentionally different labels/field presentation should be sufficient to expose hard-coded Process Review assumptions without requiring a full second business Scenario implementation.
+
+### Unknown Scenario UI version fail-closed acceptance
+
+Acceptance must include a direct missing-version counterexample.
+
+At minimum:
+
+```text
+registry:
+process_review@1 → AdapterV1
+process_review@2 → AdapterV2
+
+resource:
+process_review@99
+```
+
+Expected behavior:
+
+```text
+≠ AdapterV2
+≠ AdapterV1
+≠ latest/key-only fallback
+
+→ generic resource fields may render if current backend authorization permits
+→ Scenario-specific fields render explicit unsupported/read-only/unavailable state
+→ Scenario-specific editing is disabled/fails closed
+```
+
+A UI message may identify the unsupported exact version, for example:
+
+```text
+Unsupported Scenario UI version: process_review@99
+```
+
+Acceptance fails if `scenario_data` for the unknown historical version is interpreted by any other Scenario adapter.
 
 ## No low-code engine requirement
 
@@ -275,15 +310,52 @@ A stale locally rendered state must never override a backend conflict.
 
 ## Authentication acceptance
 
-The Product Surface consumes the existing server authentication/session contract.
+The Product Surface consumes the existing server authentication/session contract and preserves the existing cookie semantics:
+
+```text
+__Host-easyaudit_session
+Secure
+HttpOnly
+SameSite=Strict
+Path=/
+```
+
+M3.5 production browser behavior is same-origin:
+
+```text
+https://easyaudit.example/
+├── /          Product Surface
+└── /api/v1/*  EasyAudit API
+```
+
+A reverse proxy may route these paths to separate internal services. Development may use a Vite proxy for `/api/v1/*`, but Product Surface application code must continue to use the same-origin API contract.
 
 Acceptance must prove:
 
+- login causes the browser to receive/use the existing HttpOnly session cookie;
+- React does not need to read the session token and cannot rely on reading it;
+- a same-origin authenticated `/api/v1/*` request succeeds through the existing session contract;
 - protected routes do not expose protected data before session resolution;
 - session expiration returns to safe authentication UX;
-- logout clears client caches containing protected resource data;
-- no parallel frontend JWT/token model is invented without backend architecture review; and
-- cached user/platform metadata is never treated as sufficient business authorization.
+- logout invalidates the server session, clears the cookie through the existing backend contract, and clears client caches containing protected resource data;
+- `localStorage` and `sessionStorage` contain no EasyAudit authentication/session token;
+- no parallel frontend JWT/token model is invented without backend architecture review;
+- cached user/platform metadata is never treated as sufficient business authorization; and
+- M3.5 introduces no broad credentialed CORS or cross-origin session transport policy.
+
+Acceptance fails if Product Surface implementation requires any of the following without a separate Authentication / Browser Security Architecture Gate:
+
+```text
+separate browser origins for UI and API
+credentials-enabled cross-origin fetch
+SameSite relaxation
+cookie host-policy redesign
+broad CORS allowlists/wildcards for session traffic
+new CSRF/Origin-validation assumptions
+client-readable session/JWT persistence
+```
+
+A future separate frontend-origin/API-origin deployment must first review credentialed CORS, CSRF/Origin validation, cookie host/SameSite semantics, and the resulting browser trust boundary.
 
 ## Current-resource authorization after Notification/Workbench navigation
 
@@ -410,6 +482,9 @@ no second WorkItem/task truth
 no second lifecycle
 no second overdue rule
 no distributed frontend Scenario business branching
+unknown Scenario UI versions fail closed; no latest-version reinterpretation
+browser-visible Product Surface/API contract remains same-origin under existing session semantics
+no new credentialed cross-origin auth model
 no system_admin business bypass
 no Notification-as-capability access
 no client-selected nudge recipients
