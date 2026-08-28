@@ -9,9 +9,12 @@ afterEach(() => {
 describe('apiRequest', () => {
   it('uses relative EasyAudit API paths without adding bearer credentials', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(init?.headers instanceof Headers).toBe(true)
-      expect((init?.headers as Headers).has('Authorization')).toBe(false)
-      expect(init?.credentials).toBeUndefined()
+      if (init === undefined) {
+        throw new Error('Expected request init')
+      }
+      expect(init.headers instanceof Headers).toBe(true)
+      expect((init.headers as Headers).has('Authorization')).toBe(false)
+      expect(init.credentials).toBeUndefined()
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
