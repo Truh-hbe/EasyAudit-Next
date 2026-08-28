@@ -325,7 +325,7 @@ test('visible process_review@1 Case renders Case-scoped identity, Findings, serv
   await expect(page.getByRole('link', { name: 'Visible Finding' })).toHaveAttribute('href', '/findings/finding-real')
   await expect(page.getByText('review_case.created')).toBeVisible()
   await expect(page.getByText('Action overdue')).toBeVisible()
-  await expect(page.getByText('1', { exact: true })).toBeVisible()
+  await expect(page.locator('.compact-facts > div', { hasText: 'Action overdue' }).locator('dd')).toHaveText('1')
   await expect(page.getByText('metadata')).toHaveCount(0)
 })
 
