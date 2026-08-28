@@ -34,6 +34,20 @@ class CredentialRepository:
             return self.credential
         return None
 
+    def get_by_user_id(self, user_id: UserId) -> LocalCredential | None:
+        if self.credential is not None and self.credential.user_id == user_id:
+            return self.credential
+        return None
+
+    def lock_by_login_name(self, login_name: str) -> LocalCredential | None:
+        return self.get_by_login_name(login_name)
+
+    def lock_by_user_id(self, user_id: UserId) -> LocalCredential | None:
+        return self.get_by_user_id(user_id)
+
+    def update_password_state(self, credential: LocalCredential) -> None:
+        self.credential = credential
+
 
 class SessionRepository:
     def __init__(self) -> None:
@@ -51,8 +65,57 @@ class SessionRepository:
     def list_for_user(self, user_id: UserId) -> tuple[AuthSession, ...]:
         return tuple(item for item in self.items.values() if item.user_id == user_id)
 
-    def update(self, auth_session: AuthSession) -> None:
-        self.items[auth_session.id] = auth_session
+    def touch_if_active(
+        self,
+        session_id: AuthSessionId,
+        expected_token_hash: str,
+        touched_at: datetime,
+    ) -> AuthSession | None:
+        current = self.items.get(session_id)
+        if (
+            current is None
+            or current.token_hash != expected_token_hash
+            or current.revoked_at is not None
+            or current.expires_at <= touched_at
+        ):
+            return None
+        touched = replace(current, last_seen_at=touched_at)
+        self.items[session_id] = touched
+        return touched
+
+    def revoke_if_active(self, session_id: AuthSessionId, revoked_at: datetime) -> bool:
+        current = self.items.get(session_id)
+        if (
+            current is None
+            or current.revoked_at is not None
+            or current.expires_at <= revoked_at
+        ):
+            return False
+        self.items[session_id] = replace(current, revoked_at=revoked_at)
+        return True
+
+    def rotate_if_active(
+        self,
+        session_id: AuthSessionId,
+        expected_token_hash: str,
+        new_token_hash: str,
+        rotated_at: datetime,
+    ) -> AuthSession | None:
+        current = self.items.get(session_id)
+        if (
+            current is None
+            or current.token_hash != expected_token_hash
+            or current.revoked_at is not None
+            or current.expires_at <= rotated_at
+        ):
+            return None
+        rotated = replace(
+            current,
+            token_hash=new_token_hash,
+            last_seen_at=rotated_at,
+        )
+        self.items[session_id] = rotated
+        return rotated
 
 
 class UserRepository:
