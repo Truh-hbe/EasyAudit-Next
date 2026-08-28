@@ -1,4 +1,4 @@
-"""Seed the isolated PostgreSQL database used by real browser acceptance."""
+"""Seed only bootstrap identities used by real browser acceptance."""
 
 import os
 from datetime import UTC, datetime
@@ -15,9 +15,29 @@ from easyaudit_next.platform.persistence.models import (
 )
 
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000351")
-USER_ID = UUID("00000000-0000-4000-8000-000000000352")
-LOGIN_NAME = "browser-credential-user"
-INITIAL_PASSWORD = "initial-password-000"
+ADMIN_USER_ID = UUID("00000000-0000-4000-8000-000000000352")
+READY_USER_ID = UUID("00000000-0000-4000-8000-000000000353")
+ADMIN_LOGIN_NAME = "browser-system-admin"
+ADMIN_PASSWORD = "admin-password-000"
+READY_LOGIN_NAME = "browser-ready-user"
+READY_PASSWORD = "ready-password-000"
+PASSWORD_HASH = PasswordHash.recommended()
+
+
+def _credential(
+    *,
+    user_id: UUID,
+    login_name: str,
+    password: str,
+) -> LocalCredentialRecord:
+    return LocalCredentialRecord(
+        user_id=user_id,
+        organization_id=ORGANIZATION_ID,
+        login_name=login_name,
+        password_hash=PASSWORD_HASH.hash(password),
+        password_changed_at=datetime.now(UTC),
+        must_change_password=False,
+    )
 
 
 def main() -> None:
@@ -32,24 +52,36 @@ def main() -> None:
                 )
             )
             session.flush()
-            session.add(
-                UserRecord(
-                    id=USER_ID,
-                    organization_id=ORGANIZATION_ID,
-                    display_name="Browser Credential User",
-                    platform_role="ordinary_user",
-                )
+            session.add_all(
+                [
+                    UserRecord(
+                        id=ADMIN_USER_ID,
+                        organization_id=ORGANIZATION_ID,
+                        display_name="Browser System Admin",
+                        platform_role="system_admin",
+                    ),
+                    UserRecord(
+                        id=READY_USER_ID,
+                        organization_id=ORGANIZATION_ID,
+                        display_name="Browser Ready User",
+                        platform_role="ordinary_user",
+                    ),
+                ]
             )
             session.flush()
-            session.add(
-                LocalCredentialRecord(
-                    user_id=USER_ID,
-                    organization_id=ORGANIZATION_ID,
-                    login_name=LOGIN_NAME,
-                    password_hash=PasswordHash.recommended().hash(INITIAL_PASSWORD),
-                    password_changed_at=datetime.now(UTC),
-                    must_change_password=True,
-                )
+            session.add_all(
+                [
+                    _credential(
+                        user_id=ADMIN_USER_ID,
+                        login_name=ADMIN_LOGIN_NAME,
+                        password=ADMIN_PASSWORD,
+                    ),
+                    _credential(
+                        user_id=READY_USER_ID,
+                        login_name=READY_LOGIN_NAME,
+                        password=READY_PASSWORD,
+                    ),
+                ]
             )
     finally:
         engine.dispose()
