@@ -37,7 +37,7 @@ M3.5.2 replaces the M3.5.1 placeholders for:
 
 with a real personal Workbench and ReviewCase context surface while preserving one authoritative business truth:
 
-> **Workbench membership comes only from M3.1; ReviewCase lifecycle and visibility come only from Review Core/Scenario authorization; progress and overdue facts come only from approved server projections; React owns presentation, not business derivation.**
+> **Workbench membership comes only from M3.1; ReviewCase lifecycle and visibility come only from Review Core/Scenario authorization; Product collections are bounded read-side projections over those existing facts; progress and overdue facts come only from approved server projections; React owns presentation, not business derivation.**
 
 Conceptually:
 
@@ -48,8 +48,10 @@ GET /api/v1/me/workbench
       ↓
 server-projected personal work
       ↓
-open original ReviewCase
+open ReviewCase collection or original ReviewCase
       ↓
+authorization-safe bounded ReviewCase Product collection
+      or
 GET /api/v1/review-cases/{case_id}
       +
 GET /api/v1/review-cases/{case_id}/members
@@ -60,7 +62,7 @@ optional authorized management progress
       +
 Case-subject Activity history read contract
       ↓
-render one business-context page
+render server-authorized business context
 ```
 
 ## Hard scope boundary
@@ -69,6 +71,7 @@ M3.5.2 includes only:
 
 ```text
 Workbench presentation
+authorization-safe bounded ReviewCase Product collection prerequisite
 ReviewCase collection presentation
 ReviewCase detail/context presentation
 Case member read presentation + narrow display-identity enrichment
@@ -93,6 +96,7 @@ new lifecycle states
 new business permissions
 new overdue/deadline rules
 new WorkItem/Todo entity
+new ReviewCase truth or materialized product entity
 new management aggregate
 new Scenario backend semantics
 migration/schema change
@@ -167,17 +171,174 @@ Action  → /action-items/:actionItemId
 
 Finding/Action destinations may remain honest M3.5.3 placeholders during this slice. No Workbench-specific detail aggregate is created.
 
-## ReviewCase collection surface
+## ReviewCase collection requires a bounded Product query
 
-`/review-cases` consumes:
+The Product Surface route remains:
 
-```http
-GET /api/v1/review-cases
+```text
+/review-cases
 ```
 
-and renders only server-returned resources. Workbench membership, platform role, cached navigation state, or management scope must not broaden the collection.
+and its server contract remains in the ordinary ReviewCase namespace:
 
-The first collection may display returned title, lifecycle, exact Scenario key/version, and planned timing. No client-computed canonical progress percentage is allowed.
+```http
+GET /api/v1/review-cases?limit=50&offset=0
+```
+
+However, the current baseline implementation of `GET /api/v1/review-cases` is **not** approved for direct Product Surface use unchanged.
+
+The baseline command-oriented path effectively performs:
+
+```text
+organization-wide ReviewCase list
+        ↓
+for every Case
+    resolve ScenarioVersion / Scenario
+    build per-Case authorization context
+        CaseMember
+        Findings
+        FindingParticipants
+    exact ScenarioPolicy VIEW_CASE
+        ↓
+visible list
+```
+
+That shape is correct enough for command-side correctness and small M2 flows, but M3.5.2 must not promote an organization-wide/per-Case traversal into a high-frequency top-level Product collection.
+
+### Product collection invariant
+
+M3.5.2 must introduce or refactor to an authorization-safe bounded read-side query over the existing Review Core facts:
+
+```text
+actor-scoped candidate relationship/resource facts
+        ↓
+bulk load authorization facts for the candidate set
+        ↓
+bulk resolve exact historical
+(scenario_key, scenario_version)
+        ↓
+ScenarioPolicy.authorization.VIEW_CASE
+        ↓
+authorized Cases only
+        ↓
+stable server ordering
+        ↓
+pagination
+        ↓
+authorized total
+```
+
+The implementation shape may be a dedicated downstream query service or an equivalent read-oriented composition. It must not create a second `ReviewCase`, visibility table, WorkItem, materialized authorization truth, or Product-only lifecycle.
+
+The query may read persistence records directly as a projection, following the M3.1/M3.3 precedent, while exact ScenarioPolicy remains the authorization authority.
+
+### Candidate discovery must be authorization-complete
+
+Candidate discovery is an optimization boundary, not a new authorization rule.
+
+It must load a **superset of every Case that could be authorized for the current actor** from the relationship/actor facts already defined by the historical Scenario permission model. It may use bulk reverse lookups for current-user and applicable Department relationship facts, but it must not hard-code `process_review` role strings as the definition of visibility.
+
+Correct shape:
+
+```text
+candidate discovery
+→ may include extra candidates
+→ exact historical ScenarioPolicy VIEW_CASE decides final visibility
+```
+
+Forbidden shape:
+
+```text
+role_key == "lead"
+→ visible Case
+```
+
+or any candidate shortcut that can exclude a Case which the exact historical ScenarioPolicy would authorize.
+
+### Organization-wide command traversal is forbidden for this collection
+
+The Product collection must not use the unchanged baseline chain:
+
+```text
+ReviewCoreRepository.list_cases(organization)
+        ↓
+for each Case
+    command-side _authorization_context()
+        ↓
+per-Case/per-Finding repository traversal
+```
+
+Likewise it must not introduce a logically equivalent N+1 implementation behind a new class name.
+
+ScenarioVersion/Scenario records, Case relationship grants, Finding relationship grants, and any other permission-source facts required for the candidate set must be obtained in bounded/bulk query shapes rather than one query per Case/Finding.
+
+This constraint applies to the collection path only. Existing single-resource command/detail authorization may remain unchanged where it is not used as the Product collection algorithm.
+
+### Authorization must precede pagination
+
+Raw SQL candidate pagination before authorization is forbidden:
+
+```text
+SQL candidates
+→ LIMIT/OFFSET
+→ Scenario authorization
+```
+
+because hidden rows would distort page membership and `total`.
+
+The required semantic order is:
+
+```text
+candidate facts
+→ bulk authorization context
+→ exact historical ScenarioPolicy VIEW_CASE
+→ authorized result set
+→ stable order
+→ offset/limit
+```
+
+The implementation may optimize this sequence internally, but externally observable page membership and `total` must be exactly equivalent to **authorization first, pagination second**.
+
+### Bounded paging contract
+
+M3.5.2 freezes the same basic paging discipline already used by M3.3:
+
+```text
+limit:  1..100
+        default 50
+
+offset: >= 0
+```
+
+The Product collection response must expose an envelope equivalent to:
+
+```text
+items
+ total
+ limit
+ offset
+```
+
+where `total` is the count **after current-user authorization** and after any server filters that may later be explicitly added.
+
+The default collection order is deterministic:
+
+```text
+created_at DESC
+id DESC
+```
+
+or an implementation-equivalent stable server order with an explicit persisted-ID tie-breaker. React must not be required to reconstruct canonical paging order from an unbounded response.
+
+M3.5.2 does not require search, lifecycle filters, plan filters, cursor pagination, or a new index/migration. If implementation evidence shows an index is truly required, that is a separate scope review because this Gate currently expects no migration.
+
+### Collection presentation
+
+React renders only the server-returned authorized page. Workbench membership, platform role, cached navigation state, or management scope must not broaden it.
+
+The first page may display returned title, lifecycle, exact Scenario key/version, and planned timing. No client-computed canonical progress percentage is allowed.
+
+`system_admin` remains only a platform role; it does not bypass Scenario business authorization for this collection.
 
 ## ReviewCase detail is a context container
 
@@ -472,6 +633,7 @@ M3.5.2 may add wire DTOs for:
 
 ```text
 WorkbenchResponse
+ReviewCaseCollectionResponse
 ReviewCaseResponse
 CaseMemberViewResponse
 FindingResponse
@@ -537,14 +699,14 @@ Workbench and ReviewCase viewing must remain usable at common desktop/laptop and
 Recommended executable sequence:
 
 ```text
-1. wire DTOs + feature API boundary
+1. authorization-safe bounded ReviewCase collection read prerequisite + wire DTOs
 2. Workbench real server projection surface
 3. ReviewCase collection + generic detail shell
 4. exact Scenario UI registry + process_review@1 Case adapter
 5. member display-identity enrichment + Findings composition
 6. narrow ReviewCase Activity read prerequisite + Activity section
 7. optional server-authorized management progress summary
-8. unit/component + real browser Acceptance
+8. unit/component + PostgreSQL query-shape + real browser Acceptance
 9. exact-head CI + Final Review
 ```
 
@@ -567,4 +729,4 @@ Navigation to later resource routes may exist, but content remains an honest fut
 
 ## End state
 
-M3.5.2 is complete when an authenticated user can use the actual M3.1 Workbench projection, navigate into a currently authorized ReviewCase, read generic Case facts, exact-version Scenario presentation, human-readable Case member identities inside the authorized Case scope, visible Findings, metadata-free Case-subject Activity history, and any optional management progress the server currently authorizes—without React reconstructing work membership, lifecycle, deadline, progress, management scope, authorization, or organization user-directory access.
+M3.5.2 is complete when an authenticated user can use the actual M3.1 Workbench projection, browse a bounded/paginated ReviewCase collection whose membership and total are computed by exact current Scenario authorization before pagination, navigate into a currently authorized ReviewCase, read generic Case facts, exact-version Scenario presentation, human-readable Case member identities inside the authorized Case scope, visible Findings, metadata-free Case-subject Activity history, and any optional management progress the server currently authorizes—without organization-wide per-Case collection traversal or React reconstructing work membership, lifecycle, deadline, progress, management scope, authorization, or organization user-directory access.
