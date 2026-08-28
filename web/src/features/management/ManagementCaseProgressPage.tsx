@@ -30,6 +30,9 @@ export function ManagementCaseProgressPage() {
   useEffect(() => {
     setNudgeBusyKey(null)
     setNudgeMessage(null)
+  }, [caseId])
+
+  useEffect(() => {
     if (caseId === undefined) {
       setState({ status: 'unavailable', caseId })
       return
