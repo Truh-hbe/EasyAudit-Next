@@ -11,7 +11,10 @@ from easyaudit_next.infrastructure.database import (
     create_session_factory,
     session_scope,
 )
-from easyaudit_next.platform.application.administration import PasswordPolicyError
+from easyaudit_next.platform.application.password_policy import (
+    PasswordPolicyError,
+    validate_local_password,
+)
 from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.domain.ids import PlatformAuditEventId
 from easyaudit_next.platform.domain.models import (
@@ -43,8 +46,7 @@ def bootstrap_admin_in_session(
     now: datetime | None = None,
 ) -> None:
     _ensure_bootstrap_available(session)
-    if len(password) < 12:
-        raise PasswordPolicyError("Password must contain at least 12 characters")
+    validate_local_password(password)
     organizations = SqlAlchemyOrganizationRepository(session)
     departments = SqlAlchemyDepartmentRepository(session)
     users = SqlAlchemyUserRepository(session)
