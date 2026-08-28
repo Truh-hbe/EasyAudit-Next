@@ -85,6 +85,10 @@ export function ActionItemDetailPage() {
   const [commandMessage, setCommandMessage] = useState<string | null>(null)
 
   useEffect(() => {
+    setCommandMessage(null)
+  }, [actionItemId])
+
+  useEffect(() => {
     setFinding(idleChild)
     setReviewCase(idleChild)
     setAssignees(idleChild)
