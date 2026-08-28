@@ -20,7 +20,7 @@ from easyaudit_next.platform.application.authentication import (
     InvalidCurrentPasswordError,
     InvalidSessionError,
 )
-from easyaudit_next.platform.domain.ids import AuthSessionId, UserId
+from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.platform.domain.models import PlatformAuditEvent
 from easyaudit_next.platform.persistence.models import (
     AuthSessionRecord,
