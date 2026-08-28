@@ -20,6 +20,8 @@ from easyaudit_next.review_case_queries.query_service import (
     ReviewCaseCollectionQueryService,
 )
 from easyaudit_next.review_core.persistence.models import (
+    ActionAssigneeRecord,
+    ActionItemRecord,
     CaseMemberRecord,
     FindingParticipantRecord,
     FindingRecord,
@@ -193,6 +195,26 @@ def _finding(
     return record
 
 
+def _action(
+    session: Session,
+    organization_id: OrganizationId,
+    finding_id: UUID,
+    title: str,
+) -> ActionItemRecord:
+    record = ActionItemRecord(
+        id=uuid4(),
+        organization_id=organization_id,
+        finding_id=finding_id,
+        title=title,
+        lifecycle="todo",
+        due_at=None,
+        completed_at=None,
+    )
+    session.add(record)
+    session.flush()
+    return record
+
+
 def _user_participant(
     session: Session,
     organization_id: OrganizationId,
@@ -228,6 +250,26 @@ def _department_participant(
             user_id=None,
             department_id=department_id,
             role_key=role_key,
+            assigned_at=NOW,
+        )
+    )
+
+
+def _user_action_assignee(
+    session: Session,
+    organization_id: OrganizationId,
+    action_item_id: UUID,
+    user_id: UserId,
+    role: str = "primary",
+) -> None:
+    session.add(
+        ActionAssigneeRecord(
+            id=uuid4(),
+            organization_id=organization_id,
+            action_item_id=action_item_id,
+            user_id=user_id,
+            department_id=None,
+            role=role,
             assigned_at=NOW,
         )
     )
@@ -279,7 +321,7 @@ def test_collection_bulk_context_matches_case_visibility_sources(
             caller_id,
             version_id,
             "Direct case relationship",
-            created_at=NOW + timedelta(minutes=3),
+            created_at=NOW + timedelta(minutes=4),
         )
         _case_member(session, organization_id, direct_case.id, caller_id)
 
@@ -289,7 +331,7 @@ def test_collection_bulk_context_matches_case_visibility_sources(
             caller_id,
             version_id,
             "Finding relationship",
-            created_at=NOW + timedelta(minutes=2),
+            created_at=NOW + timedelta(minutes=3),
         )
         owned = _finding(
             session,
@@ -306,7 +348,7 @@ def test_collection_bulk_context_matches_case_visibility_sources(
             caller_id,
             version_id,
             "Department relationship",
-            created_at=NOW + timedelta(minutes=1),
+            created_at=NOW + timedelta(minutes=2),
         )
         department_finding = _finding(
             session,
@@ -321,6 +363,34 @@ def test_collection_bulk_context_matches_case_visibility_sources(
             department_finding.id,
             department_id,
             "responsible_department",
+        )
+
+        action_case = _case(
+            session,
+            organization_id,
+            caller_id,
+            version_id,
+            "Action-only relationship",
+            created_at=NOW + timedelta(minutes=1),
+        )
+        action_finding = _finding(
+            session,
+            organization_id,
+            action_case.id,
+            other_id,
+            "Action parent Finding",
+        )
+        assigned_action = _action(
+            session,
+            organization_id,
+            action_finding.id,
+            "Caller assigned Action",
+        )
+        _user_action_assignee(
+            session,
+            organization_id,
+            assigned_action.id,
+            caller_id,
         )
 
         hidden_case = _case(
@@ -351,8 +421,10 @@ def test_collection_bulk_context_matches_case_visibility_sources(
         direct_case.id,
         finding_case.id,
         department_case.id,
+        action_case.id,
     ]
-    assert collection.total == 3
+    assert collection.total == 4
+    assert action_case.id in {item.id for item in collection.items}
     assert hidden_case.id not in {item.id for item in collection.items}
 
 

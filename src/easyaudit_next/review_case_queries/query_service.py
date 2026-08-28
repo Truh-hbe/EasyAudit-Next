@@ -22,6 +22,8 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, ScenarioRegistry
 from easyaudit_next.review_core.persistence.models import (
+    ActionAssigneeRecord,
+    ActionItemRecord,
     CaseMemberRecord,
     FindingParticipantRecord,
     FindingRecord,
@@ -32,9 +34,10 @@ from easyaudit_next.review_core.persistence.models import (
 
 VIEW_CASE_PERMISSION = "view_case"
 
-# Five SELECT categories, independent of the number of Cases/Findings in the organization:
-# CaseMember facts, FindingParticipant facts, parent Findings, Scenario versions, candidate Cases.
-SELECT_QUERY_BOUND = 5
+# Seven SELECT categories, independent of the number of Cases/Findings/Actions in the
+# organization: CaseMember facts, FindingParticipant facts, ActionAssignee facts,
+# parent Actions, parent Findings, Scenario versions, and candidate Cases.
+SELECT_QUERY_BOUND = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,10 +73,16 @@ class ReviewCaseCollectionQueryService:
 
         case_members = self._load_case_members(actor)
         finding_participants = self._load_finding_participants(actor)
-        findings = self._load_findings(
+        action_assignees = self._load_action_assignees(actor)
+        actions = self._load_actions(
             actor,
-            {participant.finding_id for participant in finding_participants},
+            {assignee.action_item_id for assignee in action_assignees},
         )
+        action_by_id = {action.id: action for action in actions}
+
+        finding_ids = {participant.finding_id for participant in finding_participants}
+        finding_ids.update(action.finding_id for action in actions)
+        findings = self._load_findings(actor, finding_ids)
         finding_by_id = {finding.id: finding for finding in findings}
 
         scenario_facts = self._load_scenario_facts(actor)
@@ -101,6 +110,19 @@ class ReviewCaseCollectionQueryService:
             candidate_case_ids.add(finding.case_id)
             finding_grants_by_case[finding.case_id].add(
                 self._participant_grant(actor, participant)
+            )
+
+        action_grants_by_case: dict[UUID, set[RoleGrant]] = defaultdict(set)
+        for assignee in action_assignees:
+            action = action_by_id.get(assignee.action_item_id)
+            if action is None:
+                continue
+            finding = finding_by_id.get(action.finding_id)
+            if finding is None:
+                continue
+            candidate_case_ids.add(finding.case_id)
+            action_grants_by_case[finding.case_id].add(
+                self._assignee_grant(actor, assignee)
             )
 
         # Candidate discovery is only a performance boundary. A Scenario version whose
@@ -131,6 +153,9 @@ class ReviewCaseCollectionQueryService:
                 case_role_grants=frozenset(case_grants.get(record.id, set())),
                 finding_role_grants=frozenset(
                     finding_grants_by_case.get(record.id, set())
+                ),
+                action_role_grants=frozenset(
+                    action_grants_by_case.get(record.id, set())
                 ),
             )
             if policy.authorization.allows(VIEW_CASE_PERMISSION, context):
@@ -176,6 +201,38 @@ class ReviewCaseCollectionQueryService:
                 select(FindingParticipantRecord).where(
                     FindingParticipantRecord.organization_id == actor.organization_id,
                     or_(*actor_predicates),
+                )
+            )
+        )
+
+    def _load_action_assignees(
+        self,
+        actor: User,
+    ) -> tuple[ActionAssigneeRecord, ...]:
+        actor_predicates = [ActionAssigneeRecord.user_id == actor.id]
+        if actor.primary_department_id is not None:
+            actor_predicates.append(
+                ActionAssigneeRecord.department_id == actor.primary_department_id
+            )
+        return tuple(
+            self._session.scalars(
+                select(ActionAssigneeRecord).where(
+                    ActionAssigneeRecord.organization_id == actor.organization_id,
+                    or_(*actor_predicates),
+                )
+            )
+        )
+
+    def _load_actions(
+        self,
+        actor: User,
+        action_ids: set[UUID],
+    ) -> tuple[ActionItemRecord, ...]:
+        return tuple(
+            self._session.scalars(
+                select(ActionItemRecord).where(
+                    ActionItemRecord.organization_id == actor.organization_id,
+                    ActionItemRecord.id.in_(action_ids),
                 )
             )
         )
@@ -271,6 +328,28 @@ class ReviewCaseCollectionQueryService:
                 source=PermissionSource.DEPARTMENT_MEMBERSHIP,
             )
         raise RuntimeError("FindingParticipant escaped actor-scoped candidate query")
+
+    @staticmethod
+    def _assignee_grant(
+        actor: User,
+        assignee: ActionAssigneeRecord,
+    ) -> RoleGrant:
+        if assignee.user_id == actor.id:
+            return RoleGrant(
+                role_key=assignee.role,
+                actor_kind=ActorKind.USER,
+                source=PermissionSource.DIRECT,
+            )
+        if (
+            actor.primary_department_id is not None
+            and assignee.department_id == actor.primary_department_id
+        ):
+            return RoleGrant(
+                role_key=assignee.role,
+                actor_kind=ActorKind.DEPARTMENT,
+                source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+            )
+        raise RuntimeError("ActionAssignee escaped actor-scoped candidate query")
 
     @staticmethod
     def _case_to_domain(
