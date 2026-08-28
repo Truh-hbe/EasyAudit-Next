@@ -1,5 +1,9 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router'
 
+import { ResourcePlaceholderPage } from '../../features/reviewCases/ResourcePlaceholderPage'
+import { ReviewCaseCollectionPage } from '../../features/reviewCases/ReviewCaseCollectionPage'
+import { ReviewCaseDetailPage } from '../../features/reviewCases/ReviewCaseDetailPage'
+import { WorkbenchPage } from '../../features/workbench/WorkbenchPage'
 import { LogoutButton } from '../auth/LogoutButton'
 import { useSession } from '../auth/session'
 import { PlaceholderPage } from './PlaceholderPage'
@@ -43,26 +47,11 @@ export function ProductShell() {
 
       <main className="product-content">
         <Routes>
-          <Route
-            path="/me/workbench"
-            element={
-              <PlaceholderPage
-                title="我的工作"
-                slice="M3.5.2"
-                description="Workbench 业务内容将在后续切片接入现有服务器 read-side。"
-              />
-            }
-          />
-          <Route
-            path="/review-cases/*"
-            element={
-              <PlaceholderPage
-                title="审查活动"
-                slice="M3.5.2–M3.5.3"
-                description="ReviewCase、Finding 与 Action 协作界面将在后续切片实现。"
-              />
-            }
-          />
+          <Route path="/me/workbench" element={<WorkbenchPage />} />
+          <Route path="/review-cases" element={<ReviewCaseCollectionPage />} />
+          <Route path="/review-cases/:caseId" element={<ReviewCaseDetailPage />} />
+          <Route path="/findings/:findingId" element={<ResourcePlaceholderPage resource="Finding" />} />
+          <Route path="/action-items/:actionItemId" element={<ResourcePlaceholderPage resource="ActionItem" />} />
           <Route
             path="/me/notifications"
             element={
