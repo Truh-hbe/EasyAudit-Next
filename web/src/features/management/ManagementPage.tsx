@@ -54,7 +54,7 @@ export function ManagementPage() {
     void listManagedReviewCases(
       {
         reviewPlanId: reviewPlanId.length === 0 ? undefined : reviewPlanId,
-        lifecycle: lifecycle.length === 0 ? undefined : lifecycle,
+        lifecycle: lifecycle === '' ? undefined : lifecycle,
         deadlineStatus,
         limit: PAGE_SIZE,
         offset,
