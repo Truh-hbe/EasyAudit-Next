@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
@@ -116,6 +116,9 @@ function SubmissionSection({ state }: { state: ChildState<SubmissionResponse[]> 
 
 export function FindingDetailPage() {
   const { findingId } = useParams()
+  const currentFindingIdRef = useRef(findingId)
+  currentFindingIdRef.current = findingId
+  const candidateSearchSequenceRef = useRef(0)
   const [revision, setRevision] = useState(0)
   const [primary, setPrimary] = useState<PrimaryState>({ status: 'loading', findingId: undefined })
   const [reviewCase, setReviewCase] = useState<ChildState<ReviewCaseResponse>>(idleChild)
@@ -135,6 +138,16 @@ export function FindingDetailPage() {
   const [commandMessage, setCommandMessage] = useState<string | null>(null)
 
   useEffect(() => {
+    candidateSearchSequenceRef.current += 1
+    setCandidateState({ status: 'idle' })
+    setCandidateQuery('')
+    setParticipantRoleKey('')
+    setActionTitle('')
+    setActionDueAt('')
+    setVoidReason('')
+    setReopenReason('')
+    setScenarioValues({})
+    setCommandBusy(false)
     setCommandMessage(null)
   }, [findingId])
 
@@ -258,20 +271,25 @@ export function FindingDetailPage() {
   }, [authorizedFindingId, primary])
 
   async function runCommand(label: string, command: () => Promise<unknown>) {
+    const commandFindingId = findingId
     setCommandBusy(true)
     setCommandMessage(null)
     try {
       await command()
+      if (currentFindingIdRef.current !== commandFindingId) return
       setCommandMessage(`${label}已由服务器确认。`)
       setCandidateState({ status: 'idle' })
       setRevision((value) => value + 1)
     } catch (error) {
+      if (currentFindingIdRef.current !== commandFindingId) return
       setCommandMessage(errorMessage(error, `${label}失败`))
       if (error instanceof ApiError && [403, 409, 422].includes(error.status)) {
         setRevision((value) => value + 1)
       }
     } finally {
-      setCommandBusy(false)
+      if (currentFindingIdRef.current === commandFindingId) {
+        setCommandBusy(false)
+      }
     }
   }
 
@@ -318,6 +336,9 @@ export function FindingDetailPage() {
       setCandidateState({ status: 'error', message: '候选搜索至少输入 2 个字符。' })
       return
     }
+    const searchSequence = candidateSearchSequenceRef.current + 1
+    candidateSearchSequenceRef.current = searchSequence
+    const searchFindingId = findingId
     setCandidateState({ status: 'loading' })
     try {
       const data = await searchFindingParticipantCandidates(
@@ -326,8 +347,16 @@ export function FindingDetailPage() {
         participantOption.actorKind,
         candidateQuery,
       )
+      if (
+        currentFindingIdRef.current !== searchFindingId ||
+        candidateSearchSequenceRef.current !== searchSequence
+      ) return
       setCandidateState({ status: 'ready', data })
     } catch (error) {
+      if (
+        currentFindingIdRef.current !== searchFindingId ||
+        candidateSearchSequenceRef.current !== searchSequence
+      ) return
       setCandidateState({ status: 'error', message: errorMessage(error, '候选搜索失败') })
     }
   }
@@ -389,6 +418,7 @@ export function FindingDetailPage() {
                   value={participantOption?.roleKey ?? ''}
                   onChange={(event) => {
                     setParticipantRoleKey(event.target.value)
+                    candidateSearchSequenceRef.current += 1
                     setCandidateState({ status: 'idle' })
                   }}
                   disabled={commandBusy}
