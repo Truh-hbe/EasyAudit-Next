@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from easyaudit_next.api.contracts import (
+    CurrentUserResponse,
     DepartmentCreateRequest,
     DepartmentPatchRequest,
     DepartmentResponse,
@@ -13,6 +14,7 @@ from easyaudit_next.api.contracts import (
     LoginRequest,
     LoginResponse,
     OrganizationResponse,
+    PasswordChangeRequest,
     ScenarioResponse,
     ScenarioVersionResponse,
     SessionResponse,
@@ -30,7 +32,12 @@ from easyaudit_next.platform.application.administration import PlatformAdministr
 from easyaudit_next.platform.application.authentication import (
     AuthenticationService,
     InvalidCredentialsError,
+    InvalidCurrentPasswordError,
+    InvalidSessionError,
+    LocalCredentialUnavailableError,
+    PasswordReuseError,
 )
+from easyaudit_next.platform.application.password_policy import PasswordPolicyError
 from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, UserId
 from easyaudit_next.platform.domain.models import Department, User
@@ -103,13 +110,26 @@ def _user_response(user: User) -> UserResponse:
     )
 
 
-def _department_response(department: Department) -> DepartmentResponse:
-    return DepartmentResponse(
-        id=department.id,
-        organization_id=department.organization_id,
-        name=department.name,
-        parent_id=department.parent_id,
-        is_active=department.is_active,
+def _current_user_response(user: User, must_change_password: bool) -> CurrentUserResponse:
+    return CurrentUserResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        display_name=user.display_name,
+        platform_role=user.platform_role,
+        primary_department_id=user.primary_department_id,
+        is_active=user.is_active,
+        must_change_password=must_change_password,
+    )
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=get_settings().session_cookie_name,
+        value=token,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
     )
 
 
@@ -157,15 +177,7 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid login name or password",
         ) from exc
-    settings = get_settings()
-    response.set_cookie(
-        key=settings.session_cookie_name,
-        value=result.token,
-        secure=True,
-        httponly=True,
-        samesite="strict",
-        path="/",
-    )
+    _set_session_cookie(response, result.token)
     return LoginResponse(
         user=_user_response(result.user),
         session_id=result.auth_session.id,
@@ -196,12 +208,63 @@ def logout(
 
 @api_router.get(
     "/api/v1/me",
-    response_model=UserResponse,
+    response_model=CurrentUserResponse,
     operation_id="getMe",
     tags=["me"],
 )
-def get_me(identity: AuthenticatedIdentity) -> UserResponse:
-    return _user_response(identity.user)
+def get_me(
+    identity: AuthenticatedIdentity,
+    session: DatabaseSession,
+) -> CurrentUserResponse:
+    credential = SqlAlchemyLocalCredentialRepository(session).get_by_user_id(identity.user.id)
+    return _current_user_response(
+        identity.user,
+        credential.must_change_password if credential is not None else False,
+    )
+
+
+@api_router.post(
+    "/api/v1/me/password",
+    response_model=CurrentUserResponse,
+    operation_id="changeMyPassword",
+    tags=["me"],
+)
+def change_my_password(
+    payload: PasswordChangeRequest,
+    response: Response,
+    identity: AuthenticatedIdentity,
+    auth: Authentication,
+) -> CurrentUserResponse:
+    try:
+        result = auth.change_password(
+            identity.auth_session,
+            identity.user,
+            payload.current_password,
+            payload.new_password,
+        )
+    except InvalidCurrentPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is invalid",
+        ) from exc
+    except (PasswordPolicyError, PasswordReuseError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except LocalCredentialUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local credential is unavailable",
+        ) from exc
+    except InvalidSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        ) from exc
+
+    _set_session_cookie(response, result.token)
+    return _current_user_response(result.user, False)
 
 
 @api_router.get(

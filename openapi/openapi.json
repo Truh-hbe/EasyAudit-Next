@@ -26,6 +26,9 @@
     "/api/v1/me": {
       "get": {"operationId": "getMe", "tags": ["me"]}
     },
+    "/api/v1/me/password": {
+      "post": {"operationId": "changeMyPassword", "tags": ["me"]}
+    },
     "/api/v1/me/sessions": {
       "get": {"operationId": "listMySessions", "tags": ["me"]}
     },

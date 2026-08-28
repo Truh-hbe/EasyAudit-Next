@@ -64,7 +64,7 @@ class CurrentIdentity:
 def get_current_identity(
     request: Request,
     auth: Authentication,
-) -> CurrentIdentity:
+) -> Iterator[CurrentIdentity]:
     token = request.cookies.get(get_settings().session_cookie_name)
     if token is None:
         raise HTTPException(
@@ -77,7 +77,11 @@ def get_current_identity(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
         ) from exc
-    return CurrentIdentity(auth_session=auth_session, user=user)
+
+    try:
+        yield CurrentIdentity(auth_session=auth_session, user=user)
+    finally:
+        auth.touch(auth_session)
 
 
 AuthenticatedIdentity = Annotated[CurrentIdentity, Depends(get_current_identity)]

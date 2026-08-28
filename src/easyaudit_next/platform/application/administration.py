@@ -5,6 +5,10 @@ from uuid import uuid4
 from pwdlib import PasswordHash
 
 from easyaudit_next.platform.application.authentication import AuthenticationService
+from easyaudit_next.platform.application.password_policy import (
+    PasswordPolicyError,
+    validate_local_password,
+)
 from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.domain.ids import DepartmentId, PlatformAuditEventId, UserId
 from easyaudit_next.platform.domain.models import (
@@ -21,10 +25,6 @@ from easyaudit_next.platform.domain.repositories import (
     PlatformAuditRepository,
     UserRepository,
 )
-
-
-class PasswordPolicyError(ValueError):
-    """A local password does not meet the initial M1.2 policy."""
 
 
 class LastSystemAdminError(ValueError):
@@ -223,5 +223,4 @@ class PlatformAdministrationService:
 
     @staticmethod
     def _validate_password(password: str) -> None:
-        if len(password) < 12:
-            raise PasswordPolicyError("Password must contain at least 12 characters")
+        validate_local_password(password)
