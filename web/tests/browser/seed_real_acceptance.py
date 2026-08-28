@@ -30,6 +30,9 @@ ADMIN_USER_ID = UUID("00000000-0000-4000-8000-000000000352")
 READY_USER_ID = UUID("00000000-0000-4000-8000-000000000353")
 VIEWER_USER_ID = UUID("00000000-0000-4000-8000-000000000354")
 MEMBER_USER_ID = UUID("00000000-0000-4000-8000-000000000355")
+JOURNEY_LEAD_USER_ID = UUID("00000000-0000-4000-8000-000000000356")
+JOURNEY_OWNER_USER_ID = UUID("00000000-0000-4000-8000-000000000357")
+JOURNEY_REVIEWER_USER_ID = UUID("00000000-0000-4000-8000-000000000358")
 
 SCENARIO_ID = UUID("00000000-0000-4000-8000-000000000360")
 SCENARIO_VERSION_ID = UUID("00000000-0000-4000-8000-000000000361")
@@ -40,11 +43,14 @@ CASE_B_ID = UUID("00000000-0000-4000-8000-000000000372")
 HIDDEN_H2_ID = UUID("00000000-0000-4000-8000-000000000373")
 CASE_C_ID = UUID("00000000-0000-4000-8000-000000000374")
 STALE_CASE_ID = UUID("00000000-0000-4000-8000-000000000375")
+JOURNEY_CASE_ID = UUID("00000000-0000-4000-8000-000000000376")
 
 FINDING_ID = UUID("00000000-0000-4000-8000-000000000380")
 ACTION_ID = UUID("00000000-0000-4000-8000-000000000381")
 FINDING_PARTICIPANT_ID = UUID("00000000-0000-4000-8000-000000000382")
 ACTION_ASSIGNEE_ID = UUID("00000000-0000-4000-8000-000000000383")
+JOURNEY_FINDING_ID = UUID("00000000-0000-4000-8000-000000000384")
+JOURNEY_FINDING_PARTICIPANT_ID = UUID("00000000-0000-4000-8000-000000000385")
 ACTIVITY_ID = UUID("00000000-0000-4000-8000-000000000390")
 
 ADMIN_LOGIN_NAME = "browser-system-admin"
@@ -53,6 +59,12 @@ READY_LOGIN_NAME = "browser-ready-user"
 READY_PASSWORD = "ready-password-000"
 VIEWER_LOGIN_NAME = "browser-viewer-user"
 VIEWER_PASSWORD = "viewer-password-000"
+JOURNEY_LEAD_LOGIN_NAME = "browser-journey-lead"
+JOURNEY_LEAD_PASSWORD = "lead-password-000"
+JOURNEY_OWNER_LOGIN_NAME = "browser-journey-owner"
+JOURNEY_OWNER_PASSWORD = "owner-password-000"
+JOURNEY_REVIEWER_LOGIN_NAME = "browser-journey-reviewer"
+JOURNEY_REVIEWER_PASSWORD = "reviewer-password-000"
 PASSWORD_HASH = PasswordHash.recommended()
 
 BASE_TIME = datetime(2026, 8, 28, 9, 0, tzinfo=UTC)
@@ -131,6 +143,24 @@ def main() -> None:
                         display_name="Human Case Member",
                         platform_role="ordinary_user",
                     ),
+                    UserRecord(
+                        id=JOURNEY_LEAD_USER_ID,
+                        organization_id=ORGANIZATION_ID,
+                        display_name="M3.5.5 Journey Lead",
+                        platform_role="ordinary_user",
+                    ),
+                    UserRecord(
+                        id=JOURNEY_OWNER_USER_ID,
+                        organization_id=ORGANIZATION_ID,
+                        display_name="M3.5.5 Journey Owner",
+                        platform_role="ordinary_user",
+                    ),
+                    UserRecord(
+                        id=JOURNEY_REVIEWER_USER_ID,
+                        organization_id=ORGANIZATION_ID,
+                        display_name="M3.5.5 Journey Reviewer",
+                        platform_role="ordinary_user",
+                    ),
                 ]
             )
             session.flush()
@@ -150,6 +180,21 @@ def main() -> None:
                         user_id=VIEWER_USER_ID,
                         login_name=VIEWER_LOGIN_NAME,
                         password=VIEWER_PASSWORD,
+                    ),
+                    _credential(
+                        user_id=JOURNEY_LEAD_USER_ID,
+                        login_name=JOURNEY_LEAD_LOGIN_NAME,
+                        password=JOURNEY_LEAD_PASSWORD,
+                    ),
+                    _credential(
+                        user_id=JOURNEY_OWNER_USER_ID,
+                        login_name=JOURNEY_OWNER_LOGIN_NAME,
+                        password=JOURNEY_OWNER_PASSWORD,
+                    ),
+                    _credential(
+                        user_id=JOURNEY_REVIEWER_USER_ID,
+                        login_name=JOURNEY_REVIEWER_LOGIN_NAME,
+                        password=JOURNEY_REVIEWER_PASSWORD,
                     ),
                 ]
             )
@@ -207,6 +252,12 @@ def main() -> None:
                     created_at=datetime(2026, 8, 28, 8, 55, tzinfo=UTC),
                     created_by=VIEWER_USER_ID,
                 ),
+                _case(
+                    case_id=JOURNEY_CASE_ID,
+                    title="M3.5.5 End-to-End Product Case",
+                    created_at=datetime(2026, 8, 28, 8, 54, tzinfo=UTC),
+                    created_by=JOURNEY_LEAD_USER_ID,
+                ),
             ]
             session.add_all(cases)
             session.flush()
@@ -248,6 +299,20 @@ def main() -> None:
                         role_key="observer",
                         joined_at=BASE_TIME,
                     ),
+                    CaseMemberRecord(
+                        organization_id=ORGANIZATION_ID,
+                        case_id=JOURNEY_CASE_ID,
+                        user_id=JOURNEY_LEAD_USER_ID,
+                        role_key="lead",
+                        joined_at=BASE_TIME,
+                    ),
+                    CaseMemberRecord(
+                        organization_id=ORGANIZATION_ID,
+                        case_id=JOURNEY_CASE_ID,
+                        user_id=JOURNEY_REVIEWER_USER_ID,
+                        role_key="reviewer",
+                        joined_at=BASE_TIME,
+                    ),
                 ]
             )
             session.flush()
@@ -266,6 +331,23 @@ def main() -> None:
                     raised_at=BASE_TIME,
                 )
             )
+            session.add(
+                FindingRecord(
+                    id=JOURNEY_FINDING_ID,
+                    organization_id=ORGANIZATION_ID,
+                    case_id=JOURNEY_CASE_ID,
+                    title="M3.5.5 Multi-user Finding",
+                    description="Final Product acceptance finding driven through Product commands.",
+                    severity="high",
+                    lifecycle="rectifying",
+                    scenario_data_json={
+                        "issue_type": "control_gap",
+                        "project_category": "assembly",
+                    },
+                    raised_by=JOURNEY_LEAD_USER_ID,
+                    raised_at=BASE_TIME,
+                )
+            )
             session.flush()
             session.add(
                 FindingParticipantRecord(
@@ -273,6 +355,17 @@ def main() -> None:
                     organization_id=ORGANIZATION_ID,
                     finding_id=FINDING_ID,
                     user_id=READY_USER_ID,
+                    department_id=None,
+                    role_key="owner",
+                    assigned_at=BASE_TIME,
+                )
+            )
+            session.add(
+                FindingParticipantRecord(
+                    id=JOURNEY_FINDING_PARTICIPANT_ID,
+                    organization_id=ORGANIZATION_ID,
+                    finding_id=JOURNEY_FINDING_ID,
+                    user_id=JOURNEY_OWNER_USER_ID,
                     department_id=None,
                     role_key="owner",
                     assigned_at=BASE_TIME,

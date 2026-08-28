@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router'
 import { SessionProvider } from './app/auth/session'
 import { App } from './App'
 import './styles.css'
+import './final-polish.css'
 
 const root = document.getElementById('root')
 

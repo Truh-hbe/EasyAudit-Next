@@ -1,0 +1,91 @@
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 3px solid #2f5fca;
+  outline-offset: 3px;
+}
+
+.product-shell,
+.product-content,
+.surface-page,
+.surface-card,
+.surface-list li,
+.case-list li,
+.activity-list li,
+.subsurface,
+.command-row,
+.command-stack,
+.form-grid > *,
+.fact-grid > * {
+  min-width: 0;
+}
+
+.surface-page,
+.surface-card,
+.surface-list li,
+.case-list li,
+.activity-list li,
+.fact-grid dd,
+.product-context,
+.empty-note,
+[role="alert"],
+[role="status"] {
+  overflow-wrap: anywhere;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .product-content {
+    padding-top: 28px;
+    padding-bottom: 52px;
+  }
+
+  .surface-card,
+  .subsurface {
+    padding: 18px;
+  }
+
+  .command-row,
+  .pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .command-row > button,
+  .command-row > a,
+  .pagination > button,
+  .candidate-list button {
+    width: 100%;
+  }
+
+  .account-area {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .account-area .compact-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 375px) {
+  .product-header,
+  .primary-nav,
+  .product-content {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .surface-card,
+  .subsurface {
+    padding: 15px;
+  }
+
+  h1 {
+    font-size: clamp(1.75rem, 11vw, 2.4rem);
+  }
+}

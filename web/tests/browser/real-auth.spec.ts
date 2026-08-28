@@ -23,6 +23,20 @@ const PROVISIONED_DISPLAY_NAME = 'Browser Provisioned User'
 const INITIAL_PASSWORD = 'initial-password-000'
 const REPLACEMENT_PASSWORD = 'replacement-password-111'
 
+const JOURNEY_LEAD_LOGIN_NAME = 'browser-journey-lead'
+const JOURNEY_LEAD_PASSWORD = 'lead-password-000'
+const JOURNEY_LEAD_DISPLAY_NAME = 'M3.5.5 Journey Lead'
+const JOURNEY_OWNER_LOGIN_NAME = 'browser-journey-owner'
+const JOURNEY_OWNER_PASSWORD = 'owner-password-000'
+const JOURNEY_OWNER_DISPLAY_NAME = 'M3.5.5 Journey Owner'
+const JOURNEY_REVIEWER_LOGIN_NAME = 'browser-journey-reviewer'
+const JOURNEY_REVIEWER_PASSWORD = 'reviewer-password-000'
+const JOURNEY_REVIEWER_DISPLAY_NAME = 'M3.5.5 Journey Reviewer'
+const JOURNEY_CASE_TITLE = 'M3.5.5 End-to-End Product Case'
+const JOURNEY_FINDING_ID = '00000000-0000-4000-8000-000000000384'
+const JOURNEY_FINDING_TITLE = 'M3.5.5 Multi-user Finding'
+const JOURNEY_ACTION_TITLE = 'M3.5.5 Owner-created corrective Action'
+
 const CASE_A_TITLE = 'Visible Product Case A'
 const CASE_B_TITLE = 'Visible Product Case B'
 const CASE_C_TITLE = 'Visible Product Case C'
@@ -149,6 +163,18 @@ async function provisionOrdinaryUserThroughRealAdminApi() {
   } finally {
     await adminClient.dispose()
   }
+}
+
+async function loginFromWorkbench(
+  page: Page,
+  loginName: string,
+  password: string,
+  displayName: string,
+) {
+  await page.goto('/me/workbench')
+  await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
+  await submitLogin(page, loginName, password)
+  await expectShellAtViewport(page, DESKTOP_VIEWPORT, displayName)
 }
 
 test.describe.configure({ mode: 'serial', retries: 0 })
@@ -451,4 +477,232 @@ test('real stale Workbench link revalidates current Case authorization and obser
   await submitLogout(page)
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
   await expect(page.getByText(VIEWER_DISPLAY_NAME)).toHaveCount(0)
+})
+
+test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nudge rejection and closure', async ({ page }) => {
+  await loginFromWorkbench(
+    page,
+    JOURNEY_LEAD_LOGIN_NAME,
+    JOURNEY_LEAD_PASSWORD,
+    JOURNEY_LEAD_DISPLAY_NAME,
+  )
+  await expect(page.getByRole('link', { name: JOURNEY_CASE_TITLE })).toBeVisible()
+  await page.getByRole('link', { name: JOURNEY_CASE_TITLE }).click()
+  await expect(page.getByRole('heading', { name: JOURNEY_CASE_TITLE })).toBeVisible()
+  await page.getByRole('link', { name: JOURNEY_FINDING_TITLE }).click()
+  await expect(page.getByRole('heading', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
+
+  const nudgeRequestPromise = page.waitForRequest(
+    (request) =>
+      apiPath(request.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/nudge` &&
+      request.method() === 'POST',
+  )
+  const nudgeResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/nudge` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '催一下', exact: true }).click()
+  const nudgeRequest = await nudgeRequestPromise
+  const nudgeResponse = await nudgeResponsePromise
+  expect(nudgeRequest.postData()).toBeNull()
+  expect(nudgeResponse.status()).toBe(200)
+  const nudgeResult = (await nudgeResponse.json()) as { recipient_count: number }
+  expect(nudgeResult.recipient_count).toBe(1)
+  await expect(page.getByText(/服务器已确认催办：1 位接收人/)).toBeVisible()
+  await submitLogout(page)
+
+  await loginFromWorkbench(
+    page,
+    JOURNEY_OWNER_LOGIN_NAME,
+    JOURNEY_OWNER_PASSWORD,
+    JOURNEY_OWNER_DISPLAY_NAME,
+  )
+  await expect(page.getByRole('link', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
+  await page.getByRole('navigation', { name: '主要导航' }).getByRole('link', { name: '通知' }).click()
+  await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
+  await page.getByRole('button', { name: /未读/ }).click()
+  await expect(page.getByText('Finding nudge', { exact: true })).toBeVisible()
+  await page.getByRole('link', { name: '打开当前目标' }).click()
+  await expect(page.getByRole('heading', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
+
+  const newActionForm = page.getByRole('heading', { name: '新建 Action Item' }).locator('..')
+  await newActionForm.getByLabel('标题').fill(JOURNEY_ACTION_TITLE)
+  const createActionResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/actions` &&
+      response.request().method() === 'POST',
+  )
+  await newActionForm.getByRole('button', { name: '创建' }).click()
+  const createActionResponse = await createActionResponsePromise
+  expect(createActionResponse.status()).toBe(201)
+  const createdAction = (await createActionResponse.json()) as { id: string; lifecycle: string }
+  expect(createdAction.lifecycle).toBe('todo')
+  await expect(page.getByRole('link', { name: JOURNEY_ACTION_TITLE })).toBeVisible()
+  await page.getByRole('link', { name: JOURNEY_ACTION_TITLE }).click()
+  await expect(page.getByRole('heading', { name: JOURNEY_ACTION_TITLE })).toBeVisible()
+
+  const assigneeSection = page.getByRole('heading', { name: '执行关系' }).locator('..')
+  await assigneeSection.getByLabel('搜索').fill('Journey Owner')
+  await assigneeSection.getByRole('button', { name: '搜索候选' }).click()
+  const ownerCandidate = assigneeSection.getByRole('listitem').filter({ hasText: JOURNEY_OWNER_DISPLAY_NAME })
+  await expect(ownerCandidate).toBeVisible()
+  const addAssigneeResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/action-items/${createdAction.id}/assignees` &&
+      response.request().method() === 'POST',
+  )
+  await ownerCandidate.getByRole('button', { name: '添加' }).click()
+  expect((await addAssigneeResponsePromise).status()).toBe(201)
+  await expect(assigneeSection.getByText(JOURNEY_OWNER_DISPLAY_NAME, { exact: true })).toBeVisible()
+
+  const startResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/action-items/${createdAction.id}/transitions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '开始', exact: true }).click()
+  const startResponse = await startResponsePromise
+  expect(startResponse.status()).toBe(200)
+  expect(((await startResponse.json()) as { lifecycle: string }).lifecycle).toBe('in_progress')
+  await expect(page.getByRole('button', { name: '完成', exact: true })).toBeVisible()
+
+  const completeResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/action-items/${createdAction.id}/transitions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '完成', exact: true }).click()
+  const completeResponse = await completeResponsePromise
+  expect(completeResponse.status()).toBe(200)
+  expect(((await completeResponse.json()) as { lifecycle: string }).lifecycle).toBe('done')
+  await expect(page.getByRole('button', { name: '重新打开' })).toBeVisible()
+
+  await page.getByRole('link', { name: '返回 Finding' }).click()
+  await page.getByLabel('根本原因').fill('Real multi-user root cause accepted through Product UI')
+  const planResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/rectification-submissions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '提交正式计划' }).click()
+  expect((await planResponsePromise).status()).toBe(201)
+  await page.getByLabel('整改完成说明').fill('First correction completed through assigned Action')
+  const firstSubmitResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/rectification-submissions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '提交验证' }).click()
+  const firstSubmitResponse = await firstSubmitResponsePromise
+  expect(firstSubmitResponse.status()).toBe(201)
+  const firstSubmitted = (await firstSubmitResponse.json()) as { finding: { lifecycle: string } }
+  expect(firstSubmitted.finding.lifecycle).toBe('verifying')
+  await submitLogout(page)
+
+  await loginFromWorkbench(
+    page,
+    JOURNEY_REVIEWER_LOGIN_NAME,
+    JOURNEY_REVIEWER_PASSWORD,
+    JOURNEY_REVIEWER_DISPLAY_NAME,
+  )
+  const verificationLink = page.getByRole('link', { name: JOURNEY_FINDING_TITLE })
+  await expect(verificationLink).toBeVisible()
+  await verificationLink.click()
+  await page.getByLabel('驳回原因').fill('Reviewer requires a second corrective cycle')
+  const rejectResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/verification-submissions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Reject' }).click()
+  const rejectResponse = await rejectResponsePromise
+  expect(rejectResponse.status()).toBe(201)
+  const rejected = (await rejectResponse.json()) as { finding: { lifecycle: string } }
+  expect(rejected.finding.lifecycle).toBe('rectifying')
+  await submitLogout(page)
+
+  await loginFromWorkbench(
+    page,
+    JOURNEY_OWNER_LOGIN_NAME,
+    JOURNEY_OWNER_PASSWORD,
+    JOURNEY_OWNER_DISPLAY_NAME,
+  )
+  await page.getByRole('link', { name: JOURNEY_FINDING_TITLE }).click()
+  await expect(page.getByRole('heading', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
+  await page.getByRole('link', { name: JOURNEY_ACTION_TITLE }).click()
+  await expect(page.getByRole('button', { name: '重新打开' })).toBeVisible()
+
+  const reopenActionResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/action-items/${createdAction.id}/transitions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '重新打开' }).click()
+  const reopenActionResponse = await reopenActionResponsePromise
+  expect(reopenActionResponse.status()).toBe(200)
+  expect(((await reopenActionResponse.json()) as { lifecycle: string }).lifecycle).toBe('in_progress')
+
+  const secondCompleteResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/action-items/${createdAction.id}/transitions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '完成', exact: true }).click()
+  const secondCompleteResponse = await secondCompleteResponsePromise
+  expect(secondCompleteResponse.status()).toBe(200)
+  expect(((await secondCompleteResponse.json()) as { lifecycle: string }).lifecycle).toBe('done')
+
+  await page.getByRole('link', { name: '返回 Finding' }).click()
+  await page.getByLabel('整改完成说明').fill('Second correction completed after reviewer rejection')
+  const secondSubmitResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/rectification-submissions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '提交验证' }).click()
+  const secondSubmitResponse = await secondSubmitResponsePromise
+  expect(secondSubmitResponse.status()).toBe(201)
+  const secondSubmitted = (await secondSubmitResponse.json()) as { finding: { lifecycle: string } }
+  expect(secondSubmitted.finding.lifecycle).toBe('verifying')
+  await submitLogout(page)
+
+  await loginFromWorkbench(
+    page,
+    JOURNEY_REVIEWER_LOGIN_NAME,
+    JOURNEY_REVIEWER_PASSWORD,
+    JOURNEY_REVIEWER_DISPLAY_NAME,
+  )
+  await expect(page.getByRole('link', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
+  await page.getByRole('link', { name: JOURNEY_FINDING_TITLE }).click()
+  const approveResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/verification-submissions` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Approve' }).click()
+  const approveResponse = await approveResponsePromise
+  expect(approveResponse.status()).toBe(201)
+  const approved = (await approveResponse.json()) as { finding: { lifecycle: string } }
+  expect(approved.finding.lifecycle).toBe('closed')
+  await expect(page.getByRole('button', { name: '重新打开' })).toBeVisible()
+  await submitLogout(page)
+
+  await loginFromWorkbench(
+    page,
+    JOURNEY_LEAD_LOGIN_NAME,
+    JOURNEY_LEAD_PASSWORD,
+    JOURNEY_LEAD_DISPLAY_NAME,
+  )
+  await page.getByRole('navigation', { name: '主要导航' }).getByRole('link', { name: '管理视图' }).click()
+  await expect(page.getByRole('heading', { name: '管理视图' })).toBeVisible()
+  const journeyRow = page.getByRole('listitem').filter({ hasText: JOURNEY_CASE_TITLE })
+  await expect(journeyRow).toBeVisible()
+  await journeyRow.getByRole('link', { name: '查看管理进度' }).click()
+  await expect(page.getByRole('heading', { name: JOURNEY_CASE_TITLE })).toBeVisible()
+  const findingClosedFact = page.locator('dt', { hasText: 'Finding closed' }).locator('..')
+  await expect(findingClosedFact.locator('dd')).toHaveText('1')
+  await expect(page.getByRole('link', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
+  await expectNoBrowserAuthMaterial(page)
+  await submitLogout(page)
 })
