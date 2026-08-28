@@ -84,9 +84,7 @@ async function expectShellAtViewport(
   expect(page.viewportSize()).toEqual(viewport)
   await expect(page.getByRole('navigation', { name: '主要导航' })).toBeVisible()
   await expect(page.getByText(displayName)).toBeVisible()
-  await expect(
-    page.getByText('当前仅提供产品结构入口；本页没有读取、推断或缓存业务领域状态。'),
-  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
 }
 
 async function expectNoBrowserAuthMaterial(page: Page) {
