@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from easyaudit_next.api.review_findings import review_findings_router
 from easyaudit_next.api.review_planning import review_planning_router
 from easyaudit_next.api.review_rectification import review_rectification_router
+from easyaudit_next.api.review_resource_queries import review_resource_query_router
 from easyaudit_next.api.review_verification import review_verification_router
 from easyaudit_next.api.router import api_router
 from easyaudit_next.collaboration.api import collaboration_router
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     app.include_router(review_findings_router)
     app.include_router(review_rectification_router)
     app.include_router(review_verification_router)
+    app.include_router(review_resource_query_router)
     app.include_router(workbench_router)
     app.include_router(notification_router)
     app.include_router(management_router)
