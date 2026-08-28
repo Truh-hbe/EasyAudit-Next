@@ -291,13 +291,7 @@ visible total unchanged
 Q100 does not grow per hidden Case/Finding
 ```
 
-The test must assert a fixed small constant bound, not merely inspect logs. A reasonable acceptance form is:
-
-```text
-Q100 <= Q5 + 2
-```
-
-or a stricter equivalent justified by the implementation.
+The test must assert a fixed implementation-declared constant bound rather than merely inspect logs. The bound must be independent of the number of hidden Cases/Findings and tight enough to reject per-resource traversal. For example, an implementation whose batched query shape is constant may assert `Q100 == Q5`; an implementation with one bounded setup/chunk query may assert a correspondingly small fixed delta.
 
 A query count that grows proportionally with hidden Case/Finding count fails the Gate even if response membership is correct.
 
@@ -711,8 +705,8 @@ new frontend auth model
 M3.5.2 cannot pass Final Review unless all are true:
 
 ```text
-Workbench comes directly from M3.1                         ✅
-no frontend work-membership reconstruction                 ✅
+Workbench comes directly from M3.1                          ✅
+no frontend work-membership reconstruction                  ✅
 Workbench links re-enter current resource auth              ✅
 ReviewCase collection is bounded/paginated server-side      ✅
 collection authorization precedes pagination                ✅
@@ -724,18 +718,18 @@ ReviewCase generic truth comes from server                  ✅
 Scenario adapter lookup exact by key + version              ✅
 unknown Scenario UI version fails closed                    ✅
 Finding rows remain original read resources                 ✅
-Case member names are Case-scoped server enrichment          ✅
+Case member names are Case-scoped server enrichment         ✅
 no ordinary-user org directory/admin API shortcut           ✅
-management progress remains optional/narrow-authorized       ✅
+management progress remains optional/narrow-authorized      ✅
 no client overdue/progress fallback                         ✅
-Case Activity API is read-only + Case-subject-only           ✅
-Activity DTO excludes generic metadata JSON                  ✅
+Case Activity API is read-only + Case-subject-only          ✅
+Activity DTO excludes generic metadata JSON                 ✅
 no hidden child Activity leakage                            ✅
 no Case mutation UI/role matrix in this slice               ✅
-shared same-origin API/session contract preserved            ✅
-protected business data clears across Session/user           ✅
-real PostgreSQL/FastAPI browser Acceptance                   ✅
-fixed-base / fixed-head-tree CI green                        ✅
+shared same-origin API/session contract preserved           ✅
+protected business data clears across Session/user          ✅
+real PostgreSQL/FastAPI browser Acceptance                  ✅
+fixed-base / fixed-head-tree CI green                       ✅
 ```
 
 M3.5.3 remains locked until M3.5.2 passes Final Review and is merged.
