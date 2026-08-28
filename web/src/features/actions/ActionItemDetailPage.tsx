@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
@@ -70,6 +70,9 @@ function formatBytes(size: number): string {
 
 export function ActionItemDetailPage() {
   const { actionItemId } = useParams()
+  const currentActionItemIdRef = useRef(actionItemId)
+  currentActionItemIdRef.current = actionItemId
+  const candidateSearchSequenceRef = useRef(0)
   const [revision, setRevision] = useState(0)
   const [primary, setPrimary] = useState<PrimaryState>({ status: 'loading', actionItemId: undefined })
   const [finding, setFinding] = useState<ChildState<FindingResponse>>(idleChild)
@@ -85,6 +88,12 @@ export function ActionItemDetailPage() {
   const [commandMessage, setCommandMessage] = useState<string | null>(null)
 
   useEffect(() => {
+    candidateSearchSequenceRef.current += 1
+    setCandidateState({ status: 'idle' })
+    setCandidateQuery('')
+    setAssigneeRole('')
+    setTransitionReason('')
+    setCommandBusy(false)
     setCommandMessage(null)
   }, [actionItemId])
 
@@ -202,20 +211,25 @@ export function ActionItemDetailPage() {
   }, [authorizedActionId, primary])
 
   async function runCommand(label: string, command: () => Promise<unknown>) {
+    const commandActionItemId = actionItemId
     setCommandBusy(true)
     setCommandMessage(null)
     try {
       await command()
+      if (currentActionItemIdRef.current !== commandActionItemId) return
       setCommandMessage(`${label}已由服务器确认。`)
       setCandidateState({ status: 'idle' })
       setRevision((value) => value + 1)
     } catch (error) {
+      if (currentActionItemIdRef.current !== commandActionItemId) return
       setCommandMessage(errorMessage(error, `${label}失败`))
       if (error instanceof ApiError && [403, 409, 422].includes(error.status)) {
         setRevision((value) => value + 1)
       }
     } finally {
-      setCommandBusy(false)
+      if (currentActionItemIdRef.current === commandActionItemId) {
+        setCommandBusy(false)
+      }
     }
   }
 
@@ -254,6 +268,9 @@ export function ActionItemDetailPage() {
       setCandidateState({ status: 'error', message: '候选搜索至少输入 2 个字符。' })
       return
     }
+    const searchSequence = candidateSearchSequenceRef.current + 1
+    candidateSearchSequenceRef.current = searchSequence
+    const searchActionItemId = actionItemId
     setCandidateState({ status: 'loading' })
     try {
       const data = await searchActionAssigneeCandidates(
@@ -262,8 +279,16 @@ export function ActionItemDetailPage() {
         assigneeOption.actorKind,
         candidateQuery,
       )
+      if (
+        currentActionItemIdRef.current !== searchActionItemId ||
+        candidateSearchSequenceRef.current !== searchSequence
+      ) return
       setCandidateState({ status: 'ready', data })
     } catch (error) {
+      if (
+        currentActionItemIdRef.current !== searchActionItemId ||
+        candidateSearchSequenceRef.current !== searchSequence
+      ) return
       setCandidateState({ status: 'error', message: errorMessage(error, '候选搜索失败') })
     }
   }
@@ -326,6 +351,7 @@ export function ActionItemDetailPage() {
                   value={assigneeOption?.role ?? ''}
                   onChange={(event) => {
                     setAssigneeRole(event.target.value)
+                    candidateSearchSequenceRef.current += 1
                     setCandidateState({ status: 'idle' })
                   }}
                   disabled={commandBusy}
