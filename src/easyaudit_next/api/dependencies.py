@@ -36,7 +36,12 @@ def get_database_session() -> Iterator[Session]:
         session.close()
 
 
-DatabaseSession = Annotated[Session, Depends(get_database_session)]
+# Request success must not be observable before the transaction it represents is committed.
+# In particular, a session cookie may only leave the server after its AuthSession row exists.
+DatabaseSession = Annotated[
+    Session,
+    Depends(get_database_session, scope="function"),
+]
 
 
 def get_authentication_service(
@@ -84,7 +89,12 @@ def get_current_identity(
         auth.touch(auth_session)
 
 
-AuthenticatedIdentity = Annotated[CurrentIdentity, Depends(get_current_identity)]
+# CurrentIdentity reuses DatabaseSession in its exit path to touch the session. Keep both
+# dependency lifetimes function-scoped so touch + commit finish before the response is sent.
+AuthenticatedIdentity = Annotated[
+    CurrentIdentity,
+    Depends(get_current_identity, scope="function"),
+]
 
 
 def require_business_identity(
