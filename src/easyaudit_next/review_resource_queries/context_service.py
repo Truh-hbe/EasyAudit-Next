@@ -382,7 +382,7 @@ class ReviewResourceContextQueryService:
         )
         pattern = f"%{escaped}%"
         if actor_kind is ActorKind.USER:
-            records = tuple(
+            user_records = tuple(
                 self._session.scalars(
                     select(UserRecord)
                     .where(
@@ -400,9 +400,9 @@ class ReviewResourceContextQueryService:
                     actor_id=record.id,
                     display_name=record.display_name,
                 )
-                for record in records
+                for record in user_records
             )
-        records = tuple(
+        department_records = tuple(
             self._session.scalars(
                 select(DepartmentRecord)
                 .where(
@@ -420,7 +420,7 @@ class ReviewResourceContextQueryService:
                 actor_id=record.id,
                 display_name=record.name,
             )
-            for record in records
+            for record in department_records
         )
 
     @staticmethod
