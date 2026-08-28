@@ -310,16 +310,18 @@ limit:  1..100
 offset: >= 0
 ```
 
-The Product collection response must expose an envelope equivalent to:
+The Product collection response must expose a read envelope equivalent to:
 
 ```text
-items
- total
- limit
- offset
+items: authorized ReviewCase summaries/resources for this page
+total: authorized count before page slicing
+limit: applied page size
+offset: applied authorized-result offset
 ```
 
-where `total` is the count **after current-user authorization** and after any server filters that may later be explicitly added.
+This envelope is read-contract presentation only. It does not create a Product `ReviewCase` entity or replace the existing ReviewCase business resource. Each `items[]` entry preserves the original ReviewCase identity and server-owned fields needed by the collection.
+
+`total` is computed **after current-user authorization** and after any server filters that may later be explicitly added.
 
 The default collection order is deterministic:
 
