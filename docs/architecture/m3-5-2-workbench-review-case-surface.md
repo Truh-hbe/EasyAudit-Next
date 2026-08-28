@@ -35,18 +35,18 @@ M3.5.2 replaces the M3.5.1 placeholders for:
 /review-cases/:caseId
 ```
 
-with a real personal Workbench and a real ReviewCase context surface while preserving one authoritative business truth:
+with a real personal Workbench and ReviewCase context surface while preserving one authoritative business truth:
 
 > **Workbench membership comes only from M3.1; ReviewCase lifecycle and visibility come only from Review Core/Scenario authorization; progress and overdue facts come only from approved server projections; React owns presentation, not business derivation.**
 
-The main user loop for this slice is:
+Conceptually:
 
 ```text
 authenticated user
       ↓
 GET /api/v1/me/workbench
       ↓
-see server-projected personal responsibilities / time risk
+server-projected personal work
       ↓
 open original ReviewCase
       ↓
@@ -71,7 +71,7 @@ M3.5.2 includes only:
 Workbench presentation
 ReviewCase collection presentation
 ReviewCase detail/context presentation
-Case members read presentation
+Case member read presentation + narrow display-identity enrichment
 Case Finding summary/list presentation
 exact Scenario UI registry for Case scenario_data
 optional server-authorized Case management progress summary
@@ -96,8 +96,9 @@ new WorkItem/Todo entity
 new management aggregate
 new Scenario backend semantics
 migration/schema change
-Case lifecycle mutations unless separately approved by a later Gate
-Case creation/member mutation forms unless separately approved
+Case lifecycle mutations
+Case creation/member mutation forms
+organization-wide user directory for ordinary users
 full child-resource Activity timeline
 ```
 
@@ -125,118 +126,77 @@ overdue.actions
 as_of
 ```
 
-M3.5.2 must consume this response directly.
+M3.5.2 consumes this response directly.
 
 Forbidden implementation shape:
 
 ```text
-GET /review-cases
-GET /findings
-GET /action-items
+GET broad Case/Finding/Action collections
         ↓
 TypeScript role/lifecycle/deadline rules
         ↓
 client-generated personal task list
 ```
 
-No frontend/backend entity equivalent to:
-
-```text
-WorkItem
-TodoTask
-InboxTask
-AttentionTask
-```
-
-may be introduced.
+No frontend/backend entity equivalent to `WorkItem`, `TodoTask`, `InboxTask`, or `AttentionTask` may be introduced.
 
 ### Workbench presentation groups
 
-The first UI may present the exact server categories with action-oriented labels such as:
+The UI may give the exact server categories action-oriented labels, for example:
 
 ```text
-待我验证
-→ verification_queue
-
-Finding 责任
-→ finding_responsibilities
-
-Action 责任
-→ action_responsibilities
-
-已逾期
-→ overdue
-
-即将到期
-→ due_soon
-
-我参与的审查
-→ case_responsibilities
+待我验证      → verification_queue
+Finding 责任  → finding_responsibilities
+Action 责任   → action_responsibilities
+已逾期        → overdue
+即将到期      → due_soon
+我参与的审查  → case_responsibilities
 ```
 
-The UI may reorder sections, format timestamps, collapse empty sections, or provide presentation-only filtering/sorting.
-
-It must not change membership by interpreting role strings or lifecycle enums.
+Presentation-only section ordering, timestamp formatting, collapsing empty sections, sorting, and filtering are allowed. Membership must not change because React interpreted a role or lifecycle.
 
 ### Original-resource navigation
 
 Workbench items are pointers only:
 
 ```text
-Case item
-→ /review-cases/:caseId
-
-Finding item
-→ /findings/:findingId
-
-Action item
-→ /action-items/:actionItemId
+Case    → /review-cases/:caseId
+Finding → /findings/:findingId
+Action  → /action-items/:actionItemId
 ```
 
-During M3.5.2, Finding/Action routes may remain honest M3.5.3 placeholders after navigation. They must not create a second Workbench detail domain.
+Finding/Action destinations may remain honest M3.5.3 placeholders during this slice. No Workbench-specific detail aggregate is created.
 
 ## ReviewCase collection surface
 
-`/review-cases` consumes the existing authorized:
+`/review-cases` consumes:
 
 ```http
 GET /api/v1/review-cases
 ```
 
-The UI renders the returned ReviewCase resources; it does not broaden visibility using Workbench membership, platform role, cached navigation state, or management scope.
+and renders only server-returned resources. Workbench membership, platform role, cached navigation state, or management scope must not broaden the collection.
 
-The first collection may display:
-
-```text
-title
-lifecycle
-scenario_key + scenario_version presentation
-planned_start_at / planned_end_at
-```
-
-and navigate to `/review-cases/:caseId`.
-
-No client-computed canonical progress percentage is allowed.
+The first collection may display returned title, lifecycle, exact Scenario key/version, and planned timing. No client-computed canonical progress percentage is allowed.
 
 ## ReviewCase detail is a context container
 
-The detail page must begin with the ordinary business resource contract:
+The detail page begins with:
 
 ```http
 GET /api/v1/review-cases/{case_id}
 ```
 
-A successful Case GET establishes only that the current server authorization allows this Case to be rendered. It does not imply management authority or mutation authority.
+A successful Case GET establishes only current Case visibility. It does not imply management authority or mutation authority.
 
 Recommended first structure:
 
 ```text
 Case Header
-├── title
-├── lifecycle
+├── title / lifecycle
 ├── exact Scenario version
 ├── plan timing
-└── persisted Case timestamps
+└── persisted timestamps
 
 Sections
 ├── 概览
@@ -245,9 +205,7 @@ Sections
 └── Activity
 ```
 
-### Generic Case facts
-
-Generic Case fields come directly from `ReviewCaseResponse`:
+Generic Case fields come directly from `ReviewCaseResponse`, including:
 
 ```text
 id
@@ -265,7 +223,7 @@ created_at
 scenario_data
 ```
 
-The UI may format values but must not derive a competing lifecycle or deadline classification.
+React may format values but must not derive a competing lifecycle or deadline classification.
 
 ## Findings section on Case page
 
@@ -275,40 +233,65 @@ M3.5.2 may consume:
 GET /api/v1/review-cases/{case_id}/findings
 ```
 
-only to show original Finding rows under the Case.
+only to show original Finding rows under the Case. Rows may render returned title, severity, lifecycle, raised_at and link to `/findings/:findingId`.
 
-Each row may show returned fields such as:
+This slice does not implement Finding transitions, participants, rectification, verification, Action work, or Finding scenario editing.
 
-```text
-title
-severity
-lifecycle
-raised_at
-```
+The page must not recompute canonical Case closure/progress totals from the Finding list when approved server projections already own those facts.
 
-and link to `/findings/:findingId`.
+## Members section and display identity prerequisite
 
-M3.5.2 must not implement Finding transitions, participants, rectification, verification, Action work, or Finding scenario editing. Those are M3.5.3 scope.
-
-A Case page must not recompute canonical closure/progress totals from this list when an approved server projection already owns those facts.
-
-## Members section
-
-M3.5.2 consumes:
+The existing member relationship endpoint is:
 
 ```http
 GET /api/v1/review-cases/{case_id}/members
 ```
 
-as an original server resource list.
+Its baseline DTO contains relationship facts such as:
 
-The first surface is read-only. Role keys may be rendered as returned relationship facts, but React must not translate them into authorization decisions such as:
+```text
+case_id
+user_id
+role_key
+joined_at
+```
+
+but no human-readable user identity. The only existing general user-list/detail API is system-admin-only and must not be reused by ordinary Product Surface users.
+
+M3.5.2 may therefore add one narrow **Case-scoped display identity enrichment** to the authorized member read contract.
+
+Required semantics:
+
+```text
+current user passes normal Case visibility
+        ↓
+server obtains CaseMember rows for that Case
+        ↓
+server resolves display identity only for those returned member user_ids
+        ↓
+member view includes display_name
+```
+
+This enrichment must not:
+
+```text
+open an organization-wide ordinary-user directory
+call /api/v1/admin/users from React
+make User identity a new Case authorization source
+change CaseMember persistence
+change role semantics
+add member mutation behavior
+```
+
+The authoritative relationship remains `CaseMember`; `display_name` is only presentation identity for an already-returned member.
+
+An additive `display_name` on the existing member response or an equivalent Case-scoped read DTO is acceptable. No migration is expected.
+
+React may display role keys as relationship facts, but must not translate them into authority such as:
 
 ```ts
 role_key === "lead" → canManage
 ```
-
-Member mutation is outside this Gate.
 
 ## Management progress is optional and server-authorized
 
@@ -318,9 +301,9 @@ M3.3 exposes:
 GET /api/v1/management/review-cases/{case_id}/progress
 ```
 
-but its authorization scope is intentionally narrower than ordinary `view_case`: the caller must satisfy exact historical Scenario management authorization, including the existing `manage_case_members` capability.
+Its authorization scope is intentionally narrower than ordinary `view_case`: the caller must satisfy exact historical Scenario management authorization, including existing `manage_case_members` capability.
 
-Therefore M3.5.2 must never make this endpoint a prerequisite for rendering an otherwise visible Case.
+Therefore the endpoint is never a prerequisite for rendering an otherwise visible Case.
 
 Correct composition:
 
@@ -333,44 +316,31 @@ optional management progress request
     ├── 200
     │    → render server-owned factual progress/deadline summary
     └── non-disclosing 404
-         → omit / mark management summary unavailable
+         → omit / mark summary unavailable
          → Case remains visible
 ```
 
-Forbidden behavior:
+Forbidden:
 
 ```text
 management progress 404
-→ infer current user is unauthorized for Case
 → hide Case
 ```
 
-or:
+and:
 
 ```text
 management progress unavailable
-→ recompute Finding/Action overdue and progress in TypeScript
+→ recompute Finding/Action progress or overdue in TypeScript
 ```
 
-### Server-owned progress facts
-
-When the optional endpoint succeeds, React may render only returned facts, including:
-
-```text
-Case deadline_bucket
-Finding lifecycle counts
-Action lifecycle counts
-Action overdue count
-Action due-soon count
-```
-
-No `overallProgress` percentage or alternate overdue formula is introduced.
+When available, React may render returned deadline_bucket, Finding lifecycle counts, Action lifecycle counts, overdue counts and due-soon counts. No `overallProgress` or alternate overdue formula is introduced.
 
 ## Scenario UI registry becomes executable in M3.5.2
 
-M3.5.2 is the first slice that renders Case `scenario_data`; therefore the M3.5 exact-version Scenario UI boundary must now exist in code.
+M3.5.2 is the first slice rendering Case `scenario_data`, so the M3.5 exact-version Scenario UI boundary must now exist in code.
 
-Conceptual structure:
+Conceptually:
 
 ```text
 ScenarioUiRegistry
@@ -381,7 +351,7 @@ process_review@1
 └── CaseScenarioSection
 ```
 
-The physical paths may differ, but generic Workbench/Case code must not own distributed Scenario branching.
+Generic Workbench/Case code must not contain distributed Scenario business branches.
 
 ### process_review@1 Case presentation
 
@@ -392,39 +362,21 @@ area_code
 review_type
 ```
 
-with user-facing labels/grouping.
-
-This adapter is presentation-only. It must not implement:
-
-```text
-canTransitionCase()
-canManageMembers()
-isCaseOverdue()
-allowedActions()
-reminder recipients
-```
+It is presentation-only and must not implement authorization, workflow legality, overdue, management scope, or reminder recipient logic.
 
 ### Exact-version fail closed
-
-Registry lookup is exact:
 
 ```text
 (process_review, 1) → ProcessReviewV1 adapter
 ```
 
-A resource such as:
+A resource such as `process_review@99` must not resolve to v1, latest, nearest, key-only, or another registered adapter.
 
-```text
-process_review@99
-```
-
-must not resolve to `process_review@1`, latest, nearest, key-only, or a default Scenario-specific renderer.
-
-Expected behavior:
+Expected:
 
 ```text
 generic Case fields
-→ render when server Case authorization succeeds
+→ may render after server Case authorization
 
 Scenario-specific section
 → explicit unsupported/unavailable exact-version state
@@ -433,152 +385,134 @@ Scenario-specific editing
 → unavailable
 ```
 
-M3.5.2 does not require a low-code schema engine.
+No low-code schema engine is required.
 
 ## Activity read prerequisite
 
-The current baseline persists append-only Review `Activity` facts but exposes no HTTP read endpoint for the Product Surface.
+The baseline persists append-only Review `Activity` facts and supports single-Activity persistence lookup, but exposes no Product Surface HTTP list/read route.
 
-M3.5.2 may therefore add exactly one narrow read-only prerequisite:
+M3.5.2 may add exactly one narrow read-only prerequisite:
 
 ```http
 GET /api/v1/review-cases/{case_id}/activities
 ```
 
-Its purpose is only to render ReviewCase-subject Activity history on the Case page.
+Its purpose is only to render **ReviewCase-subject Activity** history on the Case page.
 
 ### Authorization order
 
-The Activity endpoint must first establish normal current ReviewCase visibility using the same business authorization semantics as the ordinary Case read.
-
-Conceptually:
+The endpoint first establishes normal current ReviewCase visibility using the same business authorization semantics as ordinary Case read:
 
 ```text
-current BusinessIdentity
-        ↓
-normal get/view ReviewCase authorization
-        ↓
-only if authorized:
-query Activity rows
+BusinessIdentity
+→ normal get/view ReviewCase authorization
+→ only then query Case-subject Activity rows
 ```
 
-Known foreign/unauthorized Case IDs must preserve the established non-disclosing behavior.
+Known foreign or unauthorized Case IDs preserve established non-disclosing behavior.
 
 ### Subject boundary
 
-M3.5.2 Activity read scope is deliberately restricted to:
+Returned rows are restricted to:
 
 ```text
-Activity.organization_id = current organization
-Activity.subject_type = review_case
-Activity.review_case_id / subject_id = requested case
+organization_id = current organization
+review_case_id = requested case
+finding_id IS NULL
+action_item_id IS NULL
+submission_id IS NULL
 ```
 
-It must not aggregate Finding-, ActionItem-, or Submission-subject activities into a Case-wide timeline in this slice.
-
-Reason: child visibility is target-specific and future Scenarios may allow Case access while hiding child resources. A broad timeline could leak hidden Finding/Action facts.
+The endpoint must not aggregate Finding-, ActionItem-, or Submission-subject Activity into a Case-wide timeline in this slice. Child visibility is target-specific; broad timeline aggregation could leak hidden resources in future Scenario versions.
 
 Child Activity presentation belongs with the corresponding M3.5.3 resource surface and authorization.
 
 ### Activity DTO
 
-The Product Surface may consume a thin wire representation of existing immutable facts, for example:
+The first M3.5.2 Activity DTO is deliberately metadata-free:
 
 ```text
 id
-subject_type
-subject_id
+subject_type = review_case
+subject_id = case_id
 event_type
 actor_id
 occurred_at
-payload / metadata only if already safe for this subject
 ```
+
+`Activity.metadata` is not required for M3.5.2 and must not be exposed merely for frontend convenience. A later need to surface event metadata requires explicit field-by-field privacy review.
 
 The implementation must not invent a second event taxonomy or transform Activity into Notification truth.
 
-Ordering must be deterministic, newest-first or oldest-first with stable Activity ID tie-breaker; the chosen order is presentation/read-contract semantics only.
-
-No Activity mutation endpoint is added.
+Ordering is deterministic by `occurred_at` plus stable Activity ID tie-breaker. No Activity mutation endpoint is added.
 
 ### Implementation placement
 
-The read path should be downstream/read-oriented rather than expanding mutation semantics for frontend convenience.
+The list/read path should be downstream/read-oriented. A small query service/API may read `ActivityRecord` directly after normal Case authorization.
 
-Acceptable implementation shapes include a small dedicated query service/API that reads `ActivityRecord` directly after normal Case authorization.
-
-This Gate does not require adding generic management/query methods to `ReviewCoreRepository` merely to serve React.
+M3.5.2 does not require expanding `ReviewCoreRepository` into a generic timeline/query repository merely to serve React.
 
 No migration is expected because Activity already exists.
 
 ## Case mutations are not part of M3.5.2
 
-The baseline has existing Case command endpoints, but the Product Surface does not yet have a server-owned affordance projection such as typed `allowed_actions`.
+The backend already has Case command endpoints, but the Product Surface has no server-owned affordance projection such as typed `allowed_actions`.
 
-M3.5.2 therefore deliberately remains a read/navigation slice.
+M3.5.2 therefore remains read/navigation oriented and must not hard-code Process Review lifecycle/role matrices in React just to choose transition buttons.
 
-It must not hard-code Process Review lifecycle/role matrices in React merely to choose Case transition buttons.
+Case lifecycle mutation, Case creation, and Case member mutation require a later explicitly reviewed Product Surface increment if exposed.
 
-Case lifecycle mutation, Case creation, and Case member mutation require a later explicitly reviewed Product Surface increment if they are to be exposed.
-
-This is a scope boundary, not a change to backend capabilities.
+This is a Product Surface scope boundary, not a change to backend capabilities.
 
 ## Shared API boundary
 
-All requests continue through the M3.5.1 shared API transport.
+All requests continue through the M3.5.1 shared API transport. Feature code must not scatter raw `fetch()` calls.
 
-Feature code must not scatter raw `fetch()` calls.
-
-M3.5.2 may add direct wire DTOs for:
+M3.5.2 may add wire DTOs for:
 
 ```text
 WorkbenchResponse
 ReviewCaseResponse
-CaseMemberResponse
+CaseMemberViewResponse
 FindingResponse
 ManagementCaseProgressResponse
 ReviewCaseActivityResponse
 ```
 
-These are transport representations only.
-
-No TypeScript domain model may redefine lifecycle, authorization, deadline, or work membership.
+These are transport representations only, not a second TypeScript business domain.
 
 ## Data freshness and cache boundary
 
-M3.5.2 may use a small request/query abstraction, but server data remains authoritative.
+M3.5.2 may use a small query abstraction/cache, but server data remains authoritative.
 
-If a query cache is introduced:
+If a cache is introduced:
 
-- it is cache, not business truth;
-- protected resource caches must clear on logout/session expiry/user change;
-- successful future mutations must invalidate affected queries;
-- a cached Workbench item never grants access to a Case;
-- opening an item always re-enters the original resource authorization.
-
-No persistent protected business cache in localStorage/sessionStorage.
+- it is cache, not authorization or business truth;
+- protected entries clear/become inaccessible on logout, Session expiry, and user change;
+- cached Workbench membership never grants Case access;
+- opening a Workbench link always re-enters current resource authorization;
+- no protected business cache persists in localStorage/sessionStorage.
 
 ## Current authorization after Workbench navigation
 
-Historical/cached Workbench visibility does not grant current resource access.
-
-Required shape:
+Required counterexample:
 
 ```text
 T0 User has relationship
 → Workbench includes Case
-→ relationship later changes at server
-→ user opens old Workbench link
+
+T1 relationship changes on server
+
+T2 user opens old Workbench link
 → normal GET /review-cases/{id}
 → server current authorization decides
 ```
 
-If access is now refused/non-disclosing, the Case page must not reveal title, lifecycle, scenario_data, members, Findings, or progress from stale Workbench data.
-
-The UI may show a safe unavailable/not-found state and refresh/remove stale Workbench presentation.
+If access is now refused/non-disclosing, the Case page must not reveal title, lifecycle, scenario_data, member identities, Findings, progress, or Activity from stale Workbench data.
 
 ## Loading / empty / error behavior
 
-Workbench and Case pages must have explicit states for:
+Workbench and Case pages must explicitly support:
 
 ```text
 loading
@@ -590,20 +524,13 @@ optional progress unavailable
 unsupported Scenario UI version
 ```
 
-A rejected child/optional request must not cause unrelated already-authorized sections to fabricate fallback truth.
+A failed subordinate/optional request must not cause unrelated sections to fabricate fallback truth.
 
 ## Responsive and accessibility baseline
 
-M3.5.5 owns final Product responsive Acceptance, but M3.5.2 must not regress the M3.5.1 responsive shell.
+M3.5.5 owns final Product responsive Acceptance, but M3.5.2 must not regress M3.5.1.
 
-At minimum Workbench and ReviewCase viewing must remain usable at:
-
-```text
-common desktop/laptop width
-narrow mobile browser width
-```
-
-Core links/sections must remain keyboard reachable, status meaning must include text rather than color alone, and loading/error/empty states must be readable.
+Workbench and ReviewCase viewing must remain usable at common desktop/laptop and narrow mobile widths. Core links/sections must be keyboard reachable, statuses must have text meaning beyond color, and loading/error/empty states must be readable.
 
 ## Implementation increments after Gate PASS
 
@@ -614,14 +541,12 @@ Recommended executable sequence:
 2. Workbench real server projection surface
 3. ReviewCase collection + generic detail shell
 4. exact Scenario UI registry + process_review@1 Case adapter
-5. members + Finding list composition
+5. member display-identity enrichment + Findings composition
 6. narrow ReviewCase Activity read prerequisite + Activity section
 7. optional server-authorized management progress summary
 8. unit/component + real browser Acceptance
 9. exact-head CI + Final Review
 ```
-
-The implementation PR may combine commits differently, but each semantic boundary must remain reviewable.
 
 ## No M3.5.3 / M3.5.4 leakage
 
@@ -642,4 +567,4 @@ Navigation to later resource routes may exist, but content remains an honest fut
 
 ## End state
 
-M3.5.2 is complete when an authenticated user can use the actual M3.1 Workbench projection, navigate into a currently authorized ReviewCase, read generic Case facts, exact-version Scenario presentation, members, visible Findings, Case-subject Activity history, and any optional management progress the server currently authorizes—without React reconstructing work membership, lifecycle, deadline, progress, management scope, or authorization.
+M3.5.2 is complete when an authenticated user can use the actual M3.1 Workbench projection, navigate into a currently authorized ReviewCase, read generic Case facts, exact-version Scenario presentation, human-readable Case member identities inside the authorized Case scope, visible Findings, metadata-free Case-subject Activity history, and any optional management progress the server currently authorizes—without React reconstructing work membership, lifecycle, deadline, progress, management scope, authorization, or organization user-directory access.
