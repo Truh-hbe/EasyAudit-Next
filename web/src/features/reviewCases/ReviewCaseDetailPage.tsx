@@ -18,6 +18,7 @@ import type {
 } from '../../api/product'
 import { formatDateTime, lifecycleText } from '../../product/format'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
+import { FindingCreatePanel } from '../findings/FindingCreatePanel'
 
 type PrimaryState =
   | { status: 'loading'; caseId: string | undefined }
@@ -333,6 +334,7 @@ export function ReviewCaseDetailPage() {
       )}
 
       <ManagementProgressSection state={managementState} />
+      <FindingCreatePanel reviewCase={reviewCase} />
       <FindingSection state={findingState} />
       <MemberSection state={memberState} />
       <ActivitySection state={activityState} />
