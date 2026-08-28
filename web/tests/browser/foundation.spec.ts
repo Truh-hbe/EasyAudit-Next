@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-const anonymousUser = {
+const user = {
   id: '11111111-1111-1111-1111-111111111111',
   organization_id: '22222222-2222-2222-2222-222222222222',
   display_name: 'Credential User',
@@ -46,31 +46,31 @@ test('login 401 stays an ordinary credential error', async ({ page }) => {
 })
 
 test('authenticated password requirement wins over intended business route', async ({ page }) => {
-  let meCalls = 0
-  await page.route('**/api/v1/me', (route) => {
-    meCalls += 1
-    if (meCalls === 1) {
-      return route.fulfill({ status: 401, contentType: 'application/json', body: '{"detail":"Authentication required"}' })
-    }
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ ...anonymousUser, must_change_password: true }),
-    })
-  })
-  await page.route('**/api/v1/auth/login', (route) =>
+  let loggedIn = false
+  await page.route('**/api/v1/me', (route) =>
     route.fulfill({
+      status: loggedIn ? 200 : 401,
+      contentType: 'application/json',
+      body: loggedIn
+        ? JSON.stringify({ ...user, must_change_password: true })
+        : '{"detail":"Authentication required"}',
+    }),
+  )
+  await page.route('**/api/v1/auth/login', async (route) => {
+    loggedIn = true
+    await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        user: anonymousUser,
+        user,
         session_id: '33333333-3333-3333-3333-333333333333',
         expires_at: '2026-08-29T00:00:00Z',
       }),
-    }),
-  )
+    })
+  })
 
   await page.goto('/review-cases/case-1')
+  await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
   await page.getByLabel('登录名').fill('credential-user')
   await page.getByLabel('密码').fill('initial-password')
   await page.getByRole('button', { name: '登录' }).click()
@@ -81,23 +81,23 @@ test('authenticated password requirement wins over intended business route', asy
 })
 
 test('password remediation re-resolves server posture before resuming intended route', async ({ page }) => {
-  let meCalls = 0
-  await page.route('**/api/v1/me', (route) => {
-    meCalls += 1
-    return route.fulfill({
+  let passwordChanged = false
+  await page.route('**/api/v1/me/password', async (route) => {
+    passwordChanged = true
+    await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        ...anonymousUser,
-        must_change_password: meCalls === 1,
-      }),
+      body: JSON.stringify({ ...user, must_change_password: false }),
     })
   })
-  await page.route('**/api/v1/me/password', (route) =>
+  await page.route('**/api/v1/me', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ...anonymousUser, must_change_password: false }),
+      body: JSON.stringify({
+        ...user,
+        must_change_password: !passwordChanged,
+      }),
     }),
   )
 
@@ -110,5 +110,5 @@ test('password remediation re-resolves server posture before resuming intended r
 
   await expect(page).toHaveURL(/\/review-cases\/case-1$/)
   await expect(page.getByRole('heading', { name: '凭据已就绪' })).toBeVisible()
-  expect(meCalls).toBeGreaterThanOrEqual(2)
+  expect(passwordChanged).toBe(true)
 })
