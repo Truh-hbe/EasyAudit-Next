@@ -41,6 +41,7 @@ It must also preserve M3.1/M3.3 truth ownership:
 Workbench membership = M3.1 server projection
 management scope/progress/overdue = M3.3 server projection
 ReviewCase visibility/lifecycle = Review Core + exact Scenario authorization
+ReviewCase Product collection = bounded read projection over those same facts
 ```
 
 ## No-second-Workbench acceptance
@@ -121,16 +122,194 @@ Activity
 
 A stale Workbench pointer is never a capability token.
 
-## ReviewCase collection acceptance
+## ReviewCase Product collection acceptance
 
-`/review-cases` must consume the existing authorized Case collection endpoint.
+The M3.5.2 `/review-cases` Product Surface must not directly use the baseline organization-wide command-oriented list traversal unchanged.
 
-Tests prove:
+The Product contract is bounded and paginated:
 
-- only server-returned Cases render;
+```http
+GET /api/v1/review-cases?limit=50&offset=0
+```
+
+with paging discipline:
+
+```text
+limit:  1..100, default 50
+offset: >= 0
+```
+
+and a response envelope equivalent to:
+
+```text
+items
+total
+limit
+offset
+```
+
+`total` is the authorized result count before page slicing, and after any explicitly supported server filters.
+
+### Authorization-before-pagination invariant
+
+The executable query must be semantically equivalent to:
+
+```text
+candidate facts
+        ↓
+bulk authorization context
+        ↓
+exact historical
+(scenario_key, scenario_version)
+        ↓
+ScenarioPolicy VIEW_CASE
+        ↓
+authorized results
+        ↓
+stable server order
+        ↓
+offset / limit
+```
+
+The following is forbidden:
+
+```text
+SQL raw candidates
+→ LIMIT/OFFSET
+→ authorization
+```
+
+because hidden rows must never distort page membership or `total`.
+
+### Hidden-candidate pagination counterexample
+
+A PostgreSQL integration test must include ordered candidates equivalent to:
+
+```text
+A / H1 / B / H2 / C
+```
+
+where:
+
+```text
+A, B, C = visible to User U
+H1, H2 = not visible to User U
+```
+
+With `limit=2`, expected authorized paging is:
+
+```text
+page 1: A, B
+page 2: C
+total:  3
+```
+
+not:
+
+```text
+page 1: A
+page 2: B
+```
+
+or any other result polluted by hidden rows occupying raw SQL page slots.
+
+Insert additional hidden candidates before/between visible Cases and repeat. Visible page membership and authorized `total` must remain unchanged apart from explicitly documented stable-order effects of visible rows themselves.
+
+### Stable-order proof
+
+The Product collection must use deterministic persisted ordering. The default contract is:
+
+```text
+created_at DESC
+id DESC
+```
+
+or an implementation-equivalent documented server order with a persisted-ID tie-breaker.
+
+Tests must include equal `created_at` values and prove repeated requests return stable page membership.
+
+### Candidate completeness proof
+
+Candidate discovery is not authority. It may narrow database work only if it is a superset of every Case the exact historical ScenarioPolicy could authorize for the actor.
+
+Tests/source review must reject shortcuts equivalent to:
+
+```text
+role_key == "lead" → visible
+```
+
+or a Process Review-specific role whitelist used as final visibility truth.
+
+At least one fixture must demonstrate that candidate discovery is followed by exact `(scenario_key, scenario_version)` policy authorization rather than role-string inference.
+
+### No organization-wide per-Case traversal
+
+Source review must reject the unchanged baseline collection shape:
+
+```text
+ReviewCoreRepository.list_cases(organization)
+        ↓
+for each Case
+    command-side _authorization_context()
+        ↓
+per-Case/per-Finding repository queries
+```
+
+and any renamed equivalent.
+
+The Product query must bulk-load candidate Cases, exact ScenarioVersion/Scenario facts, and the relationship grants needed for those candidates in bounded query shapes.
+
+Single-resource ReviewCase detail authorization may keep its existing command-oriented implementation; this constraint applies to the high-frequency Product collection algorithm.
+
+### Scale/query-count regression
+
+A PostgreSQL integration test must prove query growth is not linear in unrelated/hidden Case or Finding count.
+
+Required fixture shape:
+
+```text
+Stage A
+User U can see 5 Cases
+record:
+- first page membership
+- total
+- SQL statement/query count Q5
+
+Stage B
+keep the same 5 visible Cases
+add unrelated/hidden Cases until organization has about 100 Cases
+add Findings and FindingParticipants under those hidden Cases
+request the same page again
+record Q100
+```
+
+Required result:
+
+```text
+visible page membership unchanged
+visible total unchanged
+Q100 does not grow per hidden Case/Finding
+```
+
+The test must assert a fixed small constant bound, not merely inspect logs. A reasonable acceptance form is:
+
+```text
+Q100 <= Q5 + 2
+```
+
+or a stricter equivalent justified by the implementation.
+
+A query count that grows proportionally with hidden Case/Finding count fails the Gate even if response membership is correct.
+
+### Collection presentation proof
+
+Frontend/component/browser tests prove:
+
+- React renders only server-returned authorized `items`;
+- page controls use server `total/limit/offset` rather than an unbounded local list;
 - each row links to the original Case;
 - lifecycle/timing comes from server fields;
-- platform role or management scope does not broaden the list; and
+- platform role, Workbench membership, cached navigation state, or management scope does not broaden the list;
 - no frontend canonical percent-complete field is introduced.
 
 `system_admin` without business relationships gets no frontend business bypass.
@@ -398,6 +577,9 @@ Component/browser tests cover:
 Workbench loading
 Workbench empty
 Workbench request failure
+ReviewCase collection loading
+ReviewCase collection empty
+ReviewCase collection request failure
 Case loading
 Case unavailable/not-found
 Scenario unsupported exact version
@@ -411,11 +593,11 @@ A subordinate/optional request failure must surface safely without displaying st
 M3.5.2 business data must participate in the M3.5.1 protected-state boundary:
 
 ```text
-User A loads Workbench / Case A
+User A loads Workbench / ReviewCase collection / Case A
 → logout or Session 401
-→ protected Workbench/Case data disappears
+→ protected Workbench/collection/Case data disappears
 → User B logs in in same browser context
-→ no A Case title, relationships, display names, progress, Activity, or Scenario data appears
+→ no A collection membership, Case title, relationships, display names, progress, Activity, or Scenario data appears
 ```
 
 If a query cache is introduced, this must prove protected entries clear/become inaccessible across users.
@@ -438,22 +620,26 @@ The real-browser fixture should exercise at least:
 
 ```text
 1. authenticated Workbench populated from M3.1 projection
-2. Workbench Case link → real current Case authorization
-3. visible Case generic fields + exact Scenario section
-4. human-readable Case members + visible Findings
-5. manager progress success
-6. visible non-manager progress 404 while Case remains visible
-7. metadata-free Case-subject Activity read
-8. stale Workbench link after relationship loss → current authorization refusal
-9. hard reload re-fetches current Workbench/Case server truth
-10. logout/session boundary removes protected M3.5.2 data
+2. bounded ReviewCase collection page from server Product query
+3. collection pagination does not expose hidden candidates
+4. Workbench Case link → real current Case authorization
+5. visible Case generic fields + exact Scenario section
+6. human-readable Case members + visible Findings
+7. manager progress success
+8. visible non-manager progress 404 while Case remains visible
+9. metadata-free Case-subject Activity read
+10. stale Workbench link after relationship loss → current authorization refusal
+11. hard reload re-fetches current Workbench/collection/Case server truth
+12. logout/session boundary removes protected M3.5.2 data
 ```
+
+The 5-visible-versus-about-100-total SQL query-count regression may remain a PostgreSQL integration test rather than a browser timing test; the browser proof does not replace it.
 
 ## Responsive/accessibility regression
 
 M3.5.5 owns final responsive Product proof, but M3.5.2 must have at least one desktop and one narrow-browser check for Workbench and Case viewing.
 
-Verify primary Workbench sections, Case header, Findings/members/Activity sections, and original-resource links remain reachable; status meaning uses text beyond color; loading/empty/error text remains readable and keyboard navigation works for primary links.
+Verify primary Workbench sections, paged ReviewCase collection controls, Case header, Findings/members/Activity sections, and original-resource links remain reachable; status meaning uses text beyond color; loading/empty/error text remains readable and keyboard navigation works for primary links.
 
 No design-system expansion is required.
 
@@ -469,6 +655,7 @@ architecture
 OpenAPI
 Alembic
 PostgreSQL pytest
+including Product collection hidden-candidate + query-count regressions
 
 frontend:
 npm ci from lockfile
@@ -482,13 +669,15 @@ real browser:
 PostgreSQL + FastAPI + HTTPS Vite + Chromium M3.5.2 journey
 ```
 
-Any member identity/API or Activity read-contract addition must be included in the existing OpenAPI contract check.
+The bounded ReviewCase Product collection contract, member identity enrichment, and Activity read-contract additions must be included in the existing OpenAPI contract check.
 
 ## Implementation diff boundary
 
 After Gate PASS, expected executable diff may include only what is necessary for:
 
 ```text
+narrow downstream ReviewCase Product collection query service / schema / API adaptation
+PostgreSQL query-shape and authorization-safe pagination tests
 web/src/api wire contracts / feature APIs
 web/src/features/workbench/** or equivalent
 web/src/features/review-cases/** or equivalent
@@ -501,10 +690,13 @@ composition/main registration only if needed for those read APIs
 CI only if Acceptance harness needs a bounded addition
 ```
 
+The collection prerequisite may read existing Review Core persistence facts directly as a downstream query projection. It must not require changing Review Core mutation/lifecycle semantics or adding a new persistence truth.
+
 Unexpected scope requiring separate review:
 
 ```text
 migration
+new ReviewCase/Product collection persistence entity
 Review Core lifecycle/Scenario authorization changes
 Notification/Reminder code
 M3.3 semantics changes
@@ -522,6 +714,12 @@ M3.5.2 cannot pass Final Review unless all are true:
 Workbench comes directly from M3.1                         ✅
 no frontend work-membership reconstruction                 ✅
 Workbench links re-enter current resource auth              ✅
+ReviewCase collection is bounded/paginated server-side      ✅
+collection authorization precedes pagination                ✅
+hidden candidates do not alter page membership/total        ✅
+collection query count does not scale per hidden Case       ✅
+no org-wide per-Case command traversal for collection       ✅
+exact historical ScenarioPolicy remains collection authority ✅
 ReviewCase generic truth comes from server                  ✅
 Scenario adapter lookup exact by key + version              ✅
 unknown Scenario UI version fails closed                    ✅
