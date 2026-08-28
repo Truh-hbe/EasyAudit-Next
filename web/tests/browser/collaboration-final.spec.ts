@@ -103,7 +103,12 @@ test('Finding visibility revocation replaces previously authorized content with 
 
   await page.goto(`/findings/${findingId}`)
   await expect(page.getByRole('heading', { name: 'Previously visible Finding' })).toBeVisible()
+  await expect(page.getByText('暂无参与关系。')).toBeVisible()
+  await expect(page.getByText('暂无 Action Item。')).toBeVisible()
+  await expect(page.getByText('暂无 Finding Submission。')).toBeVisible()
+  await expect(page.getByText('暂无 Finding-subject Activity。')).toBeVisible()
 
+  childRequestsAfterRevocation = 0
   allowed = false
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Finding 不可用' })).toBeVisible()
