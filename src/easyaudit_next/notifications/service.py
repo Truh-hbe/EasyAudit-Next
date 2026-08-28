@@ -124,12 +124,14 @@ class NotificationService:
         *,
         limit: int,
         offset: int,
+        unread_only: bool = False,
     ) -> NotificationInboxPage:
         records = self._repository.list_for_recipient(
             organization_id,
             recipient_user_id,
             limit=limit,
             offset=offset,
+            unread_only=unread_only,
         )
         return NotificationInboxPage(
             items=tuple(self._item(record) for record in records),
