@@ -50,15 +50,22 @@ test('real PostgreSQL + FastAPI credential readiness journey', async ({ page, co
   expect(tokenZero.sameSite).toBe('Strict')
   expect(tokenZero.path).toBe('/')
 
-  const clientVisibleAuth = await page.evaluate((cookieName) => ({
-    documentCookie: document.cookie,
-    localStorageKeys: Object.keys(localStorage),
-    sessionStorageKeys: Object.keys(sessionStorage),
-    cookieName,
-  }), COOKIE_NAME)
+  const clientVisibleAuth = await page.evaluate((cookieName) => {
+    const browserGlobals = globalThis as unknown as {
+      document: { cookie: string }
+      localStorage: { length: number }
+      sessionStorage: { length: number }
+    }
+    return {
+      documentCookie: browserGlobals.document.cookie,
+      localStorageLength: browserGlobals.localStorage.length,
+      sessionStorageLength: browserGlobals.sessionStorage.length,
+      cookieName,
+    }
+  }, COOKIE_NAME)
   expect(clientVisibleAuth.documentCookie).not.toContain(clientVisibleAuth.cookieName)
-  expect(clientVisibleAuth.localStorageKeys).toEqual([])
-  expect(clientVisibleAuth.sessionStorageKeys).toEqual([])
+  expect(clientVisibleAuth.localStorageLength).toBe(0)
+  expect(clientVisibleAuth.sessionStorageLength).toBe(0)
 
   const passwordResponsePromise = page.waitForResponse(
     (response) =>
