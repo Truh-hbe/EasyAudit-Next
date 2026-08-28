@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, apiRequest } from './client'
+import { apiRequest } from './client'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -42,7 +42,7 @@ describe('apiRequest', () => {
       ),
     )
 
-    await expect(apiRequest('/api/v1/me')).rejects.toMatchObject<ApiError>({
+    await expect(apiRequest('/api/v1/me')).rejects.toMatchObject({
       status: 401,
       detail: 'Authentication required',
     })
