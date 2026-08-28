@@ -61,6 +61,7 @@ def _notification_response(item: NotificationItem) -> NotificationResponse:
 def list_my_notifications(
     identity: BusinessIdentity,
     session: DatabaseSession,
+    unread_only: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> NotificationInboxResponse:
@@ -70,6 +71,7 @@ def list_my_notifications(
         identity.user.id,
         limit=limit,
         offset=offset,
+        unread_only=unread_only,
     )
     return NotificationInboxResponse(
         items=tuple(_notification_response(item) for item in page.items),
