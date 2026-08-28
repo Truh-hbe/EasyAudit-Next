@@ -1,21 +1,29 @@
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, func, select
 from sqlalchemy.orm import Session
 
+from easyaudit_next.api.dependencies import (
+    CurrentIdentity,
+    get_current_identity,
+    get_database_session,
+)
 from easyaudit_next.composition import (
     build_finding_lifecycle_service,
     build_rectification_service,
     build_review_planning_service,
     build_review_resource_context_query_service,
 )
+from easyaudit_next.main import create_app
 from easyaudit_next.notifications.persistence import NotificationRecord
-from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
-from easyaudit_next.platform.domain.models import PlatformRole, User
+from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, OrganizationId, UserId
+from easyaudit_next.platform.domain.models import AuthSession, PlatformRole, User
 from easyaudit_next.platform.persistence.models import (
     DepartmentRecord,
     OrganizationRecord,
@@ -35,6 +43,8 @@ from easyaudit_next.review_core.domain.models import (
 from easyaudit_next.review_core.domain.scenario_capabilities import ActorKind
 from easyaudit_next.review_core.persistence.models import (
     ActivityRecord,
+    ScenarioRecord,
+    ScenarioVersionRecord,
     SubmissionRecord,
 )
 
@@ -48,6 +58,24 @@ def postgres_engine() -> Iterator[Engine]:
     engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
     yield engine
     engine.dispose()
+
+
+@dataclass(frozen=True, slots=True)
+class SeededCollaboration:
+    organization_id: OrganizationId
+    department_id: DepartmentId
+    lead_id: UserId
+    owner_id: UserId
+    assignee_id: UserId
+    candidate_id: UserId
+    unrelated_id: UserId
+    admin_id: UserId
+    finding_id: FindingId
+    sibling_id: FindingId
+    action_id: ActionItemId
+    submission_ids: tuple[object, object]
+    finding_activity_id: object
+    action_activity_id: object
 
 
 def _actor(
@@ -66,7 +94,23 @@ def _actor(
     )
 
 
-def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
+def _identity(
+    user: User,
+) -> CurrentIdentity:
+    return CurrentIdentity(
+        auth_session=AuthSession(
+            id=AuthSessionId(uuid4()),
+            organization_id=user.organization_id,
+            user_id=user.id,
+            token_hash="a" * 64,
+            expires_at=NOW + timedelta(hours=1),
+            created_at=NOW,
+        ),
+        user=user,
+    )
+
+
+def _seed_collaboration_shape(engine: Engine) -> SeededCollaboration:
     organization_id = OrganizationId(uuid4())
     department_id = DepartmentId(uuid4())
     lead_id = UserId(uuid4())
@@ -130,10 +174,7 @@ def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
         )
         session.flush()
         session.add(
-            __import__(
-                "easyaudit_next.review_core.persistence.models",
-                fromlist=["ScenarioRecord"],
-            ).ScenarioRecord(
+            ScenarioRecord(
                 id=scenario_id,
                 organization_id=organization_id,
                 key="process_review",
@@ -142,10 +183,7 @@ def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
         )
         session.flush()
         session.add(
-            __import__(
-                "easyaudit_next.review_core.persistence.models",
-                fromlist=["ScenarioVersionRecord"],
-            ).ScenarioVersionRecord(
+            ScenarioVersionRecord(
                 id=uuid4(),
                 scenario_id=scenario_id,
                 organization_id=organization_id,
@@ -223,8 +261,8 @@ def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
             occurred_at=NOW,
         )
 
-        target_submission_1 = UUID("00000000-0000-0000-0000-000000000211")
-        target_submission_2 = UUID("00000000-0000-0000-0000-000000000212")
+        target_submission_1 = uuid4()
+        target_submission_2 = uuid4()
         session.add_all(
             [
                 SubmissionRecord(
@@ -270,10 +308,9 @@ def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
             ]
         )
         session.flush()
-        finding_activity_id = UUID("00000000-0000-0000-0000-000000000221")
-        action_activity_id = UUID("00000000-0000-0000-0000-000000000222")
-        sibling_activity_id = UUID("00000000-0000-0000-0000-000000000223")
-        submission_activity_id = UUID("00000000-0000-0000-0000-000000000224")
+
+        finding_activity_id = uuid4()
+        action_activity_id = uuid4()
         session.add_all(
             [
                 ActivityRecord(
@@ -301,7 +338,7 @@ def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
                     metadata_json={"private": "not projected"},
                 ),
                 ActivityRecord(
-                    id=sibling_activity_id,
+                    id=uuid4(),
                     organization_id=organization_id,
                     actor_id=lead_id,
                     event_type="finding.sibling_fact",
@@ -313,7 +350,7 @@ def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
                     metadata_json={},
                 ),
                 ActivityRecord(
-                    id=submission_activity_id,
+                    id=uuid4(),
                     organization_id=organization_id,
                     actor_id=lead_id,
                     event_type="submission.fact",
@@ -327,66 +364,51 @@ def _seed_collaboration_shape(engine: Engine) -> dict[str, object]:
             ]
         )
 
-    return {
-        "organization_id": organization_id,
-        "department_id": department_id,
-        "lead_id": lead_id,
-        "owner_id": owner_id,
-        "assignee_id": assignee_id,
-        "candidate_id": candidate_id,
-        "unrelated_id": unrelated_id,
-        "admin_id": admin_id,
-        "finding_id": FindingId(finding.id),
-        "sibling_id": FindingId(sibling.id),
-        "action_id": ActionItemId(action.id),
-        "submission_ids": (target_submission_1, target_submission_2),
-        "finding_activity_id": finding_activity_id,
-        "action_activity_id": action_activity_id,
-    }
+    return SeededCollaboration(
+        organization_id=organization_id,
+        department_id=department_id,
+        lead_id=lead_id,
+        owner_id=owner_id,
+        assignee_id=assignee_id,
+        candidate_id=candidate_id,
+        unrelated_id=unrelated_id,
+        admin_id=admin_id,
+        finding_id=FindingId(finding.id),
+        sibling_id=FindingId(sibling.id),
+        action_id=ActionItemId(action.id),
+        submission_ids=(target_submission_1, target_submission_2),
+        finding_activity_id=finding_activity_id,
+        action_activity_id=action_activity_id,
+    )
 
 
 def test_target_scoped_relationship_views_and_candidates(postgres_engine: Engine) -> None:
     seeded = _seed_collaboration_shape(postgres_engine)
-    organization_id = seeded["organization_id"]
-    assert isinstance(organization_id, UUID)
-    lead_id = seeded["lead_id"]
-    owner_id = seeded["owner_id"]
-    unrelated_id = seeded["unrelated_id"]
-    admin_id = seeded["admin_id"]
-    finding_id = seeded["finding_id"]
-    action_id = seeded["action_id"]
-    assert isinstance(lead_id, UUID)
-    assert isinstance(owner_id, UUID)
-    assert isinstance(unrelated_id, UUID)
-    assert isinstance(admin_id, UUID)
-    assert isinstance(finding_id, UUID)
-    assert isinstance(action_id, UUID)
-
-    lead = _actor(UserId(lead_id), OrganizationId(organization_id), "Collaboration Lead")
-    owner = _actor(UserId(owner_id), OrganizationId(organization_id), "Finding Owner")
-    unrelated = _actor(UserId(unrelated_id), OrganizationId(organization_id), "Unrelated Engineer")
+    lead = _actor(seeded.lead_id, seeded.organization_id, "Collaboration Lead")
+    owner = _actor(seeded.owner_id, seeded.organization_id, "Finding Owner")
+    unrelated = _actor(seeded.unrelated_id, seeded.organization_id, "Unrelated Engineer")
     admin = _actor(
-        UserId(admin_id),
-        OrganizationId(organization_id),
+        seeded.admin_id,
+        seeded.organization_id,
         "Unrelated Platform Admin",
         platform_role=PlatformRole.SYSTEM_ADMIN,
     )
 
     with Session(postgres_engine) as session:
         service = build_review_resource_context_query_service(session)
-        participant_views = service.list_finding_participant_views(lead, FindingId(finding_id))
+        participant_views = service.list_finding_participant_views(lead, seeded.finding_id)
         assert {(item.actor_kind, item.display_name) for item in participant_views} == {
             (ActorKind.USER, "Finding Owner"),
             (ActorKind.DEPARTMENT, "Corrective Operations"),
         }
-        assignee_views = service.list_action_assignee_views(owner, ActionItemId(action_id))
+        assignee_views = service.list_action_assignee_views(owner, seeded.action_id)
         assert [(item.actor_kind, item.display_name) for item in assignee_views] == [
             (ActorKind.USER, "Action Assignee")
         ]
 
         candidates = service.search_finding_participant_candidates(
             lead,
-            FindingId(finding_id),
+            seeded.finding_id,
             role_key="collaborator",
             actor_kind=ActorKind.USER,
             search_text="Candidate",
@@ -395,10 +417,22 @@ def test_target_scoped_relationship_views_and_candidates(postgres_engine: Engine
         assert [(item.actor_kind, item.display_name) for item in candidates] == [
             (ActorKind.USER, "Candidate Engineer")
         ]
+        action_candidates = service.search_action_assignee_candidates(
+            owner,
+            seeded.action_id,
+            role=AssignmentRole.COLLABORATOR,
+            actor_kind=ActorKind.USER,
+            search_text="Candidate",
+            limit=20,
+        )
+        assert [(item.actor_kind, item.display_name) for item in action_candidates] == [
+            (ActorKind.USER, "Candidate Engineer")
+        ]
+
         with pytest.raises(ValueError):
             service.search_finding_participant_candidates(
                 lead,
-                FindingId(finding_id),
+                seeded.finding_id,
                 role_key="responsible_department",
                 actor_kind=ActorKind.USER,
                 search_text="Candidate",
@@ -407,7 +441,7 @@ def test_target_scoped_relationship_views_and_candidates(postgres_engine: Engine
         with pytest.raises(ValueError):
             service.search_action_assignee_candidates(
                 owner,
-                ActionItemId(action_id),
+                seeded.action_id,
                 role=AssignmentRole.PRIMARY,
                 actor_kind=ActorKind.DEPARTMENT,
                 search_text="Corrective",
@@ -416,7 +450,7 @@ def test_target_scoped_relationship_views_and_candidates(postgres_engine: Engine
         with pytest.raises(ValueError):
             service.search_finding_participant_candidates(
                 lead,
-                FindingId(finding_id),
+                seeded.finding_id,
                 role_key="collaborator",
                 actor_kind=ActorKind.USER,
                 search_text="%",
@@ -425,7 +459,7 @@ def test_target_scoped_relationship_views_and_candidates(postgres_engine: Engine
         with pytest.raises(ReviewAuthorizationError):
             service.search_finding_participant_candidates(
                 unrelated,
-                FindingId(finding_id),
+                seeded.finding_id,
                 role_key="collaborator",
                 actor_kind=ActorKind.USER,
                 search_text="Candidate",
@@ -434,7 +468,7 @@ def test_target_scoped_relationship_views_and_candidates(postgres_engine: Engine
         with pytest.raises(ReviewAuthorizationError):
             service.search_finding_participant_candidates(
                 admin,
-                FindingId(finding_id),
+                seeded.finding_id,
                 role_key="collaborator",
                 actor_kind=ActorKind.USER,
                 search_text="Candidate",
@@ -446,51 +480,128 @@ def test_finding_submission_and_activity_reads_are_exact_and_side_effect_free(
     postgres_engine: Engine,
 ) -> None:
     seeded = _seed_collaboration_shape(postgres_engine)
-    organization_id = seeded["organization_id"]
-    lead_id = seeded["lead_id"]
-    owner_id = seeded["owner_id"]
-    finding_id = seeded["finding_id"]
-    action_id = seeded["action_id"]
-    assert isinstance(organization_id, UUID)
-    assert isinstance(lead_id, UUID)
-    assert isinstance(owner_id, UUID)
-    assert isinstance(finding_id, UUID)
-    assert isinstance(action_id, UUID)
-    lead = _actor(UserId(lead_id), OrganizationId(organization_id), "Collaboration Lead")
-    owner = _actor(UserId(owner_id), OrganizationId(organization_id), "Finding Owner")
+    lead = _actor(seeded.lead_id, seeded.organization_id, "Collaboration Lead")
+    owner = _actor(seeded.owner_id, seeded.organization_id, "Finding Owner")
 
     with Session(postgres_engine) as session:
         activity_before = session.scalar(
             select(func.count()).select_from(ActivityRecord).where(
-                ActivityRecord.organization_id == organization_id
+                ActivityRecord.organization_id == seeded.organization_id
             )
         )
         notification_before = session.scalar(
             select(func.count()).select_from(NotificationRecord).where(
-                NotificationRecord.organization_id == organization_id
+                NotificationRecord.organization_id == seeded.organization_id
             )
         )
         service = build_review_resource_context_query_service(session)
-        submissions = service.list_finding_submissions(lead, FindingId(finding_id))
-        finding_activities = service.list_finding_activities(lead, FindingId(finding_id))
-        action_activities = service.list_action_activities(owner, ActionItemId(action_id))
+        submissions = service.list_finding_submissions(lead, seeded.finding_id)
+        finding_activities = service.list_finding_activities(lead, seeded.finding_id)
+        action_activities = service.list_action_activities(owner, seeded.action_id)
         activity_after = session.scalar(
             select(func.count()).select_from(ActivityRecord).where(
-                ActivityRecord.organization_id == organization_id
+                ActivityRecord.organization_id == seeded.organization_id
             )
         )
         notification_after = session.scalar(
             select(func.count()).select_from(NotificationRecord).where(
-                NotificationRecord.organization_id == organization_id
+                NotificationRecord.organization_id == seeded.organization_id
             )
         )
 
-    expected_submission_ids = seeded["submission_ids"]
-    assert isinstance(expected_submission_ids, tuple)
-    assert tuple(item.id for item in submissions) == expected_submission_ids
-    assert seeded["finding_activity_id"] in {item.id for item in finding_activities}
-    assert seeded["action_activity_id"] in {item.id for item in action_activities}
-    assert all(item.subject_id == finding_id for item in finding_activities)
-    assert all(item.subject_id == action_id for item in action_activities)
+    assert tuple(item.id for item in submissions) == seeded.submission_ids
+    assert seeded.finding_activity_id in {item.id for item in finding_activities}
+    assert seeded.action_activity_id in {item.id for item in action_activities}
+    assert all(item.subject_id == seeded.finding_id for item in finding_activities)
+    assert all(item.subject_id == seeded.action_id for item in action_activities)
     assert activity_after == activity_before
     assert notification_after == notification_before
+
+
+def test_resource_query_http_contract_is_target_scoped(postgres_engine: Engine) -> None:
+    seeded = _seed_collaboration_shape(postgres_engine)
+    lead = _actor(seeded.lead_id, seeded.organization_id, "Collaboration Lead")
+    owner = _actor(seeded.owner_id, seeded.organization_id, "Finding Owner")
+    admin = _actor(
+        seeded.admin_id,
+        seeded.organization_id,
+        "Unrelated Platform Admin",
+        platform_role=PlatformRole.SYSTEM_ADMIN,
+    )
+
+    app = create_app()
+
+    def database_override() -> Iterator[Session]:
+        with Session(postgres_engine) as session:
+            yield session
+
+    app.dependency_overrides[get_database_session] = database_override
+    app.dependency_overrides[get_current_identity] = lambda: _identity(lead)
+    with TestClient(app) as client:
+        participant_response = client.get(
+            f"/api/v1/findings/{seeded.finding_id}/participant-views"
+        )
+        assert participant_response.status_code == 200
+        assert {item["display_name"] for item in participant_response.json()} == {
+            "Finding Owner",
+            "Corrective Operations",
+        }
+
+        submission_response = client.get(
+            f"/api/v1/findings/{seeded.finding_id}/submissions"
+        )
+        assert submission_response.status_code == 200
+        assert tuple(item["id"] for item in submission_response.json()) == tuple(
+            str(item) for item in seeded.submission_ids
+        )
+
+        candidate_response = client.get(
+            f"/api/v1/findings/{seeded.finding_id}/participant-candidates",
+            params={
+                "role_key": "collaborator",
+                "actor_kind": "user",
+                "q": "Candidate",
+                "limit": 20,
+            },
+        )
+        assert candidate_response.status_code == 200
+        assert [item["display_name"] for item in candidate_response.json()] == [
+            "Candidate Engineer"
+        ]
+
+        invalid_kind_response = client.get(
+            f"/api/v1/findings/{seeded.finding_id}/participant-candidates",
+            params={
+                "role_key": "responsible_department",
+                "actor_kind": "user",
+                "q": "Candidate",
+            },
+        )
+        assert invalid_kind_response.status_code == 422
+
+    app.dependency_overrides[get_current_identity] = lambda: _identity(owner)
+    with TestClient(app) as client:
+        action_candidate_response = client.get(
+            f"/api/v1/action-items/{seeded.action_id}/assignee-candidates",
+            params={
+                "role": "collaborator",
+                "actor_kind": "user",
+                "q": "Candidate",
+            },
+        )
+        assert action_candidate_response.status_code == 200
+        assert [item["display_name"] for item in action_candidate_response.json()] == [
+            "Candidate Engineer"
+        ]
+
+    app.dependency_overrides[get_current_identity] = lambda: _identity(admin)
+    with TestClient(app) as client:
+        forbidden_response = client.get(
+            f"/api/v1/findings/{seeded.finding_id}/participant-candidates",
+            params={
+                "role_key": "collaborator",
+                "actor_kind": "user",
+                "q": "Candidate",
+            },
+        )
+        assert forbidden_response.status_code == 403
