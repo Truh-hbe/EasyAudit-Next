@@ -8,7 +8,11 @@ import {
   useState,
 } from 'react'
 
-import { ApiError, apiRequest } from '../../api/client'
+import {
+  ApiError,
+  installSessionUnauthorizedHandler,
+  sessionApiRequest,
+} from '../../api/client'
 import type { CurrentUserResponse } from '../../api/contracts'
 
 export type SessionState =
@@ -20,6 +24,7 @@ interface SessionContextValue {
   state: SessionState
   resolutionError: string | null
   refresh: () => Promise<SessionState>
+  clearLocalSession: () => void
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null)
@@ -28,7 +33,7 @@ export async function resolveServerSession(
   signal?: AbortSignal,
 ): Promise<SessionState> {
   try {
-    const user = await apiRequest<CurrentUserResponse>('/api/v1/me', { signal })
+    const user = await sessionApiRequest<CurrentUserResponse>('/api/v1/me', { signal })
     return { status: 'authenticated', user }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -41,6 +46,11 @@ export async function resolveServerSession(
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: 'resolving' })
   const [resolutionError, setResolutionError] = useState<string | null>(null)
+
+  const clearLocalSession = useCallback(() => {
+    setState({ status: 'anonymous' })
+    setResolutionError(null)
+  }, [])
 
   const refresh = useCallback(async (): Promise<SessionState> => {
     setState({ status: 'resolving' })
@@ -56,6 +66,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       throw error
     }
   }, [])
+
+  useEffect(
+    () => installSessionUnauthorizedHandler(clearLocalSession),
+    [clearLocalSession],
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -83,8 +98,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ state, resolutionError, refresh }),
-    [refresh, resolutionError, state],
+    () => ({ state, resolutionError, refresh, clearLocalSession }),
+    [clearLocalSession, refresh, resolutionError, state],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

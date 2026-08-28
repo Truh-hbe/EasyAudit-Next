@@ -16,14 +16,28 @@ body {
   min-height: 100vh;
 }
 
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
 #root {
   min-height: 100vh;
 }
 
-.foundation {
+.foundation,
+.auth-card {
   max-width: 760px;
   margin: 0 auto;
   padding: 96px 24px;
+}
+
+.auth-card {
+  max-width: 480px;
 }
 
 .eyebrow {
@@ -40,8 +54,46 @@ h1 {
   line-height: 1;
 }
 
-.foundation > p:last-child {
-  max-width: 60ch;
+.foundation > p:last-child,
+.auth-card > p {
   margin-top: 24px;
   line-height: 1.7;
+}
+
+form {
+  display: grid;
+  gap: 18px;
+  margin-top: 32px;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  font-weight: 650;
+}
+
+input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #c9d0dc;
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+}
+
+button {
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.secondary {
+  margin-top: 18px;
+  background: transparent;
+  border: 1px solid #c9d0dc;
+}
+
+[role="alert"] {
+  margin-top: 16px;
 }

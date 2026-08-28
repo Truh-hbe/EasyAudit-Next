@@ -14,6 +14,21 @@ export class ApiError extends Error {
   }
 }
 
+type SessionUnauthorizedHandler = () => void
+
+let sessionUnauthorizedHandler: SessionUnauthorizedHandler | null = null
+
+export function installSessionUnauthorizedHandler(
+  handler: SessionUnauthorizedHandler,
+): () => void {
+  sessionUnauthorizedHandler = handler
+  return () => {
+    if (sessionUnauthorizedHandler === handler) {
+      sessionUnauthorizedHandler = null
+    }
+  }
+}
+
 function assertApiPath(path: string): void {
   if (!path.startsWith('/api/v1/')) {
     throw new Error('EasyAudit API requests must use relative /api/v1/* paths')
@@ -44,9 +59,10 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-export async function apiRequest<T>(
+async function request<T>(
   path: string,
-  init: RequestInit = {},
+  init: RequestInit,
+  signalSession401: boolean,
 ): Promise<T> {
   assertApiPath(path)
 
@@ -62,6 +78,9 @@ export async function apiRequest<T>(
   const payload = await parseResponseBody(response)
 
   if (!response.ok) {
+    if (signalSession401 && response.status === 401) {
+      sessionUnauthorizedHandler?.()
+    }
     throw new ApiError(
       response.status,
       safeDetail(payload, `Request failed with HTTP ${response.status}`),
@@ -69,4 +88,18 @@ export async function apiRequest<T>(
   }
 
   return payload as T
+}
+
+export function publicApiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  return request<T>(path, init, false)
+}
+
+export function sessionApiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  return request<T>(path, init, true)
 }

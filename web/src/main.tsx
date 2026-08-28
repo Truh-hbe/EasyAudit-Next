@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { BrowserRouter } from 'react-router'
 
 import { SessionProvider } from './app/auth/session'
 import { App } from './App'
@@ -13,8 +14,10 @@ if (root === null) {
 
 createRoot(root).render(
   <StrictMode>
-    <SessionProvider>
-      <App />
-    </SessionProvider>
+    <BrowserRouter>
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    </BrowserRouter>
   </StrictMode>,
 )

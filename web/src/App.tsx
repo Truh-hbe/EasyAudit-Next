@@ -1,44 +1,96 @@
+import { Navigate, useLocation, useSearchParams } from 'react-router'
+
+import { CredentialRemediationPage } from './app/auth/CredentialRemediationPage'
+import { LoginPage } from './app/auth/LoginPage'
 import { useSession } from './app/auth/session'
+import {
+  CREDENTIAL_REMEDIATION_PATH,
+  DEFAULT_AUTHENTICATED_PATH,
+  safeIntendedPath,
+} from './app/router/intendedRoute'
+
+function ResolvingPage() {
+  const { resolutionError, refresh } = useSession()
+  return (
+    <main className="foundation" aria-labelledby="resolving-title">
+      <p className="eyebrow">M3.5.1</p>
+      <h1 id="resolving-title">正在确认服务器会话</h1>
+      <p>受保护界面会在服务器 Session 与凭据状态确认后再决定是否呈现。</p>
+      {resolutionError === null ? null : (
+        <div role="alert">
+          <p>{resolutionError}</p>
+          <button type="button" onClick={() => void refresh()}>
+            重试
+          </button>
+        </div>
+      )}
+    </main>
+  )
+}
+
+function CredentialReadyBoundary() {
+  const { state } = useSession()
+  if (state.status !== 'authenticated') {
+    return null
+  }
+  return (
+    <main className="foundation" aria-labelledby="ready-title">
+      <p className="eyebrow">M3.5.1</p>
+      <h1 id="ready-title">凭据已就绪</h1>
+      <p>{state.user.display_name}</p>
+      <p>Product Shell 与正式导航将在下一可审查增量接入。</p>
+    </main>
+  )
+}
+
+function intendedFromCurrentLocation(pathname: string, search: string, hash: string): string {
+  return safeIntendedPath(`${pathname}${search}${hash}`)
+}
 
 export function App() {
-  const { state, resolutionError, refresh } = useSession()
+  const { state } = useSession()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
+  const requestedNext = safeIntendedPath(searchParams.get('next'))
 
   if (state.status === 'resolving') {
-    return (
-      <main className="foundation" aria-labelledby="foundation-title">
-        <p className="eyebrow">M3.5.1</p>
-        <h1 id="foundation-title">正在确认服务器会话</h1>
-        <p>受保护界面会在服务器 Session 与凭据状态确认后再决定是否呈现。</p>
-        {resolutionError === null ? null : (
-          <div role="alert">
-            <p>{resolutionError}</p>
-            <button type="button" onClick={() => void refresh()}>
-              重试
-            </button>
-          </div>
-        )}
-      </main>
-    )
+    return <ResolvingPage />
   }
 
   if (state.status === 'anonymous') {
+    if (location.pathname === '/login') {
+      return <LoginPage />
+    }
+    const next = intendedFromCurrentLocation(
+      location.pathname,
+      location.search,
+      location.hash,
+    )
+    return <Navigate replace to={`/login?next=${encodeURIComponent(next)}`} />
+  }
+
+  if (state.user.must_change_password) {
+    if (location.pathname === CREDENTIAL_REMEDIATION_PATH) {
+      return <CredentialRemediationPage />
+    }
+    const next =
+      location.pathname === '/login'
+        ? requestedNext
+        : intendedFromCurrentLocation(location.pathname, location.search, location.hash)
     return (
-      <main className="foundation" aria-labelledby="foundation-title">
-        <p className="eyebrow">M3.5.1</p>
-        <h1 id="foundation-title">当前没有有效会话</h1>
-        <p>登录交互将在下一可审查增量接入；当前状态来自 GET /api/v1/me。</p>
-      </main>
+      <Navigate
+        replace
+        to={`${CREDENTIAL_REMEDIATION_PATH}?next=${encodeURIComponent(next)}`}
+      />
     )
   }
 
-  return (
-    <main className="foundation" aria-labelledby="foundation-title">
-      <p className="eyebrow">M3.5.1</p>
-      <h1 id="foundation-title">服务器会话已确认</h1>
-      <p>{state.user.display_name}</p>
-      <p>
-        凭据状态：{state.user.must_change_password ? '服务器要求修改密码' : '服务器报告已就绪'}
-      </p>
-    </main>
-  )
+  if (
+    location.pathname === '/login' ||
+    location.pathname === CREDENTIAL_REMEDIATION_PATH
+  ) {
+    return <Navigate replace to={requestedNext || DEFAULT_AUTHENTICATED_PATH} />
+  }
+
+  return <CredentialReadyBoundary />
 }

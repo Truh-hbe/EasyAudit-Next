@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { apiRequest } from './client'
+import {
+  installSessionUnauthorizedHandler,
+  publicApiRequest,
+  sessionApiRequest,
+} from './client'
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('apiRequest', () => {
+describe('shared API boundary', () => {
   it('uses relative EasyAudit API paths without adding bearer credentials', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init === undefined) {
@@ -22,7 +26,7 @@ describe('apiRequest', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(apiRequest<{ ok: boolean }>('/api/v1/me')).resolves.toEqual({
+    await expect(sessionApiRequest<{ ok: boolean }>('/api/v1/me')).resolves.toEqual({
       ok: true,
     })
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/me', expect.any(Object))
@@ -30,11 +34,13 @@ describe('apiRequest', () => {
 
   it('rejects non-relative API origins', async () => {
     await expect(
-      apiRequest('https://api.example.test/api/v1/me'),
+      sessionApiRequest('https://api.example.test/api/v1/me'),
     ).rejects.toThrow('relative /api/v1/* paths')
   })
 
-  it('preserves HTTP status and safe FastAPI detail', async () => {
+  it('signals authenticated-session 401 centrally', async () => {
+    const unauthorized = vi.fn()
+    const uninstall = installSessionUnauthorizedHandler(unauthorized)
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
@@ -45,9 +51,28 @@ describe('apiRequest', () => {
       ),
     )
 
-    await expect(apiRequest('/api/v1/me')).rejects.toMatchObject({
+    await expect(sessionApiRequest('/api/v1/me')).rejects.toMatchObject({ status: 401 })
+    expect(unauthorized).toHaveBeenCalledOnce()
+    uninstall()
+  })
+
+  it('does not turn login 401 into a session-expiry signal', async () => {
+    const unauthorized = vi.fn()
+    const uninstall = installSessionUnauthorizedHandler(unauthorized)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail: 'Invalid login name or password' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    )
+
+    await expect(publicApiRequest('/api/v1/auth/login')).rejects.toMatchObject({
       status: 401,
-      detail: 'Authentication required',
     })
+    expect(unauthorized).not.toHaveBeenCalled()
+    uninstall()
   })
 })
