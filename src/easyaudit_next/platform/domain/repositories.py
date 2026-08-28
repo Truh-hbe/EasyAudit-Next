@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol
 
 from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, OrganizationId, UserId
@@ -50,6 +51,12 @@ class LocalCredentialRepository(Protocol):
 
     def get_by_user_id(self, user_id: UserId) -> LocalCredential | None: ...
 
+    def lock_by_login_name(self, login_name: str) -> LocalCredential | None: ...
+
+    def lock_by_user_id(self, user_id: UserId) -> LocalCredential | None: ...
+
+    def update_password_state(self, credential: LocalCredential) -> None: ...
+
 
 class AuthSessionRepository(Protocol):
     def add(self, auth_session: AuthSession) -> None: ...
@@ -60,7 +67,22 @@ class AuthSessionRepository(Protocol):
 
     def list_for_user(self, user_id: UserId) -> tuple[AuthSession, ...]: ...
 
-    def update(self, auth_session: AuthSession) -> None: ...
+    def touch_if_active(
+        self,
+        session_id: AuthSessionId,
+        expected_token_hash: str,
+        touched_at: datetime,
+    ) -> AuthSession | None: ...
+
+    def revoke_if_active(self, session_id: AuthSessionId, revoked_at: datetime) -> bool: ...
+
+    def rotate_if_active(
+        self,
+        session_id: AuthSessionId,
+        expected_token_hash: str,
+        new_token_hash: str,
+        rotated_at: datetime,
+    ) -> AuthSession | None: ...
 
 
 class PlatformAuditRepository(Protocol):

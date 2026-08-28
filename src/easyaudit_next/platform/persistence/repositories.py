@@ -1,4 +1,7 @@
+from datetime import datetime
+
 from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import (
@@ -227,6 +230,37 @@ class SqlAlchemyLocalCredentialRepository:
         )
         return self._to_domain(record) if record is not None else None
 
+    def lock_by_login_name(self, login_name: str) -> LocalCredential | None:
+        record = self._session.scalar(
+            select(LocalCredentialRecord)
+            .where(LocalCredentialRecord.login_name == login_name.strip().lower())
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return self._to_domain(record) if record is not None else None
+
+    def lock_by_user_id(self, user_id: UserId) -> LocalCredential | None:
+        record = self._session.scalar(
+            select(LocalCredentialRecord)
+            .where(LocalCredentialRecord.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return self._to_domain(record) if record is not None else None
+
+    def update_password_state(self, credential: LocalCredential) -> None:
+        record = self._session.get(
+            LocalCredentialRecord,
+            credential.user_id,
+            populate_existing=True,
+        )
+        if record is None or record.organization_id != credential.organization_id:
+            raise LookupError(f"LocalCredential for user {credential.user_id} does not exist")
+        record.password_hash = credential.password_hash
+        record.password_changed_at = credential.password_changed_at
+        record.must_change_password = credential.must_change_password
+        self._session.flush()
+
     @staticmethod
     def _to_domain(record: LocalCredentialRecord) -> LocalCredential:
         return LocalCredential(
@@ -249,12 +283,18 @@ class SqlAlchemyAuthSessionRepository:
 
     def get_by_token_hash(self, token_hash: str) -> AuthSession | None:
         record = self._session.scalar(
-            select(AuthSessionRecord).where(AuthSessionRecord.token_hash == token_hash)
+            select(AuthSessionRecord)
+            .where(AuthSessionRecord.token_hash == token_hash)
+            .execution_options(populate_existing=True)
         )
         return self._to_domain(record) if record is not None else None
 
     def get(self, session_id: AuthSessionId) -> AuthSession | None:
-        record = self._session.get(AuthSessionRecord, session_id)
+        record = self._session.scalar(
+            select(AuthSessionRecord)
+            .where(AuthSessionRecord.id == session_id)
+            .execution_options(populate_existing=True)
+        )
         return self._to_domain(record) if record is not None else None
 
     def list_for_user(self, user_id: UserId) -> tuple[AuthSession, ...]:
@@ -262,17 +302,68 @@ class SqlAlchemyAuthSessionRepository:
             select(AuthSessionRecord)
             .where(AuthSessionRecord.user_id == user_id)
             .order_by(AuthSessionRecord.created_at.desc())
+            .execution_options(populate_existing=True)
         )
         return tuple(self._to_domain(record) for record in records)
 
-    def update(self, auth_session: AuthSession) -> None:
-        record = self._session.get(AuthSessionRecord, auth_session.id)
-        if record is None:
-            raise LookupError(f"AuthSession {auth_session.id} does not exist")
-        record.revoked_at = auth_session.revoked_at
-        record.last_seen_at = auth_session.last_seen_at
-        record.expires_at = auth_session.expires_at
-        self._session.flush()
+    def touch_if_active(
+        self,
+        session_id: AuthSessionId,
+        expected_token_hash: str,
+        touched_at: datetime,
+    ) -> AuthSession | None:
+        result = self._session.execute(
+            sa_update(AuthSessionRecord)
+            .where(
+                AuthSessionRecord.id == session_id,
+                AuthSessionRecord.token_hash == expected_token_hash,
+                AuthSessionRecord.revoked_at.is_(None),
+                AuthSessionRecord.expires_at > touched_at,
+            )
+            .values(last_seen_at=touched_at)
+            .returning(AuthSessionRecord.id),
+            execution_options={"synchronize_session": False},
+        )
+        if result.scalar_one_or_none() is None:
+            return None
+        return self.get(session_id)
+
+    def revoke_if_active(self, session_id: AuthSessionId, revoked_at: datetime) -> bool:
+        result = self._session.execute(
+            sa_update(AuthSessionRecord)
+            .where(
+                AuthSessionRecord.id == session_id,
+                AuthSessionRecord.revoked_at.is_(None),
+                AuthSessionRecord.expires_at > revoked_at,
+            )
+            .values(revoked_at=revoked_at)
+            .returning(AuthSessionRecord.id),
+            execution_options={"synchronize_session": False},
+        )
+        return result.scalar_one_or_none() is not None
+
+    def rotate_if_active(
+        self,
+        session_id: AuthSessionId,
+        expected_token_hash: str,
+        new_token_hash: str,
+        rotated_at: datetime,
+    ) -> AuthSession | None:
+        result = self._session.execute(
+            sa_update(AuthSessionRecord)
+            .where(
+                AuthSessionRecord.id == session_id,
+                AuthSessionRecord.token_hash == expected_token_hash,
+                AuthSessionRecord.revoked_at.is_(None),
+                AuthSessionRecord.expires_at > rotated_at,
+            )
+            .values(token_hash=new_token_hash, last_seen_at=rotated_at)
+            .returning(AuthSessionRecord.id),
+            execution_options={"synchronize_session": False},
+        )
+        if result.scalar_one_or_none() is None:
+            return None
+        return self.get(session_id)
 
     @staticmethod
     def _to_record(auth_session: AuthSession) -> AuthSessionRecord:

@@ -37,10 +37,19 @@ class UserResponse(BaseModel):
     is_active: bool
 
 
+class CurrentUserResponse(UserResponse):
+    must_change_password: bool
+
+
 class LoginResponse(BaseModel):
     user: UserResponse
     session_id: UUID
     expires_at: datetime
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1_000)
+    new_password: str = Field(min_length=1, max_length=1_000)
 
 
 class SessionResponse(BaseModel):
