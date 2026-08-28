@@ -337,7 +337,7 @@ def main() -> None:
                     organization_id=ORGANIZATION_ID,
                     case_id=JOURNEY_CASE_ID,
                     title="M3.5.5 Multi-user Finding",
-                    description="Final Product acceptance finding driven only through merged Product commands.",
+                    description="Final Product acceptance finding driven through Product commands.",
                     severity="high",
                     lifecycle="rectifying",
                     scenario_data_json={
