@@ -28,3 +28,28 @@ def test_review_planning_routes_are_exposed_without_lifecycle_patch() -> None:
     assert "lifecycle" not in create_schema.get("properties", {})
     finding_create_schema = schema["components"]["schemas"]["FindingCreateRequest"]
     assert "lifecycle" not in finding_create_schema.get("properties", {})
+
+
+def test_review_case_collection_contract_is_bounded_and_enveloped() -> None:
+    schema = create_app().openapi()
+    operation = schema["paths"]["/api/v1/review-cases"]["get"]
+    parameters = {item["name"]: item for item in operation["parameters"]}
+
+    assert parameters["limit"]["schema"] == {
+        "type": "integer",
+        "maximum": 100,
+        "minimum": 1,
+        "default": 50,
+        "title": "Limit",
+    }
+    assert parameters["offset"]["schema"] == {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0,
+        "title": "Offset",
+    }
+
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema["$ref"].endswith("/ReviewCaseCollectionResponse")
+    collection_schema = schema["components"]["schemas"]["ReviewCaseCollectionResponse"]
+    assert set(collection_schema["required"]) == {"items", "total", "limit", "offset"}

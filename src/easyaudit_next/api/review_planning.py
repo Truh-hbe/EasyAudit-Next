@@ -1,13 +1,14 @@
-from typing import NoReturn
+from typing import Annotated, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
 from easyaudit_next.api.review_contracts import (
     CaseMemberCreateRequest,
     CaseMemberResponse,
+    ReviewCaseCollectionResponse,
     ReviewCaseCreateRequest,
     ReviewCaseResponse,
     ReviewCaseTransitionRequest,
@@ -16,6 +17,7 @@ from easyaudit_next.api.review_contracts import (
 )
 from easyaudit_next.composition import (
     build_notification_orchestrator,
+    build_review_case_collection_query_service,
     build_review_planning_service,
 )
 from easyaudit_next.platform.domain.ids import UserId
@@ -180,18 +182,26 @@ def create_review_case(
 
 @review_planning_router.get(
     "/review-cases",
-    response_model=list[ReviewCaseResponse],
+    response_model=ReviewCaseCollectionResponse,
     operation_id="listReviewCases",
 )
 def list_review_cases(
     identity: BusinessIdentity,
     session: DatabaseSession,
-) -> list[ReviewCaseResponse]:
-    service = build_review_planning_service(session)
-    try:
-        return [_case_response(item) for item in service.list_cases(identity.user)]
-    except ReviewAuthorizationError as exc:
-        _raise_api_error(exc)
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ReviewCaseCollectionResponse:
+    collection = build_review_case_collection_query_service(session).list_review_cases(
+        identity.user,
+        limit=limit,
+        offset=offset,
+    )
+    return ReviewCaseCollectionResponse(
+        items=tuple(_case_response(item) for item in collection.items),
+        total=collection.total,
+        limit=collection.limit,
+        offset=collection.offset,
+    )
 
 
 @review_planning_router.get(
