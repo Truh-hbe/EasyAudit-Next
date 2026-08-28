@@ -187,22 +187,23 @@ class SqlAlchemyNotificationRepository:
         *,
         limit: int,
         offset: int,
+        unread_only: bool = False,
     ) -> tuple[NotificationRecord, ...]:
-        return tuple(
-            self._session.scalars(
-                select(NotificationRecord)
-                .where(
-                    NotificationRecord.organization_id == organization_id,
-                    NotificationRecord.recipient_user_id == recipient_user_id,
-                )
-                .order_by(
-                    NotificationRecord.created_at.desc(),
-                    NotificationRecord.id.desc(),
-                )
-                .limit(limit)
-                .offset(offset)
-            )
+        statement = select(NotificationRecord).where(
+            NotificationRecord.organization_id == organization_id,
+            NotificationRecord.recipient_user_id == recipient_user_id,
         )
+        if unread_only:
+            statement = statement.where(NotificationRecord.read_at.is_(None))
+        statement = (
+            statement.order_by(
+                NotificationRecord.created_at.desc(),
+                NotificationRecord.id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        return tuple(self._session.scalars(statement))
 
     def count_unread(
         self,
