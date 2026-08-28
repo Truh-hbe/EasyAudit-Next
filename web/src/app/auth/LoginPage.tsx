@@ -1,11 +1,22 @@
 import { type FormEvent, useState } from 'react'
+import { useLocation } from 'react-router'
 
 import { loginWithPassword } from '../../api/auth'
 import { ApiError } from '../../api/client'
 import { useSession } from './session'
 
+function hasUnconfirmedLogout(state: unknown): boolean {
+  return (
+    typeof state === 'object' &&
+    state !== null &&
+    'logoutUnconfirmed' in state &&
+    (state as { logoutUnconfirmed?: unknown }).logoutUnconfirmed === true
+  )
+}
+
 export function LoginPage() {
   const { refresh } = useSession()
+  const location = useLocation()
   const [loginName, setLoginName] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -34,6 +45,9 @@ export function LoginPage() {
     <main className="auth-card" aria-labelledby="login-title">
       <p className="eyebrow">EasyAudit Next</p>
       <h1 id="login-title">登录</h1>
+      {hasUnconfirmedLogout(location.state) ? (
+        <p role="status">本地受保护界面已清除，但服务器退出状态未能确认。</p>
+      ) : null}
       <form onSubmit={(event) => void submit(event)}>
         <label>
           登录名

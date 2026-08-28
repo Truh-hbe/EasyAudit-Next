@@ -1,13 +1,12 @@
 import { type FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router'
 
-import { changeOwnPassword, logoutCurrentSession } from '../../api/auth'
+import { changeOwnPassword } from '../../api/auth'
 import { ApiError } from '../../api/client'
+import { LogoutButton } from './LogoutButton'
 import { useSession } from './session'
 
 export function CredentialRemediationPage() {
-  const { state, refresh, clearLocalSession } = useSession()
-  const navigate = useNavigate()
+  const { state, refresh } = useSession()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -44,24 +43,6 @@ export function CredentialRemediationPage() {
       }
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  async function logout() {
-    setError(null)
-    try {
-      await logoutCurrentSession()
-      clearLocalSession()
-      navigate('/login', { replace: true })
-    } catch (caught) {
-      clearLocalSession()
-      navigate('/login', {
-        replace: true,
-        state:
-          caught instanceof ApiError && caught.status === 401
-            ? undefined
-            : { logoutUnconfirmed: true },
-      })
     }
   }
 
@@ -106,9 +87,7 @@ export function CredentialRemediationPage() {
           {submitting ? '提交中…' : '修改密码'}
         </button>
       </form>
-      <button type="button" className="secondary" onClick={() => void logout()}>
-        退出登录
-      </button>
+      <LogoutButton className="secondary" />
     </main>
   )
 }

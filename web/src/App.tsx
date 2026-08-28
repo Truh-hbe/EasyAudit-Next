@@ -5,9 +5,9 @@ import { LoginPage } from './app/auth/LoginPage'
 import { useSession } from './app/auth/session'
 import {
   CREDENTIAL_REMEDIATION_PATH,
-  DEFAULT_AUTHENTICATED_PATH,
   safeIntendedPath,
 } from './app/router/intendedRoute'
+import { ProductShell } from './app/shell/ProductShell'
 
 function ResolvingPage() {
   const { resolutionError, refresh } = useSession()
@@ -24,21 +24,6 @@ function ResolvingPage() {
           </button>
         </div>
       )}
-    </main>
-  )
-}
-
-function CredentialReadyBoundary() {
-  const { state } = useSession()
-  if (state.status !== 'authenticated') {
-    return null
-  }
-  return (
-    <main className="foundation" aria-labelledby="ready-title">
-      <p className="eyebrow">M3.5.1</p>
-      <h1 id="ready-title">凭据已就绪</h1>
-      <p>{state.user.display_name}</p>
-      <p>Product Shell 与正式导航将在下一可审查增量接入。</p>
     </main>
   )
 }
@@ -89,8 +74,8 @@ export function App() {
     location.pathname === '/login' ||
     location.pathname === CREDENTIAL_REMEDIATION_PATH
   ) {
-    return <Navigate replace to={requestedNext || DEFAULT_AUTHENTICATED_PATH} />
+    return <Navigate replace to={requestedNext} />
   }
 
-  return <CredentialReadyBoundary />
+  return <ProductShell />
 }

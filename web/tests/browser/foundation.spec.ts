@@ -77,7 +77,7 @@ test('authenticated password requirement wins over intended business route', asy
 
   await expect(page).toHaveURL(/\/me\/credential-remediation\?next=%2Freview-cases%2Fcase-1$/)
   await expect(page.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '凭据已就绪' })).not.toBeVisible()
+  await expect(page.getByRole('navigation', { name: '主要导航' })).not.toBeVisible()
 })
 
 test('password remediation re-resolves server posture before resuming intended route', async ({ page }) => {
@@ -109,6 +109,46 @@ test('password remediation re-resolves server posture before resuming intended r
   await page.getByRole('button', { name: '修改密码' }).click()
 
   await expect(page).toHaveURL(/\/review-cases\/case-1$/)
-  await expect(page.getByRole('heading', { name: '凭据已就绪' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '审查活动' })).toBeVisible()
   expect(passwordChanged).toBe(true)
+})
+
+test('credential-ready shell exposes only structural navigation and honest placeholders', async ({ page }) => {
+  await page.route('**/api/v1/me', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...user, must_change_password: false }),
+    }),
+  )
+
+  await page.goto('/me/workbench')
+  const nav = page.getByRole('navigation', { name: '主要导航' })
+  await expect(nav).toBeVisible()
+  await expect(nav.getByRole('link', { name: '我的工作' })).toBeVisible()
+  await expect(nav.getByRole('link', { name: '审查活动' })).toBeVisible()
+  await expect(nav.getByRole('link', { name: '通知' })).toBeVisible()
+  await expect(nav.getByRole('link', { name: '管理视图' })).toBeVisible()
+  await expect(nav.getByRole('link', { name: '管理设置' })).not.toBeVisible()
+  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+  await expect(page.getByText('当前仅提供产品结构入口')).toBeVisible()
+})
+
+test('system admin role only adds platform administration navigation hint', async ({ page }) => {
+  await page.route('**/api/v1/me', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...user,
+        platform_role: 'system_admin',
+        must_change_password: false,
+      }),
+    }),
+  )
+
+  await page.goto('/me/workbench')
+  await expect(
+    page.getByRole('navigation', { name: '主要导航' }).getByRole('link', { name: '管理设置' }),
+  ).toBeVisible()
 })
