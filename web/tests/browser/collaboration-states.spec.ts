@@ -182,7 +182,7 @@ test('Action detail presents all frozen lifecycles and formats due time without 
   lifecycle = 'done'
   await page.reload()
   await expect(page.locator('.status-pill')).toHaveText('done')
-  await expect(page.getByRole('button', { name: '重新打开 Action' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '重新打开', exact: true })).toBeVisible()
 
   lifecycle = 'cancelled'
   await page.reload()
