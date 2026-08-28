@@ -43,3 +43,21 @@ jobs:
       - run: python scripts/check_openapi.py
       - run: alembic upgrade head
       - run: pytest
+
+  frontend-lock-bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+      - name: Generate deterministic frontend lockfile
+        working-directory: web
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-package-lock
+          path: web/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
