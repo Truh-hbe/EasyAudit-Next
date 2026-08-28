@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
+import { nudgeActionItem } from '../../api/collaboration'
 import {
   addActionAssignee,
   getActionAssigneeViews,
@@ -86,6 +87,8 @@ export function ActionItemDetailPage() {
   const [transitionReason, setTransitionReason] = useState('')
   const [commandBusy, setCommandBusy] = useState(false)
   const [commandMessage, setCommandMessage] = useState<string | null>(null)
+  const [nudgeBusy, setNudgeBusy] = useState(false)
+  const [nudgeMessage, setNudgeMessage] = useState<string | null>(null)
 
   useEffect(() => {
     candidateSearchSequenceRef.current += 1
@@ -95,6 +98,8 @@ export function ActionItemDetailPage() {
     setTransitionReason('')
     setCommandBusy(false)
     setCommandMessage(null)
+    setNudgeBusy(false)
+    setNudgeMessage(null)
   }, [actionItemId])
 
   useEffect(() => {
@@ -229,6 +234,30 @@ export function ActionItemDetailPage() {
     } finally {
       if (currentActionItemIdRef.current === commandActionItemId) {
         setCommandBusy(false)
+      }
+    }
+  }
+
+  async function runNudge(currentActionId: string) {
+    const commandActionItemId = actionItemId
+    setNudgeBusy(true)
+    setNudgeMessage(null)
+    try {
+      const result = await nudgeActionItem(currentActionId)
+      if (currentActionItemIdRef.current !== commandActionItemId) return
+      setNudgeMessage(
+        `服务器已确认催办：${result.recipient_count} 位接收人，Activity ${result.activity_id}。`,
+      )
+      setRevision((value) => value + 1)
+    } catch (error) {
+      if (currentActionItemIdRef.current !== commandActionItemId) return
+      setNudgeMessage(errorMessage(error, 'Action 催办失败'))
+      if (error instanceof ApiError && error.status === 404) {
+        setRevision((value) => value + 1)
+      }
+    } finally {
+      if (currentActionItemIdRef.current === commandActionItemId) {
+        setNudgeBusy(false)
       }
     }
   }
@@ -405,6 +434,20 @@ export function ActionItemDetailPage() {
           {commandMessage === null ? null : <p role="status">{commandMessage}</p>}
         </section>
       )}
+
+      <section className="surface-card" aria-labelledby="action-nudge-title">
+        <h2 id="action-nudge-title">协作提醒</h2>
+        <p className="empty-note">按钮不证明催办权限，也不选择接收人；服务器按当前 exact Scenario 与关系事实重新授权并解析 recipient。</p>
+        <button
+          type="button"
+          className="secondary"
+          disabled={nudgeBusy}
+          onClick={() => void runNudge(action.id)}
+        >
+          {nudgeBusy ? '正在催办…' : '催一下'}
+        </button>
+        {nudgeMessage === null ? null : <p role="status">{nudgeMessage}</p>}
+      </section>
 
       <section className="surface-card" aria-labelledby="evidence-title">
         <h2 id="evidence-title">Evidence</h2>
