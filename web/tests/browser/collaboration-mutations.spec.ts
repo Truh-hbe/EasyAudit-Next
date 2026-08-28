@@ -152,7 +152,7 @@ test('Action creation refuses fake local state then refreshes persisted server A
   await expect(page.getByText('Client draft title')).toHaveCount(0)
 })
 
-test('assignee refusal never creates a local assignment and success refreshes persisted assignee truth', async ({ page }) => {
+test('assignee refusal invalidates stale candidates and success refreshes persisted assignee truth', async ({ page }) => {
   await stubReadySession(page)
   const actionId = 'action-assignee'
   const findingId = 'finding-assignee'
@@ -212,13 +212,17 @@ test('assignee refusal never creates a local assignment and success refreshes pe
   await page.goto(`/action-items/${actionId}`)
   await page.getByLabel('搜索').fill('Candidate')
   await page.getByRole('button', { name: '搜索候选' }).click()
+  await expect(page.getByText('Candidate User')).toBeVisible()
   await page.getByRole('button', { name: '添加', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('assignment authority changed')
-  await expect(page.getByText('Candidate User')).toBeVisible()
+  await expect(page.getByText('Candidate User')).toHaveCount(0)
   await expect(page.getByText('Persisted Assignee')).toHaveCount(0)
   await expect(page.getByText('暂无执行人。')).toBeVisible()
 
   allowAssign = true
+  await page.getByLabel('搜索').fill('Candidate')
+  await page.getByRole('button', { name: '搜索候选' }).click()
+  await expect(page.getByText('Candidate User')).toBeVisible()
   await page.getByRole('button', { name: '添加', exact: true }).click()
   await expect(page.getByText('Persisted Assignee')).toBeVisible()
   await expect(page.getByText('Candidate User')).toHaveCount(0)
@@ -264,7 +268,8 @@ test('rectification plan and completion stay server-owned, including reopened-Ac
   await page.getByLabel('根本原因').fill('training gap')
   planAllowed = true
   await page.getByRole('button', { name: '提交正式计划' }).click()
-  await expect(page.getByText('rectification').first()).toBeVisible()
+  const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
+  await expect(submissionHistory.getByText('rectification', { exact: true })).toHaveCount(1)
   await expect(page.locator('.status-pill')).toHaveText('rectifying')
 
   await page.getByLabel('整改完成说明').fill('all actions completed')
@@ -277,7 +282,7 @@ test('rectification plan and completion stay server-owned, including reopened-Ac
   completionAllowed = true
   await page.getByRole('button', { name: '提交验证' }).click()
   await expect(page.locator('.status-pill')).toHaveText('verifying')
-  await expect(page.getByText('rectification')).toHaveCount(2)
+  await expect(submissionHistory.getByText('rectification', { exact: true })).toHaveCount(2)
 })
 
 test('verification refusal, reject success, and reopen validation preserve authoritative Finding state', async ({ page }) => {
@@ -320,7 +325,8 @@ test('verification refusal, reject success, and reopen validation preserve autho
   await page.getByLabel('驳回原因').fill('evidence incomplete')
   await page.getByRole('button', { name: 'Reject' }).click()
   await expect(page.locator('.status-pill')).toHaveText('rectifying')
-  await expect(page.getByText('verification')).toBeVisible()
+  const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
+  await expect(submissionHistory.getByText('verification', { exact: true })).toBeVisible()
 
   lifecycle = 'closed'
   await page.reload()
