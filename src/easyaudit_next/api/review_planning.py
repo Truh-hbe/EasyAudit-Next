@@ -22,7 +22,7 @@ from easyaudit_next.composition import (
     build_review_planning_service,
 )
 from easyaudit_next.platform.domain.ids import UserId
-from easyaudit_next.review_case_queries.query_service import (
+from easyaudit_next.review_case_queries.context_service import (
     CaseMemberView,
     ReviewCaseActivityView,
 )
