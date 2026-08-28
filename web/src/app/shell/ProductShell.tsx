@@ -2,6 +2,9 @@ import { NavLink, Navigate, Route, Routes } from 'react-router'
 
 import { ActionItemDetailPage } from '../../features/actions/ActionItemDetailPage'
 import { FindingDetailPage } from '../../features/findings/FindingDetailPage'
+import { ManagementCaseProgressPage } from '../../features/management/ManagementCaseProgressPage'
+import { ManagementPage } from '../../features/management/ManagementPage'
+import { NotificationCenterPage } from '../../features/notifications/NotificationCenterPage'
 import { ReviewCaseCollectionPage } from '../../features/reviewCases/ReviewCaseCollectionPage'
 import { ReviewCaseDetailPage } from '../../features/reviewCases/ReviewCaseDetailPage'
 import { WorkbenchPage } from '../../features/workbench/WorkbenchPage'
@@ -53,25 +56,11 @@ export function ProductShell() {
           <Route path="/review-cases/:caseId" element={<ReviewCaseDetailPage />} />
           <Route path="/findings/:findingId" element={<FindingDetailPage />} />
           <Route path="/action-items/:actionItemId" element={<ActionItemDetailPage />} />
+          <Route path="/me/notifications" element={<NotificationCenterPage />} />
+          <Route path="/management" element={<ManagementPage />} />
           <Route
-            path="/me/notifications"
-            element={
-              <PlaceholderPage
-                title="通知"
-                slice="M3.5.4"
-                description="Notification Center 将直接消费已合并的持久通知能力。"
-              />
-            }
-          />
-          <Route
-            path="/management"
-            element={
-              <PlaceholderPage
-                title="管理视图"
-                slice="M3.5.4"
-                description="管理进度与逾期视图将在后续切片消费现有 management read-side。"
-              />
-            }
+            path="/management/review-cases/:caseId"
+            element={<ManagementCaseProgressPage />}
           />
           <Route
             path="/admin/*"
