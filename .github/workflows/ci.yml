@@ -44,27 +44,30 @@ jobs:
       - run: alembic upgrade head
       - run: pytest
 
-  frontend-lock-bootstrap:
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: write
+  frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22.16.0"
-      - name: Generate deterministic frontend lockfile
-        working-directory: web
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Commit generated lockfile to implementation branch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add web/package-lock.json
-          git diff --cached --quiet && exit 0
-          git commit -m "chore: lock frontend dependencies"
-          git push origin HEAD:${{ github.head_ref }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend dependencies from lockfile
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Typecheck frontend
+        run: npm run typecheck
+      - name: Lint frontend
+        run: npm run lint
+      - name: Run frontend unit/component tests
+        run: npm run test
+      - name: Build frontend
+        run: npm run build
+      - name: Install Chromium for browser acceptance
+        run: npx playwright install --with-deps chromium
+      - name: Run browser foundation acceptance
+        run: npm run test:browser
