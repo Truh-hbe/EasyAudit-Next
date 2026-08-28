@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -224,9 +224,22 @@ async function stubProduct(page: Page) {
 }
 
 async function expectNoDocumentOverflow(page: Page) {
-  await expect.poll(() => page.evaluate(
-    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-  )).toBeLessThanOrEqual(1)
+  await expect.poll(() => page.evaluate(() => {
+    const browser = globalThis as unknown as {
+      document: { documentElement: { scrollWidth: number; clientWidth: number } }
+    }
+    return browser.document.documentElement.scrollWidth - browser.document.documentElement.clientWidth
+  })).toBeLessThanOrEqual(1)
+}
+
+async function visibleOutline(locator: Locator) {
+  return locator.evaluate((element) => {
+    const browser = globalThis as unknown as {
+      getComputedStyle: (target: unknown) => { outlineStyle: string; outlineWidth: string }
+    }
+    const style = browser.getComputedStyle(element)
+    return { style: style.outlineStyle, width: style.outlineWidth }
+  })
 }
 
 test('M3.5.5 narrow product route matrix keeps essential controls inside the document viewport', async ({ page }) => {
@@ -281,10 +294,9 @@ test('M3.5.5 keyboard focus is visible and primary navigation remains keyboard-o
   const notificationLink = nav.getByRole('link', { name: '通知' })
   await notificationLink.focus()
   await expect(notificationLink).toBeFocused()
-  const outlineStyle = await notificationLink.evaluate((element) => getComputedStyle(element).outlineStyle)
-  const outlineWidth = await notificationLink.evaluate((element) => getComputedStyle(element).outlineWidth)
-  expect(outlineStyle).not.toBe('none')
-  expect(outlineWidth).not.toBe('0px')
+  const linkOutline = await visibleOutline(notificationLink)
+  expect(linkOutline.style).not.toBe('none')
+  expect(linkOutline.width).not.toBe('0px')
   await notificationLink.press('Enter')
   await expect(page).toHaveURL(/\/me\/notifications$/)
   await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
@@ -292,7 +304,7 @@ test('M3.5.5 keyboard focus is visible and primary navigation remains keyboard-o
   const unreadButton = page.getByRole('button', { name: /未读/ })
   await unreadButton.focus()
   await expect(unreadButton).toBeFocused()
-  expect(await unreadButton.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe('none')
+  expect((await visibleOutline(unreadButton)).style).not.toBe('none')
 })
 
 test('M3.5.5 management nudge success survives authoritative same-case refetch', async ({ page }) => {
