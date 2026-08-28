@@ -36,7 +36,7 @@ test('real PostgreSQL + FastAPI credential readiness journey', async ({ page, co
   expect(firstLogin.session_id).not.toBe('')
 
   await expect(page.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
-  expect(new URL(page.url()).pathname).toBe('/account/password')
+  expect(new URL(page.url()).pathname).toBe('/me/credential-remediation')
 
   const cookiesAfterLogin = await context.cookies()
   const tokenZero = cookiesAfterLogin.find((cookie) => cookie.name === COOKIE_NAME)
