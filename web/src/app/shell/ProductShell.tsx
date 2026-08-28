@@ -1,6 +1,7 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router'
 
-import { ResourcePlaceholderPage } from '../../features/reviewCases/ResourcePlaceholderPage'
+import { ActionItemDetailPage } from '../../features/actions/ActionItemDetailPage'
+import { FindingDetailPage } from '../../features/findings/FindingDetailPage'
 import { ReviewCaseCollectionPage } from '../../features/reviewCases/ReviewCaseCollectionPage'
 import { ReviewCaseDetailPage } from '../../features/reviewCases/ReviewCaseDetailPage'
 import { WorkbenchPage } from '../../features/workbench/WorkbenchPage'
@@ -50,8 +51,8 @@ export function ProductShell() {
           <Route path="/me/workbench" element={<WorkbenchPage />} />
           <Route path="/review-cases" element={<ReviewCaseCollectionPage />} />
           <Route path="/review-cases/:caseId" element={<ReviewCaseDetailPage />} />
-          <Route path="/findings/:findingId" element={<ResourcePlaceholderPage resource="Finding" />} />
-          <Route path="/action-items/:actionItemId" element={<ResourcePlaceholderPage resource="ActionItem" />} />
+          <Route path="/findings/:findingId" element={<FindingDetailPage />} />
+          <Route path="/action-items/:actionItemId" element={<ActionItemDetailPage />} />
           <Route
             path="/me/notifications"
             element={
