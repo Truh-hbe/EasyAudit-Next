@@ -96,13 +96,21 @@ The real acceptance test uses PostgreSQL, FastAPI and the React page to prove:
 4. create a user with an initial password and assign its department;
 5. log in as that user, complete the existing forced password change, and verify
    business access is then available;
-6. return as administrator, edit the user and disable/re-enable it;
-7. reset the user's credential and verify the prior session is rejected and the
+6. while the user is the final effective manager of an assigned ReviewCase,
+   attempt to disable it and verify the existing 409 response leaves the User,
+   Session, audit and case-team state unchanged;
+7. after the invariant check, return as administrator, edit the user and
+   disable/re-enable it when the case-team invariant permits it;
+8. reset the user's credential and verify the prior session is rejected and the
    forced password-change flow is required on the next login; and
-8. verify exact Scenario installation/version status is visible.
+9. verify exact Scenario installation/version status is visible.
 
 A separate API/integration path verifies an ordinary user, cross-organization
-IDs, invalid password, missing credential and last-system-admin protection.
+IDs, invalid password, missing credential, last-system-admin protection and the
+M5.3 final-effective-Case-manager deactivation protection. The latter must
+assert the 409 response and no User, Session, PlatformAudit or ReviewCase
+membership mutation, proving the M5.4 admin route still uses the existing
+`CaseTeamCoordinator.update_user` orchestration.
 
 ## Required verification
 
@@ -113,7 +121,8 @@ The slice must include:
   request/response/status contract;
 - integration coverage for authorization, organization isolation, department
   and user mutations, credential hashing, `must_change_password`, session
-  revocation, audit events and atomic failure;
+  revocation, audit events and atomic failure, including the final-effective-
+  Case-manager deactivation conflict and no-partial-mutation invariant;
 - regression coverage proving the temporary password and hash are never
   returned or persisted in audit metadata;
 - frontend tests for CRUD request shaping, exact IDs, scenario-version display,
