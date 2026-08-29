@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.1",
-  "phase": "GATE_REVIEW",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "90d5a1a6ba447d59f0941e85890c4eee8b00aee1"
@@ -21,20 +21,33 @@
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/**"
+      "docs/architecture/m5-1-*.md",
+      "src/easyaudit_next/cli.py",
+      "src/easyaudit_next/composition.py",
+      "src/easyaudit_next/api/review_contracts.py",
+      "src/easyaudit_next/api/review_planning.py",
+      "src/easyaudit_next/review_case_queries/**",
+      "tests/unit/**",
+      "tests/api/**",
+      "tests/integration/**",
+      "openapi/openapi.json",
+      "web/src/api/product.ts",
+      "web/src/scenarios/**"
     ],
     "forbidden_paths": [
-      "src/**",
-      "web/**",
-      "tests/**",
       "alembic/**",
-      "openapi/**",
-      "package.json",
+      "src/easyaudit_next/review_core/persistence/models.py",
+      "src/easyaudit_next/platform/**",
+      "src/easyaudit_next/review_core/application/review_planning.py",
+      "src/easyaudit_next/review_core/domain/**",
+      "web/src/app/**",
+      "web/src/features/**",
+      "web/package.json",
       "**/package.json",
       "**/package-lock.json",
       ".github/workflows/**"
     ]
   },
   "fixed_head": null,
-  "next_allowed_action": "ChatGPT Architecture / Acceptance review for M5.1"
+  "next_allowed_action": "Implement approved M5.1 scenario publication, catalog, and exact frontend adapter seam"
 }
