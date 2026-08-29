@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -16,6 +17,7 @@ def load_gate_module() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -83,6 +85,39 @@ def test_scope_accepts_gate_docs_and_fixed_head(tmp_path: Path) -> None:
     assert result["violations"] == []
 
 
+def test_scope_accepts_fixed_pr_head_when_actions_checkout_is_merge_ref(tmp_path: Path) -> None:
+    module = load_gate_module()
+    module.ROOT = tmp_path
+    state = {
+        "scope": {"allowed_paths": ["docs/**"], "forbidden_paths": []},
+        "gate_docs": [],
+        "fixed_head": "candidate-sha",
+        "work_branch": "codex/example",
+    }
+    merge_ref_evidence = module.GitEvidence(
+        base_ref="base",
+        merge_base="base-sha",
+        head_sha="synthetic-merge-sha",
+        head_tree="tree-sha",
+        branch="",
+        ahead=2,
+        behind=0,
+        changed_files=("docs/gate.md",),
+        working_tree_clean=True,
+        status_lines=(),
+    )
+
+    result = module._evaluate_scope(
+        state,
+        merge_ref_evidence,
+        {"pr_head_sha": "candidate-sha", "pr_head_ref": "codex/example"},
+    )
+
+    assert result["pass"] is True
+    assert result["fixed_head_matches"] is True
+    assert result["branch_matches"] is True
+
+
 def test_load_state_rejects_unknown_phase(tmp_path: Path) -> None:
     module = load_gate_module()
     state_path = tmp_path / "state.json"
@@ -108,4 +143,4 @@ def test_proof_marks_github_actions_as_final_ci_authority(monkeypatch: pytest.Mo
 
     assert proof["authority"]["c2c_execution_records_are_final_ci"] is False
     assert proof["authority"]["github_actions_is_final_ci_authority"] is True
-    assert proof["ci_environment"]["github_actions"] is True
+    assert proof["github"]["actions"] is True
