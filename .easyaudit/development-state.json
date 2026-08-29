@@ -37,5 +37,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Resync branch with current main and rerun review"
+  "next_allowed_action": "Run focused checks and prepare updated review candidate"
 }
