@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "process-gate-evidence-hardening",
-  "phase": "FINAL_REVIEW",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "5887503a3d5ff84a98f5ad7d993a6c68687fd048"
@@ -33,9 +33,9 @@
       "tests/unit/**"
     ]
   },
-  "fixed_head": "d1ab6cbc8b323a2fafd966a723cd89ab8d6d25ee",
+  "fixed_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Final Review"
+  "next_allowed_action": "Fix CI isolation for temporary Git topology test"
 }
