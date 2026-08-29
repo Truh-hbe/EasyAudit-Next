@@ -40,21 +40,33 @@ export interface ScenarioAssigneeOption extends ScenarioRelationshipOption {
   role: AssignmentRole
 }
 
+export interface ScenarioFindingCommandPorts {
+  transition: (action: string, reason?: string) => Promise<unknown>
+  submitRectification: (
+    action: string,
+    payload: Record<string, unknown>,
+  ) => Promise<unknown>
+  submitVerification: (
+    action: string,
+    payload: Record<string, unknown>,
+  ) => Promise<unknown>
+  reopen: (reason: string) => Promise<unknown>
+}
+
+export interface ScenarioFindingInteractionProps {
+  finding: FindingResponse
+  disabled?: boolean
+  commands: ScenarioFindingCommandPorts
+  execute: (label: string, command: () => Promise<unknown>) => Promise<void>
+}
+
 export interface ScenarioFindingAdapter {
   FindingScenarioSection: ComponentType<ScenarioFindingSectionProps>
   FindingCreateFields: ComponentType<ScenarioFormFieldsProps>
   buildFindingScenarioData: (values: ScenarioFormValues) => Record<string, unknown>
   participantOptions: readonly ScenarioParticipantOption[]
   assigneeOptions: readonly ScenarioAssigneeOption[]
-  RectificationPlanFields: ComponentType<ScenarioFormFieldsProps>
-  buildRectificationPlanPayload: (values: ScenarioFormValues) => Record<string, unknown>
-  CompletionFields: ComponentType<ScenarioFormFieldsProps>
-  buildCompletionPayload: (values: ScenarioFormValues) => Record<string, unknown>
-  VerificationRejectFields: ComponentType<ScenarioFormFieldsProps>
-  buildVerificationPayload: (
-    action: 'approve' | 'reject',
-    values: ScenarioFormValues,
-  ) => Record<string, unknown>
+  FindingInteractionSection: ComponentType<ScenarioFindingInteractionProps>
 }
 
 export interface ScenarioUiAdapter extends ScenarioCaseAdapter, ScenarioFindingAdapter {}
