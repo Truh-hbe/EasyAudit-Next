@@ -205,9 +205,15 @@ class ComplianceReviewCaseWorkflow:
         except ValueError as exc:
             raise WorkflowTransitionError(f"Unknown ReviewCase action: {action!r}") from exc
 
-        if lifecycle is ReviewCaseLifecycle.DRAFT and operation is ComplianceReviewCaseAction.SCHEDULE:
+        if (
+            lifecycle is ReviewCaseLifecycle.DRAFT
+            and operation is ComplianceReviewCaseAction.SCHEDULE
+        ):
             return ReviewCaseLifecycle.SCHEDULED
-        if lifecycle is ReviewCaseLifecycle.SCHEDULED and operation is ComplianceReviewCaseAction.START:
+        if (
+            lifecycle is ReviewCaseLifecycle.SCHEDULED
+            and operation is ComplianceReviewCaseAction.START
+        ):
             return ReviewCaseLifecycle.IN_PROGRESS
         if (
             lifecycle is ReviewCaseLifecycle.IN_PROGRESS
@@ -272,13 +278,22 @@ class ComplianceReviewFindingWorkflow:
                     "Every non-cancelled ActionItem must be done before verification"
                 )
             return FindingLifecycle.VERIFYING
-        if lifecycle is FindingLifecycle.VERIFYING and operation is ComplianceReviewFindingAction.APPROVE:
+        if (
+            lifecycle is FindingLifecycle.VERIFYING
+            and operation is ComplianceReviewFindingAction.APPROVE
+        ):
             return FindingLifecycle.CLOSED
-        if lifecycle is FindingLifecycle.VERIFYING and operation is ComplianceReviewFindingAction.REJECT:
+        if (
+            lifecycle is FindingLifecycle.VERIFYING
+            and operation is ComplianceReviewFindingAction.REJECT
+        ):
             if not _has_reason(context.reason):
                 raise WorkflowTransitionError("Rejecting a Finding requires a reason")
             return FindingLifecycle.RECTIFYING
-        if lifecycle is FindingLifecycle.CLOSED and operation is ComplianceReviewFindingAction.REOPEN:
+        if (
+            lifecycle is FindingLifecycle.CLOSED
+            and operation is ComplianceReviewFindingAction.REOPEN
+        ):
             if not _has_reason(context.reason):
                 raise WorkflowTransitionError("Reopening a Finding requires a reason")
             return FindingLifecycle.RECTIFYING
@@ -406,7 +421,10 @@ class ComplianceReviewActionWorkflow:
             operation = ComplianceReviewActionItemAction(action)
         except ValueError as exc:
             raise WorkflowTransitionError(f"Unknown ActionItem action: {action!r}") from exc
-        if lifecycle is ActionItemLifecycle.TODO and operation is ComplianceReviewActionItemAction.START:
+        if (
+            lifecycle is ActionItemLifecycle.TODO
+            and operation is ComplianceReviewActionItemAction.START
+        ):
             return ActionItemLifecycle.IN_PROGRESS
         if (
             lifecycle is ActionItemLifecycle.IN_PROGRESS
@@ -420,7 +438,10 @@ class ComplianceReviewActionWorkflow:
             if not _has_reason(context.reason):
                 raise WorkflowTransitionError("Cancelling an ActionItem requires a reason")
             return ActionItemLifecycle.CANCELLED
-        if lifecycle is ActionItemLifecycle.DONE and operation is ComplianceReviewActionItemAction.REOPEN:
+        if (
+            lifecycle is ActionItemLifecycle.DONE
+            and operation is ComplianceReviewActionItemAction.REOPEN
+        ):
             return ActionItemLifecycle.IN_PROGRESS
         raise WorkflowTransitionError(
             f"ActionItem cannot perform {operation.value!r} from lifecycle {lifecycle.value!r}"
@@ -672,7 +693,9 @@ class ComplianceReviewV1Policy:
     finding_direct_transitions: DirectFindingTransitionPolicy = field(
         default_factory=ComplianceReviewDirectFindingTransitions
     )
-    action_workflow: ActionItemWorkflowPolicy = field(default_factory=ComplianceReviewActionWorkflow)
+    action_workflow: ActionItemWorkflowPolicy = field(
+        default_factory=ComplianceReviewActionWorkflow
+    )
     action_operations: ActionItemOperationPolicy = field(
         default_factory=ComplianceReviewActionOperations
     )
@@ -688,7 +711,11 @@ class ComplianceReviewV1Policy:
     def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[str, ...]:
         errors = list(_required_text_fields(payload, ("criterion_reference", "finding_type")))
         finding_type = payload.get("finding_type")
-        if isinstance(finding_type, str) and finding_type.strip() and finding_type == finding_type.strip():
+        if (
+            isinstance(finding_type, str)
+            and finding_type.strip()
+            and finding_type == finding_type.strip()
+        ):
             try:
                 ComplianceReviewFindingType(finding_type)
             except ValueError:
