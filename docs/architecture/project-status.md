@@ -11,42 +11,34 @@ Last verified: 2026-08-29
 - Current slice: M5.1 ReviewPlan Planning Surface Architecture / Acceptance Gate.
 - Current Gate PR: #29 (codex/m5-1-reviewplan-planning-gate), currently Draft / GATE_DRAFT.
 
-## Completed product milestones
+## Authority model
 
-- M0 Bootstrap.
-- M1 Platform Foundation.
-- M2 Process Review.
-- M3 Collaboration and Management.
-- M3.5 Product Surface.
-- M4 Second Scenario Validation using compliance_review@1.
+- Web ChatGPT / GPT-5.6 sol: project development, architecture, acceptance, implementation review and independent Gate/Final Review.
+- Local Codex / browser: start and drive Web ChatGPT conversations, provide verified state, apply approved changes, run local/deployment/browser tests and maintain GitHub evidence.
+- GitHub / GitHub Actions: canonical repository, SHA, merge and final CI evidence.
+- Chat or driver DONE: iteration completion only; never merge authorization.
+- User: product direction, trade-off approval and final merge authorization.
 
 ## Persistent startup contract
 
-Every new project conversation must reconstruct context from repository state before relying on prior chat history:
+Every new project conversation must reconstruct context without user transcription:
 
 1. Read AGENTS.md and this file.
 2. Read .easyaudit/development-state.json.
-3. Read every Gate document listed by the state file.
-4. Verify main, the active branch, the base SHA, the PR head and the latest GitHub Actions run.
-5. Run the Gate check when active=true.
-6. Report the current phase and next_allowed_action before changing files.
+3. Read .easyaudit/review-decision.json when present.
+4. Read every Gate document listed by the state file.
+5. Verify main, active branch, base SHA, PR head/tree and latest GitHub Actions.
+6. Run the Gate check when active=true.
+7. Declare Status, Dev, Gate Review or Final Review mode and report next_allowed_action.
 
 An inconsistent state, missing Gate document, moved fixed head or stale CI result stops work until reconciled.
 
-## Authority model
-
-- ChatGPT: architecture, acceptance, semantic implementation review and release recommendation.
-- Codex: workspace execution, tests, Git operations, evidence generation and PR maintenance.
-- GitHub / GitHub Actions: canonical repository, SHA, merge and final CI evidence.
-- C2C or chat DONE: iteration completion only; never merge authorization.
-- User: product direction, trade-off approval and final merge authorization.
-
 ## Current next action
 
-The M5.1 Gate must first receive an independent Architecture / Acceptance review. No executable product work is authorized while the state phase is GATE_DRAFT or GATE_REVIEW.
+The M5.1 Gate must receive an independent Web ChatGPT / GPT-5.6 sol Architecture / Acceptance review. No executable product work is authorized while the state phase is GATE_DRAFT or GATE_REVIEW.
 
 After a passing Gate, the state file may move to IMPLEMENTATION and the scope may be widened explicitly. The first implementation target is the ReviewPlan planning surface; later M5 slices must not be started implicitly.
 
 ## Recovery rule
 
-A fresh conversation may continue the active slice by reading this status, the state file, the Gate documents, GitHub and the relevant source. It must not require the user to paste a previous conversation or manually transcribe SHAs and test output.
+The local Codex/browser driver may start a fresh Web ChatGPT project conversation and provide the structured bootstrap automatically. Web ChatGPT must read the repository and GitHub evidence itself; the user does not need to paste a previous conversation or manually transcribe SHAs and test output.
