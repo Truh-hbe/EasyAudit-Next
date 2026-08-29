@@ -21,6 +21,7 @@
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
+      "docs/architecture/m5-0-controlled-pilot-charter.md",
       "docs/architecture/m5-1-*.md",
       "src/easyaudit_next/cli.py",
       "src/easyaudit_next/composition.py",
