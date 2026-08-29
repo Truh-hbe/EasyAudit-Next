@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "active": false,
+  "project": "EasyAudit-Next",
+  "milestone": null,
+  "slice": null,
+  "phase": "UNSET",
+  "base": {
+    "branch": "main",
+    "sha": null
+  },
+  "work_branch": null,
+  "pr": {
+    "number": null
+  },
+  "gate_docs": [],
+  "scope": {
+    "allowed_paths": [],
+    "forbidden_paths": []
+  },
+  "fixed_head": null,
+  "next_allowed_action": "Define the next Architecture / Acceptance Gate before executable product work."
+}
