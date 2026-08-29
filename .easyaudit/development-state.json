@@ -3,58 +3,45 @@
   "active": true,
   "project": "EasyAudit-Next",
   "milestone": "M5",
-  "slice": "M5.4-minimal-pilot-administration",
+  "slice": "M5.5-controlled-pilot-hardening",
   "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
-    "sha": "9a33982875fbaf3bcd0a28d56ca245eaf46b0e3b"
+    "sha": "28055c6b3da5ed266ad6f4128feffd602d436b2e"
   },
-  "work_branch": "codex/m5-4-minimal-pilot-administration",
+  "work_branch": "codex/m5-5-controlled-pilot-hardening",
   "pr": {
-    "number": 34
+    "number": 35
   },
   "gate_docs": [
-    "docs/architecture/m5-4-minimal-pilot-administration.md",
-    "docs/architecture/m5-4-acceptance.md"
+    "docs/architecture/m5-5-controlled-pilot-hardening.md",
+    "docs/architecture/m5-5-acceptance.md"
   ],
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/m5-4-minimal-pilot-administration.md",
-      "docs/architecture/m5-4-acceptance.md",
-      "src/easyaudit_next/api/contracts.py",
-      "src/easyaudit_next/api/router.py",
-      "src/easyaudit_next/platform/application/administration.py",
-      "openapi/openapi.json",
-      "tests/api/test_auth_policy.py",
-      "tests/api/test_meta.py",
-      "tests/api/test_m5_4_*.py",
-      "tests/integration/test_m5_4_*.py",
+      "docs/architecture/m5-5-controlled-pilot-hardening.md",
+      "docs/architecture/m5-5-acceptance.md",
+      "tests/api/test_m5_5_*.py",
+      "tests/integration/test_m5_5_*.py",
       "web/package.json",
-      "web/src/api/admin.ts",
-      "web/src/features/admin/AdminPage.tsx",
-      "web/src/features/admin/AdminPage.test.tsx",
-      "web/src/app/shell/ProductShell.tsx",
-      "web/tests/browser/real-m5-4.spec.ts",
-      "web/tests/browser/seed_m5_4_real_acceptance.py"
+      "web/tests/browser/real-m5-5.spec.ts",
+      "web/tests/browser/seed_m5_5_real_acceptance.py"
     ],
     "forbidden_paths": [
+      "src/**",
       "alembic/**",
       ".github/workflows/**",
-      "src/easyaudit_next/notifications/**",
-      "src/easyaudit_next/workbench/**",
-      "web/src/app/auth/**",
-      "web/src/app/router/**",
-      "web/src/features/management/**",
-      "web/src/features/notifications/**",
-      "web/src/features/workbench/**",
+      "openapi/**",
+      "scripts/**",
+      "web/src/**",
       "web/package-lock.json",
       "tests/unit/**"
     ]
   },
-  "fixed_head": "7e9015f273aba4c0031146e6bdf02536bc353e44",
+  "fixed_head": "71c32e47f6508839dd04e9a4982b8a2928ae3c3a",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge PR #34 with expected-head protection"
+  "next_allowed_action": "Merge PR #35 with expected-head protection"
 }
