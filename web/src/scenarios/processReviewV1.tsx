@@ -313,6 +313,12 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
     area_code: formValue(values, 'area_code'),
     review_type: formValue(values, 'review_type'),
   }),
+  caseMemberRoleOptions: [
+    { roleKey: 'lead', label: '负责人' },
+    { roleKey: 'auditor', label: '审查员' },
+    { roleKey: 'reviewer', label: '复核员' },
+    { roleKey: 'observer', label: '观察员' },
+  ],
   FindingScenarioSection: ProcessReviewV1FindingSection,
   FindingCreateFields: ProcessReviewV1FindingCreateFields,
   buildFindingScenarioData: (values) => ({

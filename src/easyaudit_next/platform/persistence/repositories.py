@@ -170,6 +170,25 @@ class SqlAlchemyUserRepository:
         )
         return tuple(self._to_domain(record) for record in records)
 
+    def lock_users_for_update(
+        self,
+        organization_id: OrganizationId,
+        user_ids: tuple[UserId, ...],
+    ) -> tuple[User, ...]:
+        if not user_ids:
+            return ()
+        records = self._session.scalars(
+            select(UserRecord)
+            .where(
+                UserRecord.organization_id == organization_id,
+                UserRecord.id.in_(user_ids),
+            )
+            .order_by(UserRecord.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return tuple(self._to_domain(record) for record in records)
+
     def count_active_system_admins(self, organization_id: OrganizationId) -> int:
         count = self._session.scalar(
             select(func.count())

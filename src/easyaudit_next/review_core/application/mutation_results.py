@@ -19,6 +19,14 @@ class CaseMemberAddedResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CaseMemberRemovedResult:
+    """Scenario-neutral result for a CaseMember removal and its exact Activity."""
+
+    member: CaseMember
+    activity_id: ActivityId
+
+
+@dataclass(frozen=True, slots=True)
 class FindingParticipantAddedResult:
     """Scenario-neutral result for a FindingParticipant mutation and its exact Activity."""
 

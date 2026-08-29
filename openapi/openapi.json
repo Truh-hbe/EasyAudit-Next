@@ -83,6 +83,12 @@
       "get": {"operationId": "listReviewCaseMembers", "tags": ["review-planning"]},
       "post": {"operationId": "addReviewCaseMember", "tags": ["review-planning"]}
     },
+    "/api/v1/review-cases/{case_id}/member-candidates": {
+      "get": {"operationId": "listReviewCaseMemberCandidates", "tags": ["review-planning"]}
+    },
+    "/api/v1/review-cases/{case_id}/members/{user_id}": {
+      "delete": {"operationId": "removeReviewCaseMember", "tags": ["review-planning"]}
+    },
     "/api/v1/review-cases/{case_id}/transitions": {
       "post": {"operationId": "transitionReviewCase", "tags": ["review-planning"]}
     },

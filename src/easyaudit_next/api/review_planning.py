@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
 from easyaudit_next.api.review_contracts import (
+    CaseMemberCandidateResponse,
     CaseMemberCreateRequest,
     CaseMemberResponse,
     ReviewCaseCollectionResponse,
@@ -17,6 +18,7 @@ from easyaudit_next.api.review_contracts import (
     ReviewPlanResponse,
 )
 from easyaudit_next.composition import (
+    build_case_team_coordinator,
     build_notification_orchestrator,
     build_review_case_collection_query_service,
     build_review_case_context_query_service,
@@ -24,6 +26,7 @@ from easyaudit_next.composition import (
     build_review_planning_service,
 )
 from easyaudit_next.platform.domain.ids import UserId
+from easyaudit_next.platform.domain.models import User
 from easyaudit_next.review_case_queries.context_service import (
     CaseMemberView,
     ReviewCaseActivityView,
@@ -33,6 +36,7 @@ from easyaudit_next.review_case_queries.schemas import (
     ReviewCaseActivityResponse,
 )
 from easyaudit_next.review_core.application.review_planning import (
+    CaseManagerConflictError,
     ConcurrentCaseTransitionError,
     ReviewAuthorizationError,
 )
@@ -88,6 +92,10 @@ def _member_response(member: CaseMember) -> CaseMemberResponse:
     )
 
 
+def _member_candidate_response(user: User) -> CaseMemberCandidateResponse:
+    return CaseMemberCandidateResponse(user_id=user.id, display_name=user.display_name)
+
+
 def _member_view_response(member: CaseMemberView) -> CaseMemberViewResponse:
     return CaseMemberViewResponse(
         case_id=member.case_id,
@@ -113,7 +121,10 @@ def _raise_api_error(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    if isinstance(exc, (ConcurrentCaseTransitionError, IntegrityError)):
+    if isinstance(
+        exc,
+        (CaseManagerConflictError, ConcurrentCaseTransitionError, IntegrityError),
+    ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(
@@ -214,9 +225,8 @@ def create_review_case(
     identity: BusinessIdentity,
     session: DatabaseSession,
 ) -> ReviewCaseResponse:
-    service = build_review_planning_service(session)
     try:
-        review_case = service.create_case(
+        review_case = build_case_team_coordinator(session).create_case(
             identity.user,
             ScenarioKey(payload.scenario_key),
             ScenarioVersion(payload.scenario_version),
@@ -226,7 +236,13 @@ def create_review_case(
             planned_start_at=payload.planned_start_at,
             planned_end_at=payload.planned_end_at,
         )
-    except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+    except (
+        CaseManagerConflictError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _case_response(review_case)
 
@@ -291,6 +307,33 @@ def list_review_case_members(
 
 
 @review_planning_router.get(
+    "/review-cases/{case_id}/member-candidates",
+    response_model=list[CaseMemberCandidateResponse],
+    operation_id="listReviewCaseMemberCandidates",
+)
+def list_review_case_member_candidates(
+    case_id: UUID,
+    identity: BusinessIdentity,
+    session: DatabaseSession,
+    role_key: Annotated[str, Query(min_length=1, max_length=100)],
+    q: Annotated[str, Query(max_length=100)] = "",
+    limit: Annotated[int, Query(ge=1, le=20)] = 20,
+) -> list[CaseMemberCandidateResponse]:
+    service = build_review_planning_service(session)
+    try:
+        candidates = service.list_case_member_candidates(
+            identity.user,
+            ReviewCaseId(case_id),
+            role_key,
+            query=q,
+            limit=limit,
+        )
+    except (ReviewAuthorizationError, LookupError, ValueError) as exc:
+        _raise_api_error(exc)
+    return [_member_candidate_response(user) for user in candidates]
+
+
+@review_planning_router.get(
     "/review-cases/{case_id}/activities",
     response_model=list[ReviewCaseActivityResponse],
     operation_id="listReviewCaseActivities",
@@ -320,10 +363,10 @@ def add_review_case_member(
     identity: BusinessIdentity,
     session: DatabaseSession,
 ) -> CaseMemberResponse:
-    service = build_review_planning_service(session)
+    coordinator = build_case_team_coordinator(session)
     notifications = build_notification_orchestrator(session)
     try:
-        result = service.add_case_member_result(
+        result = coordinator.add_case_member_result(
             identity.user,
             ReviewCaseId(case_id),
             UserId(payload.user_id),
@@ -331,6 +374,36 @@ def add_review_case_member(
         )
         notifications.case_member_added(result)
     except (ReviewAuthorizationError, LookupError, ValueError, IntegrityError) as exc:
+        _raise_api_error(exc)
+    return _member_response(result.member)
+
+
+@review_planning_router.delete(
+    "/review-cases/{case_id}/members/{user_id}",
+    response_model=CaseMemberResponse,
+    operation_id="removeReviewCaseMember",
+)
+def remove_review_case_member(
+    case_id: UUID,
+    user_id: UUID,
+    identity: BusinessIdentity,
+    session: DatabaseSession,
+    role_key: Annotated[str, Query(min_length=1, max_length=100)],
+) -> CaseMemberResponse:
+    try:
+        result = build_case_team_coordinator(session).remove_case_member_result(
+            identity.user,
+            ReviewCaseId(case_id),
+            UserId(user_id),
+            role_key,
+        )
+    except (
+        CaseManagerConflictError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _member_response(result.member)
 

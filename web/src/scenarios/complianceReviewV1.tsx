@@ -342,6 +342,12 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
     standard_reference: formValue(values, 'standard_reference'),
     scope_summary: formValue(values, 'scope_summary'),
   }),
+  caseMemberRoleOptions: [
+    { roleKey: 'lead', label: '负责人' },
+    { roleKey: 'auditor', label: '审查员' },
+    { roleKey: 'reviewer', label: '复核员' },
+    { roleKey: 'observer', label: '观察员' },
+  ],
   FindingScenarioSection: ComplianceReviewV1FindingSection,
   FindingCreateFields: ComplianceReviewV1FindingCreateFields,
   buildFindingScenarioData: (values) => ({

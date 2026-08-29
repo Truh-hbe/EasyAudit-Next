@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from easyaudit_next.application.case_team_coordination import CaseTeamUserCoordinator
 from easyaudit_next.collaboration.automatic_reminder import AutomaticReminderEvaluator
 from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
 from easyaudit_next.collaboration.nudge import ManualNudgeService
@@ -7,8 +8,15 @@ from easyaudit_next.collaboration.reminder_sweep import AutomaticReminderSweep
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
 from easyaudit_next.notifications.service import NotificationService
+from easyaudit_next.platform.application.administration import PlatformAdministrationService
+from easyaudit_next.platform.application.authentication import AuthenticationService
+from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.persistence.repositories import (
+    SqlAlchemyAuthSessionRepository,
     SqlAlchemyDepartmentRepository,
+    SqlAlchemyLocalCredentialRepository,
+    SqlAlchemyOrganizationRepository,
+    SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
 from easyaudit_next.review_case_queries.context_service import ReviewCaseContextQueryService
@@ -57,6 +65,44 @@ def build_review_planning_service(session: Session) -> ClosureAwareReviewPlannin
         SqlAlchemyScenarioCatalogRepository(session),
         SqlAlchemyUserRepository(session),
         build_scenario_registry(),
+    )
+
+
+def build_platform_administration_service(session: Session) -> PlatformAdministrationService:
+    """Wire the existing platform administration service at the composition boundary."""
+
+    organizations = SqlAlchemyOrganizationRepository(session)
+    departments = SqlAlchemyDepartmentRepository(session)
+    users = SqlAlchemyUserRepository(session)
+    credentials = SqlAlchemyLocalCredentialRepository(session)
+    audit = SqlAlchemyPlatformAuditRepository(session)
+    auth = AuthenticationService(
+        credentials,
+        SqlAlchemyAuthSessionRepository(session),
+        users,
+        audit,
+    )
+    return PlatformAdministrationService(
+        IdentityOrganizationService(organizations, departments, users),
+        organizations,
+        departments,
+        users,
+        credentials,
+        auth,
+        audit,
+    )
+
+
+def build_case_team_coordinator(session: Session) -> CaseTeamUserCoordinator:
+    """Wire the shared Organization-rooted Case/User mutation coordinator."""
+
+    return CaseTeamUserCoordinator(
+        SqlAlchemyOrganizationRepository(session),
+        SqlAlchemyVerificationClosureRepository(session),
+        SqlAlchemyUserRepository(session),
+        build_scenario_registry(),
+        build_review_planning_service(session),
+        build_platform_administration_service(session),
     )
 
 

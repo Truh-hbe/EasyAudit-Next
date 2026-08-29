@@ -141,11 +141,23 @@ export interface ReviewCaseCollectionResponse {
   offset: number
 }
 
+export interface CaseMemberResponse {
+  case_id: string
+  user_id: string
+  role_key: string
+  joined_at: string
+}
+
 export interface CaseMemberViewResponse {
   case_id: string
   user_id: string
   role_key: string
   joined_at: string
+  display_name: string
+}
+
+export interface CaseMemberCandidateResponse {
+  user_id: string
   display_name: string
 }
 
@@ -384,6 +396,45 @@ export function getReviewCaseMembers(
   return sessionApiRequest<CaseMemberViewResponse[]>(
     `/api/v1/review-cases/${encodeURIComponent(caseId)}/members`,
     { signal },
+  )
+}
+
+export function searchReviewCaseMemberCandidates(
+  caseId: string,
+  roleKey: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<CaseMemberCandidateResponse[]> {
+  const params = new URLSearchParams({ role_key: roleKey, q: query, limit: '20' })
+  return sessionApiRequest<CaseMemberCandidateResponse[]>(
+    `/api/v1/review-cases/${encodeURIComponent(caseId)}/member-candidates?${params.toString()}`,
+    { signal },
+  )
+}
+
+export function addReviewCaseMember(
+  caseId: string,
+  userId: string,
+  roleKey: string,
+): Promise<CaseMemberResponse> {
+  return sessionApiRequest<CaseMemberResponse>(
+    `/api/v1/review-cases/${encodeURIComponent(caseId)}/members`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, role_key: roleKey }),
+    },
+  )
+}
+
+export function removeReviewCaseMember(
+  caseId: string,
+  userId: string,
+  roleKey: string,
+): Promise<CaseMemberResponse> {
+  const params = new URLSearchParams({ role_key: roleKey })
+  return sessionApiRequest<CaseMemberResponse>(
+    `/api/v1/review-cases/${encodeURIComponent(caseId)}/members/${encodeURIComponent(userId)}?${params.toString()}`,
+    { method: 'DELETE' },
   )
 }
 

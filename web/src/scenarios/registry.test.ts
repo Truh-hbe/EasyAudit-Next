@@ -61,6 +61,12 @@ describe('ScenarioUiRegistry exact version lookup', () => {
 
     const caseAdapter = resolveCaseScenarioAdapter('process_review', 1)
     expect(caseAdapter?.CaseCreateFields).toBeDefined()
+    expect(caseAdapter?.caseMemberRoleOptions.map((option) => option.roleKey)).toEqual([
+      'lead',
+      'auditor',
+      'reviewer',
+      'observer',
+    ])
     expect(
       caseAdapter?.buildCaseScenarioData({ area_code: 'area-a', review_type: 'standard' }),
     ).toEqual({ area_code: 'area-a', review_type: 'standard' })
@@ -90,6 +96,12 @@ describe('ScenarioUiRegistry exact version lookup', () => {
 
     const caseAdapter = resolveCaseScenarioAdapter('compliance_review', 1)
     expect(caseAdapter?.CaseCreateFields).toBeDefined()
+    expect(caseAdapter?.caseMemberRoleOptions.map((option) => option.roleKey)).toEqual([
+      'lead',
+      'auditor',
+      'reviewer',
+      'observer',
+    ])
     expect(
       caseAdapter?.buildCaseScenarioData({
         standard_reference: 'standard-a',

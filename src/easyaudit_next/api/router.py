@@ -28,9 +28,13 @@ from easyaudit_next.api.dependencies import (
     DatabaseSession,
     SystemAdminIdentity,
 )
+from easyaudit_next.application.case_team_coordination import UserDeactivationConflictError
+from easyaudit_next.composition import (
+    build_case_team_coordinator,
+    build_platform_administration_service,
+)
 from easyaudit_next.platform.application.administration import PlatformAdministrationService
 from easyaudit_next.platform.application.authentication import (
-    AuthenticationService,
     InvalidCredentialsError,
     InvalidCurrentPasswordError,
     InvalidSessionError,
@@ -38,7 +42,6 @@ from easyaudit_next.platform.application.authentication import (
     PasswordReuseError,
 )
 from easyaudit_next.platform.application.password_policy import PasswordPolicyError
-from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, UserId
 from easyaudit_next.platform.domain.models import Department, User
 from easyaudit_next.platform.persistence.repositories import (
@@ -46,7 +49,6 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
     SqlAlchemyLocalCredentialRepository,
     SqlAlchemyOrganizationRepository,
-    SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
 from easyaudit_next.platform.settings import get_settings
@@ -144,26 +146,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 
 def _administration_service(session: Session) -> PlatformAdministrationService:
-    organizations = SqlAlchemyOrganizationRepository(session)
-    departments = SqlAlchemyDepartmentRepository(session)
-    users = SqlAlchemyUserRepository(session)
-    credentials = SqlAlchemyLocalCredentialRepository(session)
-    audit = SqlAlchemyPlatformAuditRepository(session)
-    auth = AuthenticationService(
-        credentials,
-        SqlAlchemyAuthSessionRepository(session),
-        users,
-        audit,
-    )
-    return PlatformAdministrationService(
-        IdentityOrganizationService(organizations, departments, users),
-        organizations,
-        departments,
-        users,
-        credentials,
-        auth,
-        audit,
-    )
+    return build_platform_administration_service(session)
 
 
 @api_router.post(
@@ -481,7 +464,7 @@ def update_admin_user(
     session: DatabaseSession,
 ) -> UserResponse:
     try:
-        user = _administration_service(session).update_user(
+        user = build_case_team_coordinator(session).update_user(
             identity.user,
             UserId(user_id),
             display_name=payload.display_name,
@@ -496,6 +479,10 @@ def update_admin_user(
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except UserDeactivationConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except (ValueError, IntegrityError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _user_response(user)

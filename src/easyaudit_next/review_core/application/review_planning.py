@@ -3,10 +3,13 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from easyaudit_next.platform.domain.ids import UserId
-from easyaudit_next.platform.domain.models import User
+from easyaudit_next.platform.domain.models import PlatformRole, User
 from easyaudit_next.platform.domain.repositories import UserRepository
 from easyaudit_next.review_core.application.authorization import build_authorization_context
-from easyaudit_next.review_core.application.mutation_results import CaseMemberAddedResult
+from easyaudit_next.review_core.application.mutation_results import (
+    CaseMemberAddedResult,
+    CaseMemberRemovedResult,
+)
 from easyaudit_next.review_core.domain.ids import (
     ActivityId,
     ReviewCaseId,
@@ -51,6 +54,43 @@ class ReviewAuthorizationError(PermissionError):
 
 class ConcurrentCaseTransitionError(RuntimeError):
     """The persisted lifecycle no longer matches the workflow input."""
+
+
+class CaseManagerConflictError(RuntimeError):
+    """A CaseMember mutation would leave the Case without an effective manager."""
+
+
+def effective_case_manager_ids(
+    policy: ScenarioPolicy,
+    members: tuple[CaseMember, ...],
+    users: tuple[User, ...],
+) -> frozenset[UserId]:
+    """Return unique active users authorized by the complete remaining Case roles."""
+
+    users_by_id = {user.id: user for user in users}
+    role_keys_by_user: dict[UserId, set[str]] = {}
+    for member in members:
+        role_keys_by_user.setdefault(member.user_id, set()).add(member.role_key)
+
+    manager_ids: set[UserId] = set()
+    for user_id, role_keys in role_keys_by_user.items():
+        user = users_by_id.get(user_id)
+        if user is None or not user.is_active:
+            continue
+        context = AuthorizationContext(
+            is_active_organization_user=True,
+            case_role_grants=frozenset(
+                RoleGrant(
+                    role_key=role_key,
+                    actor_kind=ActorKind.USER,
+                    source=PermissionSource.DIRECT,
+                )
+                for role_key in role_keys
+            ),
+        )
+        if policy.authorization.allows(MANAGE_CASE_MEMBERS_PERMISSION, context):
+            manager_ids.add(user_id)
+    return frozenset(manager_ids)
 
 
 class ReviewPlanningService:
@@ -204,6 +244,43 @@ class ReviewPlanningService:
             raise ReviewAuthorizationError("ReviewCase is not visible to this user")
         return self._repository.list_case_members(review_case.organization_id, review_case.id)
 
+    def list_case_member_candidates(
+        self,
+        actor: User,
+        case_id: ReviewCaseId,
+        role_key: str,
+        *,
+        query: str = "",
+        limit: int = 20,
+    ) -> tuple[User, ...]:
+        """Search safe, role-aware candidate presentation data after authorization."""
+
+        review_case, policy, context = self._team_case_context(actor, case_id)
+        if not policy.authorization.allows(MANAGE_CASE_MEMBERS_PERMISSION, context):
+            raise ReviewAuthorizationError("lead role required to manage CaseMember")
+        self._require_valid_case_role(policy, role_key)
+
+        # This is deliberately the first read that can expose any user presentation data.
+        users = self._users.list_for_organization(review_case.organization_id)
+        existing_requested_role = {
+            member.user_id
+            for member in self._repository.list_case_members(review_case.organization_id, case_id)
+            if member.role_key == role_key
+        }
+        normalized_query = query.strip().casefold()
+        candidates = [
+            user
+            for user in users
+            if user.is_active
+            and user.platform_role is PlatformRole.ORDINARY_USER
+            and user.id not in existing_requested_role
+            and (not normalized_query or normalized_query in user.display_name.casefold())
+        ]
+        candidates.sort(key=lambda user: (user.display_name.casefold(), str(user.id)))
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        return tuple(candidates[: min(limit, 20)])
+
     def add_case_member(
         self,
         actor: User,
@@ -230,7 +307,7 @@ class ReviewPlanningService:
         *,
         occurred_at: datetime | None = None,
     ) -> CaseMemberAddedResult:
-        review_case, policy, context = self._case_context(actor, case_id)
+        review_case, policy, context = self._team_case_context(actor, case_id)
         if not policy.authorization.allows(MANAGE_CASE_MEMBERS_PERMISSION, context):
             raise ReviewAuthorizationError("lead role required to manage CaseMember")
         target = self._users.get(user_id)
@@ -263,6 +340,100 @@ class ReviewPlanningService:
             )
         )
         return CaseMemberAddedResult(member=member, activity_id=activity_id)
+
+    def remove_case_member(
+        self,
+        actor: User,
+        case_id: ReviewCaseId,
+        user_id: UserId,
+        role_key: str,
+        *,
+        occurred_at: datetime | None = None,
+    ) -> CaseMember:
+        return self.remove_case_member_result(
+            actor,
+            case_id,
+            user_id,
+            role_key,
+            occurred_at=occurred_at,
+        ).member
+
+    def remove_case_member_result(
+        self,
+        actor: User,
+        case_id: ReviewCaseId,
+        user_id: UserId,
+        role_key: str,
+        *,
+        occurred_at: datetime | None = None,
+    ) -> CaseMemberRemovedResult:
+        locked_case = self._repository.lock_case_for_team_management(
+            actor.organization_id,
+            case_id,
+        )
+        if locked_case is None:
+            raise LookupError("ReviewCase not found")
+
+        members = self._repository.list_case_members(actor.organization_id, case_id)
+        member_user_ids = tuple(
+            sorted({actor.id, *(member.user_id for member in members)}, key=str)
+        )
+        locked_users = self._users.lock_users_for_update(
+            actor.organization_id,
+            member_user_ids,
+        )
+        fresh_actor = next((user for user in locked_users if user.id == actor.id), None)
+        if fresh_actor is None or not fresh_actor.is_active:
+            raise ReviewAuthorizationError("Active organization user required")
+
+        policy = self._registry.get(locked_case.scenario_key, locked_case.scenario_version)
+        context = self._case_role_authorization_context(fresh_actor, members)
+        if not policy.authorization.allows(MANAGE_CASE_MEMBERS_PERMISSION, context):
+            raise ReviewAuthorizationError("lead role required to manage CaseMember")
+        self._require_valid_case_role(policy, role_key)
+
+        target = next(
+            (
+                member
+                for member in members
+                if member.user_id == user_id and member.role_key == role_key
+            ),
+            None,
+        )
+        if target is None:
+            raise LookupError("CaseMember not found")
+
+        remaining_members = tuple(
+            member
+            for member in members
+            if not (member.user_id == user_id and member.role_key == role_key)
+        )
+        if not effective_case_manager_ids(policy, remaining_members, locked_users):
+            raise CaseManagerConflictError(
+                "Cannot remove the final effective Case manager"
+            )
+        if not self._repository.remove_case_member(
+            actor.organization_id,
+            case_id,
+            user_id,
+            role_key,
+        ):
+            raise CaseManagerConflictError("CaseMember changed concurrently")
+
+        now = occurred_at or datetime.now(UTC)
+        activity_id = ActivityId(uuid4())
+        self._repository.add_activity(
+            Activity(
+                id=activity_id,
+                organization_id=actor.organization_id,
+                subject=ReviewCaseActivitySubject(case_id),
+                event_type="review_case.member_removed",
+                actor_id=fresh_actor.id,
+                occurred_at=now,
+                metadata={"user_id": str(user_id), "role_key": role_key},
+            )
+        )
+        return CaseMemberRemovedResult(member=target, activity_id=activity_id)
 
     def transition_case(
         self,
@@ -354,6 +525,37 @@ class ReviewPlanningService:
             raise LookupError("ReviewCase not found")
         policy = self._registry.get(review_case.scenario_key, review_case.scenario_version)
         return review_case, policy, self._authorization_context(actor, case_id)
+
+    def _team_case_context(
+        self,
+        actor: User,
+        case_id: ReviewCaseId,
+    ) -> tuple[ReviewCase, ScenarioPolicy, AuthorizationContext]:
+        self._require_active(actor)
+        review_case = self._repository.get_case(actor.organization_id, case_id)
+        if review_case is None:
+            raise LookupError("ReviewCase not found")
+        members = self._repository.list_case_members(actor.organization_id, case_id)
+        policy = self._registry.get(review_case.scenario_key, review_case.scenario_version)
+        return review_case, policy, self._case_role_authorization_context(actor, members)
+
+    @staticmethod
+    def _case_role_authorization_context(
+        actor: User,
+        members: tuple[CaseMember, ...],
+    ) -> AuthorizationContext:
+        return AuthorizationContext(
+            is_active_organization_user=actor.is_active,
+            case_role_grants=frozenset(
+                RoleGrant(
+                    role_key=member.role_key,
+                    actor_kind=ActorKind.USER,
+                    source=PermissionSource.DIRECT,
+                )
+                for member in members
+                if member.user_id == actor.id
+            ),
+        )
 
     def _authorization_context(
         self,
