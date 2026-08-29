@@ -11,7 +11,7 @@
   },
   "work_branch": "codex/m5-4-minimal-pilot-administration",
   "pr": {
-    "number": null
+    "number": 34
   },
   "gate_docs": [
     "docs/architecture/m5-4-minimal-pilot-administration.md",
