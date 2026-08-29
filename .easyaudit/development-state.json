@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "process-gate-evidence-hardening",
-  "phase": "GATE_DRAFT",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "5887503a3d5ff84a98f5ad7d993a6c68687fd048"
@@ -19,20 +19,23 @@
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/process-gate-evidence-hardening.md"
+      "docs/architecture/process-gate-evidence-hardening.md",
+      "docs/architecture/agent-development-workflow.md",
+      "scripts/easyaudit_gate.py",
+      "tests/tooling/test_easyaudit_gate.py"
     ],
     "forbidden_paths": [
       "src/**",
       "web/**",
       "alembic/**",
       ".github/workflows/**",
-      "tests/**",
-      "scripts/**"
+      "tests/integration/**",
+      "tests/unit/**"
     ]
   },
   "fixed_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Architecture / Acceptance review"
+  "next_allowed_action": "Implement process tooling correction"
 }
