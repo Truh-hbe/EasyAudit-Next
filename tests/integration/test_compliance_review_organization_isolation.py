@@ -1,7 +1,8 @@
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, create_engine
@@ -37,7 +38,17 @@ def postgres_engine() -> Iterator[Engine]:
     engine.dispose()
 
 
-def _seed_compliance_graph(engine: Engine) -> dict[str, object]:
+@dataclass(frozen=True, slots=True)
+class ComplianceGraph:
+    organization_a: OrganizationId
+    user_b: UUID
+    department_b: UUID
+    case_id: UUID
+    finding_id: UUID
+    action_id: UUID
+
+
+def _seed_compliance_graph(engine: Engine) -> ComplianceGraph:
     organization_a = OrganizationId(uuid4())
     organization_b = OrganizationId(uuid4())
     user_a = uuid4()
@@ -155,14 +166,14 @@ def _seed_compliance_graph(engine: Engine) -> dict[str, object]:
             )
         )
 
-    return {
-        "organization_a": organization_a,
-        "user_b": user_b,
-        "department_b": department_b,
-        "case_id": case_id,
-        "finding_id": finding_id,
-        "action_id": action_id,
-    }
+    return ComplianceGraph(
+        organization_a=organization_a,
+        user_b=user_b,
+        department_b=department_b,
+        case_id=case_id,
+        finding_id=finding_id,
+        action_id=action_id,
+    )
 
 
 @pytest.mark.parametrize(
@@ -185,20 +196,20 @@ def test_compliance_graph_rejects_cross_organization_relationships(
     with Session(postgres_engine) as session:
         if target == "case":
             record = CaseMemberRecord(
-                organization_id=graph["organization_a"],
-                case_id=graph["case_id"],
-                user_id=graph["user_b"],
+                organization_id=graph.organization_a,
+                case_id=graph.case_id,
+                user_id=graph.user_b,
                 role_key="observer",
                 joined_at=NOW,
             )
         elif target == "finding":
             record = FindingParticipantRecord(
                 id=uuid4(),
-                organization_id=graph["organization_a"],
-                finding_id=graph["finding_id"],
-                user_id=graph["user_b"] if actor_kind == "user" else None,
+                organization_id=graph.organization_a,
+                finding_id=graph.finding_id,
+                user_id=graph.user_b if actor_kind == "user" else None,
                 department_id=(
-                    graph["department_b"] if actor_kind == "department" else None
+                    graph.department_b if actor_kind == "department" else None
                 ),
                 role_key=("owner" if actor_kind == "user" else "responsible_department"),
                 assigned_at=NOW,
@@ -206,11 +217,11 @@ def test_compliance_graph_rejects_cross_organization_relationships(
         else:
             record = ActionAssigneeRecord(
                 id=uuid4(),
-                organization_id=graph["organization_a"],
-                action_item_id=graph["action_id"],
-                user_id=graph["user_b"] if actor_kind == "user" else None,
+                organization_id=graph.organization_a,
+                action_item_id=graph.action_id,
+                user_id=graph.user_b if actor_kind == "user" else None,
                 department_id=(
-                    graph["department_b"] if actor_kind == "department" else None
+                    graph.department_b if actor_kind == "department" else None
                 ),
                 role="primary" if actor_kind == "user" else "collaborator",
                 assigned_at=NOW,
