@@ -1,11 +1,11 @@
 # 实施路线
 
-This roadmap is rebaselined after M3.5 Product Surface completion.
+This roadmap is rebaselined after M4 Second Scenario Validation completion.
 
 Current baseline:
 
 ```text
-main@c54600d52e0ace0fa60eb982261ca69dceb416b7
+main@27e750c4901c8abd81b6a55703cd664c237e057e
 ```
 
 ## Completed — M0 Bootstrap
@@ -55,50 +55,50 @@ M3.5.5  Product acceptance / responsive / final polish
 
 M3.5 Final Acceptance passed a real PostgreSQL + FastAPI multi-user Product journey and responsive/accessibility acceptance.
 
-## Next — M4 Second Scenario Validation
+## Completed — M4 Second Scenario Validation
 
-The original architectural objective of validating a materially different second Scenario remains intentionally unresolved. It moves to M4 rather than being treated as already satisfied by M3 Collaboration & Management.
+M4 proved that EasyAudit-Next is a reusable audit platform rather than a Process Review application with unused abstractions.
 
-M4 must prove that EasyAudit-Next is a reusable audit platform rather than a Process Review application with abstractions around it.
-
-The selected reference second Scenario is:
+The exact second Scenario is:
 
 ```text
 compliance_review@1
 ```
 
-A narrow compliance / special-review scenario is preferred over a catch-all `general_review` Scenario. The platform is generic; individual Scenarios should remain concrete business contracts.
+Its material behavior differs from `process_review@1`:
 
-M4 acceptance must prove at minimum:
+```text
+finding_type = observation
+OPEN --accept_observation--> CLOSED
+```
 
-- the second Scenario uses the existing ReviewPlan / ReviewCase / Finding / ActionItem / Submission / Activity model;
-- existing generic HTTP APIs and M3 read sides are reused rather than copied;
-- Review Core and generic application services do not gain `if scenario == ...` business branches;
-- exact `(scenario_key, scenario_version)` policy and UI adapter resolution remains fail-closed;
-- authenticated users and departments remain the collaboration identities; no anonymous responsibility token model is introduced;
-- cross-department, multi-user participation is supported through existing relationship concepts;
-- `process_review@1` behavior remains unchanged; and
-- the Product Surface evolves its centralized Scenario UI seam instead of distributing second-Scenario branches through generic pages.
+without manufacturing an ActionItem or rectification Submission. Compliance `nonconformity` continues to use the existing rectification family with persisted responsibility relationships.
 
-### M4.1 — Second Scenario Selection & Extension Contract
+M4 preserved the generic platform boundaries:
 
-First M4 slice. Design/Gate only.
+- both Scenarios use the existing ReviewPlan / ReviewCase / Finding / ActionItem / Submission / Activity model;
+- generic HTTP APIs and M3 Workbench / Management / Notification / Reminder-Nudge services are reused rather than copied;
+- Review Core and generic application services contain no Scenario-identity business branches;
+- exact `(scenario_key, scenario_version)` backend policy and frontend UI adapter resolution remain fail-closed;
+- authenticated Users and Departments remain collaboration identities;
+- Process Review behavior remains unchanged; and
+- the Product Surface now delegates Scenario-specific Finding interactions through the centralized exact-version adapter seam.
 
-It freezes:
+M4.1 also exposed and closed the narrow generic direct-Finding-transition abstraction gap. Real PostgreSQL acceptance proved organization isolation and Case-close versus observation-close safety without a new lock architecture. Real FastAPI + Playwright acceptance exercised both Scenarios in the same product build/database.
 
-- why `compliance_review@1` is materially different from `process_review@1`;
-- which differences belong to Scenario policy/data versus generic Review Core;
-- how the existing frontend Scenario adapter must generalize without becoming a second workflow engine;
-- reuse requirements for Workbench, Management, Notifications and Reminder/Nudge; and
-- implementation acceptance counterexamples before executable work is allowed.
+M4 was intentionally not pre-numbered beyond M4.1. Because the merged M4.1 executable implementation satisfied the complete frozen M4 acceptance objective, no artificial `M4.2` is required solely for numbering continuity.
 
-Later M4 slices are not pre-numbered here. Their scope is determined only after M4.1 Architecture + Acceptance Gate review.
+## Next — Separate post-M4 Architecture / Acceptance Gate
+
+The post-M4 milestone is intentionally not named or given executable scope by the M4 finalization PR.
+
+The next product/platform objective must be selected through a separate Architecture / Acceptance Gate based on the highest-value remaining problem after M4 completion.
+
+No executable post-M4 work is authorized merely by this roadmap rebaseline.
 
 ## Deferred / non-goals
 
-Do not use M4 as a reason to build a universal low-code platform.
-
-Still deferred unless separately justified:
+The following remain deferred unless separately justified by a future Gate:
 
 ```text
 BPMN / workflow designer
