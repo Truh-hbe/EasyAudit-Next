@@ -197,7 +197,8 @@ def _evaluate_scope(
     fixed_head_matches = fixed_head in (None, "") or fixed_head in candidate_heads
 
     phase = state.get("phase")
-    candidate_head = str(github_context.get("pr_head_sha") or evidence.head_sha)
+    control_head = str(github_context.get("pr_head_sha") or evidence.head_sha)
+    candidate_head = control_head
     fixed_head_exists = False
     fixed_head_ancestor = False
     fixed_head_resolved: str | None = None
@@ -209,7 +210,7 @@ def _evaluate_scope(
     finalization_changed_files: list[str] = []
     finalization_outside_allowed: list[str] = []
 
-    if phase == "FINAL_REVIEW":
+    if phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"}:
         if not fixed_head:
             fixed_head_matches = False
         else:
@@ -222,11 +223,11 @@ def _evaluate_scope(
             fixed_head_exists = fixed_head_resolved is not None
             if fixed_head_exists:
                 fixed_head_ancestor = _git_is_ancestor(
-                    fixed_head_resolved, candidate_head
+                    fixed_head_resolved, control_head
                 )
                 if fixed_head_ancestor:
                     finalization_text = _git(
-                        "diff", "--name-only", f"{fixed_head_resolved}..{candidate_head}"
+                        "diff", "--name-only", f"{fixed_head_resolved}..{control_head}"
                     )
                     finalization_changed_files = [
                         line for line in finalization_text.splitlines() if line
@@ -241,6 +242,7 @@ def _evaluate_scope(
                 and fixed_head_ancestor
                 and not finalization_outside_allowed
             )
+            candidate_head = fixed_head_resolved or control_head
 
     expected_branch = state.get("work_branch")
     candidate_branches = {evidence.branch, github_context.get("pr_head_ref")}
@@ -258,10 +260,10 @@ def _evaluate_scope(
     if missing_gate_docs:
         violations.append(f"missing Gate documents: {', '.join(missing_gate_docs)}")
     if not fixed_head_matches:
-        if phase == "FINAL_REVIEW":
+        if phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"}:
             if not fixed_head:
                 violations.append(
-                    "FINAL_REVIEW requires a non-empty fixed_head; set it to the "
+                    f"{phase} requires a non-empty fixed_head; set it to the "
                     "implementation-reviewed executable head"
                 )
             elif not fixed_head_exists:
@@ -269,7 +271,7 @@ def _evaluate_scope(
             elif not fixed_head_ancestor:
                 violations.append(
                     f"fixed_head {fixed_head} is not an ancestor of candidate HEAD "
-                    f"{candidate_head}"
+                    f"{control_head}"
                 )
             if finalization_outside_allowed:
                 violations.append(
@@ -299,6 +301,7 @@ def _evaluate_scope(
         "fixed_head_exists": fixed_head_exists,
         "fixed_head_ancestor": fixed_head_ancestor,
         "candidate_head": candidate_head,
+        "control_head": control_head,
         "finalization_allowed_paths": finalization_allowed,
         "finalization_changed_files": finalization_changed_files,
         "finalization_outside_allowed": finalization_outside_allowed,
@@ -330,7 +333,9 @@ def _proof(
         "slice": state.get("slice"),
         "phase": state.get("phase"),
         "next_allowed_action": state.get("next_allowed_action"),
-        "state_fingerprint": _state_fingerprint(state_path or DEFAULT_STATE),
+        "state_fingerprint": _state_fingerprint(
+            _bundle_path(state_path or DEFAULT_STATE)
+        ),
         "git": {
             "base_ref": evidence.base_ref,
             "merge_base": evidence.merge_base,
@@ -349,6 +354,17 @@ def _proof(
             **github_context,
         },
         "scope": scope_result,
+        "evidence_refs": {
+            "candidate": {
+                "base": evidence.base_ref,
+                "head": scope_result.get("candidate_head", evidence.head_sha),
+            },
+            "control": {
+                "base": scope_result.get("fixed_head_resolved"),
+                "head": scope_result.get("control_head", evidence.head_sha),
+            },
+            "working_tree": {"base": evidence.head_sha, "head": "WORKTREE"},
+        },
         "authority": {
             "c2c_execution_records_are_final_ci": False,
             "github_actions_is_final_ci_authority": True,
@@ -386,6 +402,26 @@ def _write_bundle(
         working_diff + ("\n" if working_diff else ""),
         encoding="utf-8",
     )
+    scope = proof["scope"]
+    candidate_head = str(scope.get("candidate_head") or evidence.head_sha)
+    candidate_diff = _git(
+        "diff", "--no-ext-diff", "--no-color", f"{evidence.base_ref}...{candidate_head}"
+    )
+    (output / "candidate.diff").write_text(
+        candidate_diff + ("\n" if candidate_diff else ""),
+        encoding="utf-8",
+    )
+    fixed_head = scope.get("fixed_head_resolved")
+    control_head = str(scope.get("control_head") or evidence.head_sha)
+    control_diff = ""
+    if fixed_head:
+        control_diff = _git(
+            "diff", "--no-ext-diff", "--no-color", f"{fixed_head}..{control_head}"
+        )
+    (output / "control.diff").write_text(
+        control_diff + ("\n" if control_diff else ""),
+        encoding="utf-8",
+    )
     return output
 
 
@@ -410,7 +446,9 @@ def _validate_bundle(
     current_git = current_proof["git"]
     if bundle_proof.get("schema_version") != 1:
         violations.append("Review Bundle has an unsupported schema_version")
-    if bundle_proof.get("state_fingerprint") != _state_fingerprint(state_path):
+    if bundle_proof.get("state_fingerprint") != _state_fingerprint(
+        _bundle_path(state_path)
+    ):
         violations.append("Review Bundle does not match the current development state")
     if bundle_git.get("head_sha") != current_git["head_sha"]:
         violations.append("Review Bundle does not match the current HEAD")
@@ -426,7 +464,15 @@ def _validate_bundle(
         violations.append("Review Bundle working-tree status is stale")
     if bundle_proof.get("phase") != state.get("phase"):
         violations.append("Review Bundle does not match the current Gate phase")
-    if not (bundle_proof.get("scope") or {}).get("pass"):
+    if bundle_proof.get("evidence_refs") != current_proof.get("evidence_refs"):
+        violations.append("Review Bundle evidence refs are stale")
+    bundle_scope = bundle_proof.get("scope") or {}
+    current_scope = current_proof["scope"]
+    if bundle_scope.get("candidate_head") != current_scope.get("candidate_head"):
+        violations.append("Review Bundle does not match the fixed candidate head")
+    if bundle_scope.get("control_head") != current_scope.get("control_head"):
+        violations.append("Review Bundle does not match the control HEAD")
+    if not bundle_scope.get("pass"):
         violations.append("Review Bundle contains a failing Gate scope proof")
     if not current_proof["scope"].get("pass"):
         violations.append("current Gate scope is failing")

@@ -132,10 +132,18 @@ It contains:
 ├── gate-proof.json
 ├── changed-files.txt
 ├── branch.diff
+├── candidate.diff
+├── control.diff
 └── working-tree.diff
 ```
 
 `branch.diff` is generated from the committed `BASE...HEAD` comparison. This is required because a clean working tree has no useful ordinary `git diff HEAD`, while Final Review must inspect all committed changes in the milestone slice.
+
+For Final Review, `candidate.diff` is the canonical full-slice diff
+`BASE...fixed_head`; `control.diff` is the canonical metadata-only delta
+`fixed_head..bundle_head`. `working-tree.diff` is the uncommitted delta. The
+proof records these refs so a reviewer never has to infer which commit a diff
+represents from its filename alone.
 
 `working-tree.diff` separately exposes any uncommitted delta so ChatGPT can detect a review candidate that is not actually fixed/clean.
 
@@ -250,7 +258,7 @@ User selects slice
   -> finalization-only state commit
   -> bundle + check --require-clean --require-bundle
   -> GitHub exact-head CI
-  -> GitHub evidence attached to the actual candidate HEAD
+  -> GitHub evidence attached to the actual current PR/control HEAD
   -> ChatGPT Final Review
   -> user merge authorization
   -> expected-head merge

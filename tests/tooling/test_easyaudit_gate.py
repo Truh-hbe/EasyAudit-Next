@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -155,6 +156,8 @@ def test_final_review_accepts_metadata_only_descendant(
 
     assert result["pass"] is True
     assert result["fixed_head_ancestor"] is True
+    assert result["candidate_head"] == "implementation-sha"
+    assert result["control_head"] == "head-sha"
     assert result["finalization_outside_allowed"] == []
 
 
@@ -223,6 +226,111 @@ def test_final_review_uses_actual_pull_request_head_for_ancestor_check(
 
     assert result["pass"] is True
     assert descendants == ["actual-pr-head"]
+
+
+@pytest.mark.parametrize("phase", ["FINAL_REVIEW", "MERGE_AUTHORIZED"])
+def test_control_phases_reject_missing_fixed_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+    state = {
+        "phase": phase,
+        "scope": {"allowed_paths": [".easyaudit/**"], "forbidden_paths": []},
+        "gate_docs": [],
+        "fixed_head": "",
+        "work_branch": "codex/example",
+    }
+
+    result = gate._evaluate_scope(state, evidence((".easyaudit/state.json",)))
+
+    assert result["pass"] is False
+    assert any(
+        f"{phase} requires a non-empty fixed_head" in item
+        for item in result["violations"]
+    )
+
+
+def _run_git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def _commit_git(repo: Path, message: str) -> str:
+    _run_git(
+        repo,
+        "-c",
+        "user.name=Gate Test",
+        "-c",
+        "user.email=gate@example.com",
+        "commit",
+        "-m",
+        message,
+    )
+    return _run_git(repo, "rev-parse", "HEAD")
+
+
+def test_final_review_uses_real_candidate_and_control_commit_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    state_path = repo / ".easyaudit" / "development-state.json"
+    state_path.parent.mkdir()
+    state_path.write_text('{"phase":"IMPLEMENTATION"}\n', encoding="utf-8")
+    _run_git(repo, "add", ".")
+    base_sha = _commit_git(repo, "base")
+
+    (repo / "candidate.txt").write_text("candidate\n", encoding="utf-8")
+    _run_git(repo, "add", "candidate.txt")
+    candidate_sha = _commit_git(repo, "candidate")
+
+    state_path.write_text(
+        '{"phase":"FINAL_REVIEW","fixed_head":"' + candidate_sha + '"}\n',
+        encoding="utf-8",
+    )
+    _run_git(repo, "add", ".easyaudit/development-state.json")
+    control_sha = _commit_git(repo, "final review state")
+
+    monkeypatch.setattr(gate, "ROOT", repo)
+    state = {
+        "phase": "FINAL_REVIEW",
+        "scope": {
+            "allowed_paths": ["candidate.txt", ".easyaudit/**"],
+            "forbidden_paths": [],
+        },
+        "gate_docs": [],
+        "fixed_head": candidate_sha,
+        "finalization_allowed_paths": [".easyaudit/development-state.json"],
+        "work_branch": None,
+    }
+    git_evidence = gate.GitEvidence(
+        base_ref=base_sha,
+        merge_base=base_sha,
+        head_sha=control_sha,
+        head_tree=_run_git(repo, "rev-parse", "HEAD^{tree}"),
+        branch=_run_git(repo, "branch", "--show-current"),
+        ahead=2,
+        behind=0,
+        changed_files=(".easyaudit/development-state.json", "candidate.txt"),
+        working_tree_clean=True,
+        status_lines=(),
+    )
+
+    result = gate._evaluate_scope(state, git_evidence)
+
+    assert result["pass"] is True
+    assert result["candidate_head"] == candidate_sha
+    assert result["control_head"] == control_sha
+    assert result["finalization_changed_files"] == [
+        ".easyaudit/development-state.json"
+    ]
 
 
 def _bundle_state() -> dict[str, object]:

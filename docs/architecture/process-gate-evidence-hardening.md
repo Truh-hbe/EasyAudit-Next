@@ -19,11 +19,16 @@ not authorize M5.2 or later product work.
 
 - Give `fixed_head` one precise meaning: the implementation-reviewed executable
   commit.
+- Distinguish the immutable candidate head from later control/state heads:
+  `C = fixed_head`, while `S/R/M` may carry only approved process metadata.
 - Require a non-empty, resolvable `fixed_head` in `FINAL_REVIEW`.
+- Require the same invariant in `MERGE_AUTHORIZED`.
 - Permit only explicitly allowed finalization metadata commits after the fixed
   head; source, tests, CI and configuration changes must fail the Gate.
 - Make the Gate verify that a requested Review Bundle matches the current
   commit, state, scope and working-tree status.
+- Separate candidate/full-slice evidence (`BASE...C`) from control delta
+  evidence (`C..bundle_head`) and uncommitted working-tree evidence.
 - Add focused tooling tests for missing, invalid, stale and valid evidence.
 - Document a candidate-test command that makes PostgreSQL opt-in status
   visible instead of silently treating skipped tests as full evidence.
@@ -37,19 +42,20 @@ not authorize M5.2 or later product work.
 
 ## Acceptance criteria
 
-1. `FINAL_REVIEW` fails when `fixed_head` is empty, unknown, not an ancestor
-   of the candidate head, or is followed by any non-finalization file.
-2. A finalization-only state commit passes when it descends from the reviewed
-   executable head.
-3. GitHub pull-request merge-ref checks use the actual PR head for fixed-head
+1. `GATE_DRAFT` and `IMPLEMENTATION` still allow an empty `fixed_head`.
+2. `FINAL_REVIEW` and `MERGE_AUTHORIZED` fail when `fixed_head` is empty,
+   unknown or not an ancestor of the current control head.
+3. A real candidate commit `C` followed by a state-only commit `S` passes, but
+   a source/test/migration/CI commit after `C` fails.
+4. GitHub pull-request merge-ref checks use the actual PR head for fixed-head
    validation and never mistake the synthetic merge commit for the candidate.
-4. `check --require-bundle --require-clean` fails for a missing, malformed,
+5. `check --require-bundle --require-clean` fails for a missing, malformed,
    stale, dirty or scope-failing Review Bundle.
-5. The bundle records the state fingerprint and fixed-head evidence used by the
-   Gate.
-6. Focused tooling tests cover all cases above and pass with the repository's
-   standard test command.
-7. The workflow document explicitly distinguishes C2C iteration evidence,
+6. The bundle records the state fingerprint, immutable candidate head, current
+   control head and the evidence refs used by the Gate.
+7. Focused tooling tests use a real temporary Git topology for `C -> S` and
+   cover the synthetic GitHub merge-ref case as well.
+8. The workflow document explicitly distinguishes C2C iteration evidence,
    candidate evidence and exact-head GitHub evidence.
 
 ## Slice protocol
