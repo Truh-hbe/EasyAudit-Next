@@ -118,10 +118,13 @@ python scripts/easyaudit_gate.py check --require-clean --require-bundle
 ```
 
 The second command is mandatory for Final Review. It rejects a missing or
-malformed bundle and verifies that `gate-proof.json` matches the current HEAD,
-tree, base, branch, changed paths, Gate phase, state fingerprint and working
-tree. If anything changes after bundle generation, regenerate the bundle before
-requesting review.
+malformed bundle and verifies that `gate-proof.json` and every canonical
+artifact match freshly rebuilt current HEAD, tree, base, branch, changed paths,
+Gate phase, state fingerprint and working-tree evidence. Missing, modified,
+stale or mixed-generation artifacts are invalid. Bundle generation writes the
+diff artifacts first and `gate-proof.json` last; the proof is the completion
+marker. If anything changes after bundle generation, regenerate the bundle
+before requesting review.
 
 The generated `.easyaudit-review/` directory is intentionally ignored by Git and intentionally readable through C2C.
 
@@ -184,7 +187,9 @@ The existing CI remains responsible for Ruff, mypy, architecture checks, OpenAPI
 ### ChatGPT
 
 - read development state and Gate docs first;
-- inspect `gate-proof.json` and `branch.diff` independently;
+- inspect `gate-proof.json`, `candidate.diff`, `control.diff` and
+  `working-tree.diff` independently; `branch.diff` is convenience evidence,
+  not the canonical Final Review diff;
 - read only relevant source through C2C;
 - return architecture/acceptance findings as P1/P2 or PASS;
 - never infer merge authorization from C2C `DONE`;

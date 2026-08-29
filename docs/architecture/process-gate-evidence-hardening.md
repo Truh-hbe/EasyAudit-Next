@@ -50,9 +50,14 @@ not authorize M5.2 or later product work.
 4. GitHub pull-request merge-ref checks use the actual PR head for fixed-head
    validation and never mistake the synthetic merge commit for the candidate.
 5. `check --require-bundle --require-clean` fails for a missing, malformed,
-   stale, dirty or scope-failing Review Bundle.
+   stale, dirty or scope-failing Review Bundle. The proof and every canonical
+   artifact (`changed-files.txt`, `branch.diff`, `candidate.diff`,
+   `control.diff` and `working-tree.diff`) must match freshly rebuilt
+   Git/state evidence; a partial or mixed-generation bundle is invalid.
 6. The bundle records the state fingerprint, immutable candidate head, current
-   control head and the evidence refs used by the Gate.
+   control head and the evidence refs used by the Gate. Artifact generation
+   writes all diff artifacts first and writes `gate-proof.json` last, so the
+   proof is the completion marker for the bundle.
 7. Focused tooling tests use a real temporary Git topology for `C -> S` and
    cover the synthetic GitHub merge-ref case as well.
 8. The workflow document explicitly distinguishes C2C iteration evidence,

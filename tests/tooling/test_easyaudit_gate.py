@@ -347,6 +347,21 @@ def _bundle_state() -> dict[str, object]:
     }
 
 
+def _install_synthetic_bundle(
+    bundle_dir: Path,
+    proof: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = {name: f"{name}\n" for name in gate.BUNDLE_ARTIFACT_NAMES}
+    monkeypatch.setattr(gate, "_bundle_artifacts", lambda evidence, proof: artifacts)
+    bundle_dir.mkdir(exist_ok=True)
+    (bundle_dir / "gate-proof.json").write_text(
+        json.dumps(proof), encoding="utf-8"
+    )
+    for name, contents in artifacts.items():
+        (bundle_dir / name).write_text(contents, encoding="utf-8")
+
+
 def test_bundle_validation_rejects_stale_head_and_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -357,7 +372,7 @@ def test_bundle_validation_rejects_stale_head_and_state(
     current_evidence = evidence(("docs/gate.md",))
     current_proof = gate._proof(state, current_evidence, state_path)
     bundle_dir = tmp_path / ".easyaudit-review"
-    bundle_dir.mkdir()
+    _install_synthetic_bundle(bundle_dir, current_proof, monkeypatch)
     stale_proof = json.loads(json.dumps(current_proof))
     stale_proof["git"]["head_sha"] = "old-head"
     state_path.write_text('{"phase":"FINAL_REVIEW"}\n', encoding="utf-8")
@@ -383,14 +398,90 @@ def test_bundle_validation_accepts_current_proof(
     current_evidence = evidence(("docs/gate.md",))
     current_proof = gate._proof(state, current_evidence, state_path)
     bundle_dir = tmp_path / ".easyaudit-review"
-    bundle_dir.mkdir()
-    (bundle_dir / "gate-proof.json").write_text(
-        json.dumps(current_proof), encoding="utf-8"
-    )
+    _install_synthetic_bundle(bundle_dir, current_proof, monkeypatch)
 
     assert gate._validate_bundle(
         bundle_dir, state, state_path, current_evidence, current_proof
     ) == []
+
+
+@pytest.mark.parametrize("artifact", gate.BUNDLE_ARTIFACT_NAMES)
+def test_bundle_validation_rejects_missing_or_modified_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact: str,
+) -> None:
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+    state_path = tmp_path / "development-state.json"
+    state_path.write_text('{"phase":"IMPLEMENTATION"}\n', encoding="utf-8")
+    state = _bundle_state()
+    current_evidence = evidence(("docs/gate.md",))
+    current_proof = gate._proof(state, current_evidence, state_path)
+
+    bundle_dir = tmp_path / ".easyaudit-review"
+    _install_synthetic_bundle(bundle_dir, current_proof, monkeypatch)
+    artifact_path = bundle_dir / artifact
+    artifact_path.unlink()
+
+    violations = gate._validate_bundle(
+        bundle_dir, state, state_path, current_evidence, current_proof
+    )
+    assert f"Review Bundle is missing artifact: {artifact_path}" in violations
+
+    _install_synthetic_bundle(bundle_dir, current_proof, monkeypatch)
+    artifact_path.write_text("old or modified evidence\n", encoding="utf-8")
+    violations = gate._validate_bundle(
+        bundle_dir, state, state_path, current_evidence, current_proof
+    )
+    assert f"Review Bundle artifact is stale or modified: {artifact}" in violations
+
+
+def test_generated_bundle_rejects_old_candidate_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.name", "Gate Test")
+    _run_git(repo, "config", "user.email", "gate@example.com")
+    state_path = repo / ".easyaudit" / "development-state.json"
+    state_path.parent.mkdir()
+    state = {
+        "schema_version": 1,
+        "active": True,
+        "project": "EasyAudit-Next",
+        "milestone": "M5",
+        "slice": "tooling",
+        "phase": "IMPLEMENTATION",
+        "scope": {
+            "allowed_paths": ["candidate.txt", ".easyaudit/**"],
+            "forbidden_paths": [],
+        },
+        "gate_docs": [],
+        "fixed_head": None,
+        "work_branch": None,
+    }
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    _run_git(repo, "add", ".")
+    base_sha = _commit_git(repo, "base")
+    (repo / "candidate.txt").write_text("candidate\n", encoding="utf-8")
+    _run_git(repo, "add", "candidate.txt")
+    _commit_git(repo, "candidate")
+
+    monkeypatch.setattr(gate, "ROOT", repo)
+    evidence_now = gate._collect_git_evidence(base_sha)
+    proof_now = gate._proof(state, evidence_now, state_path)
+    bundle_dir = repo / ".easyaudit-review"
+    gate._write_bundle(bundle_dir, state, evidence_now, state_path)
+    assert gate._validate_bundle(
+        bundle_dir, state, state_path, evidence_now, proof_now
+    ) == []
+
+    (bundle_dir / "candidate.diff").write_text("old candidate evidence\n", encoding="utf-8")
+    violations = gate._validate_bundle(
+        bundle_dir, state, state_path, evidence_now, proof_now
+    )
+    assert "Review Bundle artifact is stale or modified: candidate.diff" in violations
 
 
 def test_load_state_rejects_unknown_phase(tmp_path: Path) -> None:

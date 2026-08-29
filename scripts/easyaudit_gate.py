@@ -18,6 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATE = ROOT / ".easyaudit" / "development-state.json"
 DEFAULT_OUTPUT = ROOT / ".easyaudit-review"
 DEFAULT_FINALIZATION_ALLOWED_PATHS = [".easyaudit/development-state.json"]
+BUNDLE_ARTIFACT_NAMES = (
+    "changed-files.txt",
+    "branch.diff",
+    "candidate.diff",
+    "control.diff",
+    "working-tree.diff",
+)
 VALID_PHASES = {
     "UNSET",
     "GATE_DRAFT",
@@ -382,34 +389,32 @@ def _write_bundle(
     output = _bundle_path(output)
     output.mkdir(parents=True, exist_ok=True)
     proof = _proof(state, evidence, state_path)
+    artifacts = _bundle_artifacts(evidence, proof)
+    # Write every evidence artifact before gate-proof.json. The proof is the
+    # completion marker, so an interrupted generation cannot leave a fresh
+    # proof beside an older diff and still look like a complete bundle.
+    for name, contents in artifacts.items():
+        (output / name).write_text(contents, encoding="utf-8")
     (output / "gate-proof.json").write_text(
         json.dumps(proof, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    (output / "changed-files.txt").write_text(
-        "".join(f"{path}\n" for path in evidence.changed_files),
-        encoding="utf-8",
-    )
+    return output
+
+
+def _bundle_artifacts(
+    evidence: GitEvidence, proof: dict[str, Any]
+) -> dict[str, str]:
+    """Build the canonical non-proof artifacts for the current evidence."""
+
     committed_diff = _git(
         "diff", "--no-ext-diff", "--no-color", f"{evidence.base_ref}...HEAD"
     )
-    (output / "branch.diff").write_text(
-        committed_diff + ("\n" if committed_diff else ""),
-        encoding="utf-8",
-    )
     working_diff = _git("diff", "--no-ext-diff", "--no-color", "HEAD")
-    (output / "working-tree.diff").write_text(
-        working_diff + ("\n" if working_diff else ""),
-        encoding="utf-8",
-    )
     scope = proof["scope"]
     candidate_head = str(scope.get("candidate_head") or evidence.head_sha)
     candidate_diff = _git(
         "diff", "--no-ext-diff", "--no-color", f"{evidence.base_ref}...{candidate_head}"
-    )
-    (output / "candidate.diff").write_text(
-        candidate_diff + ("\n" if candidate_diff else ""),
-        encoding="utf-8",
     )
     fixed_head = scope.get("fixed_head_resolved")
     control_head = str(scope.get("control_head") or evidence.head_sha)
@@ -418,11 +423,13 @@ def _write_bundle(
         control_diff = _git(
             "diff", "--no-ext-diff", "--no-color", f"{fixed_head}..{control_head}"
         )
-    (output / "control.diff").write_text(
-        control_diff + ("\n" if control_diff else ""),
-        encoding="utf-8",
-    )
-    return output
+    return {
+        "changed-files.txt": "".join(f"{path}\n" for path in evidence.changed_files),
+        "branch.diff": committed_diff + ("\n" if committed_diff else ""),
+        "candidate.diff": candidate_diff + ("\n" if candidate_diff else ""),
+        "control.diff": control_diff + ("\n" if control_diff else ""),
+        "working-tree.diff": working_diff + ("\n" if working_diff else ""),
+    }
 
 
 def _validate_bundle(
@@ -432,7 +439,8 @@ def _validate_bundle(
     evidence: GitEvidence,
     current_proof: dict[str, Any],
 ) -> list[str]:
-    bundle_path = _bundle_path(output) / "gate-proof.json"
+    output = _bundle_path(output)
+    bundle_path = output / "gate-proof.json"
     if not bundle_path.is_file():
         return [f"Review Bundle is missing: {bundle_path.parent}"]
 
@@ -442,6 +450,10 @@ def _validate_bundle(
         return [f"Review Bundle gate-proof.json is unreadable: {exc}"]
 
     violations: list[str] = []
+    if bundle_proof != current_proof:
+        violations.append(
+            "Review Bundle gate-proof.json does not match current Git/state evidence"
+        )
     bundle_git = bundle_proof.get("git") or {}
     current_git = current_proof["git"]
     if bundle_proof.get("schema_version") != 1:
@@ -476,6 +488,25 @@ def _validate_bundle(
         violations.append("Review Bundle contains a failing Gate scope proof")
     if not current_proof["scope"].get("pass"):
         violations.append("current Gate scope is failing")
+    try:
+        expected_artifacts = _bundle_artifacts(evidence, current_proof)
+    except GateError as exc:
+        violations.append(f"could not rebuild canonical Review Bundle artifacts: {exc}")
+    else:
+        for name in BUNDLE_ARTIFACT_NAMES:
+            artifact_path = output / name
+            if not artifact_path.is_file():
+                violations.append(f"Review Bundle is missing artifact: {artifact_path}")
+                continue
+            try:
+                actual = artifact_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                violations.append(f"Review Bundle artifact is unreadable ({name}): {exc}")
+                continue
+            if actual != expected_artifacts[name]:
+                violations.append(
+                    f"Review Bundle artifact is stale or modified: {name}"
+                )
     return violations
 
 
