@@ -6,6 +6,8 @@ const CASE_ID = '00000000-0000-4000-8000-0000000003b5'
 const CANDIDATE_USER_ID = '00000000-0000-4000-8000-0000000003b2'
 const LOGIN_NAME = 'browser-m5-3-lead'
 const PASSWORD = 'm5-3-browser-password-000'
+const OBSERVER_LOGIN_NAME = 'browser-m5-3-observer'
+const OBSERVER_PASSWORD = 'm5-3-observer-password-000'
 const LEAD_DISPLAY_NAME = 'M5.3 Browser Team Lead'
 const CANDIDATE_DISPLAY_NAME = 'M5.3 Browser Candidate'
 
@@ -34,27 +36,37 @@ test.beforeAll(() => {
   })
 })
 
-test('real Case team search, add, remove, and activity refresh', async ({ page }) => {
+async function searchRole(page: Page, roleKey: string) {
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByLabel('团队角色').selectOption(roleKey)
+  await team.getByLabel('搜索成员').fill('Candidate')
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/member-candidates` &&
+      response.request().method() === 'GET',
+  )
+  await team.getByRole('button', { name: '搜索候选人' }).click()
+  expect((await responsePromise).status()).toBe(200)
+  const candidateList = team.getByRole('list', { name: '候选成员' })
+  await expect(candidateList.getByText(CANDIDATE_DISPLAY_NAME)).toBeVisible()
+}
+
+test('real Case team searches all exact roles, adds, removes, and protects final manager', async ({ page }) => {
   await page.goto(`/review-cases/${CASE_ID}`)
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
   await submitLogin(page)
 
   const team = page.getByRole('region', { name: '团队管理' })
   await expect(page.getByText(LEAD_DISPLAY_NAME)).toBeVisible()
-  await expect(team.getByText(LEAD_DISPLAY_NAME)).toBeVisible()
-  await expect(team.getByText('负责人')).toBeVisible()
+  const leadMember = team.locator('li').filter({ hasText: LEAD_DISPLAY_NAME })
+  await expect(leadMember.getByText('负责人', { exact: true })).toBeVisible()
 
-  await team.getByLabel('团队角色').selectOption('reviewer')
-  await team.getByLabel('搜索成员').fill('Candidate')
-  const candidatesResponsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/member-candidates` &&
-      response.request().method() === 'GET',
-  )
-  await team.getByRole('button', { name: '搜索候选人' }).click()
-  expect((await candidatesResponsePromise).status()).toBe(200)
+  for (const roleKey of ['lead', 'auditor', 'reviewer', 'observer']) {
+    await searchRole(page, roleKey)
+  }
+
+  await searchRole(page, 'reviewer')
   const candidateList = team.getByRole('list', { name: '候选成员' })
-  await expect(candidateList.getByText(CANDIDATE_DISPLAY_NAME)).toBeVisible()
 
   const addResponsePromise = page.waitForResponse(
     (response) =>
@@ -76,9 +88,9 @@ test('real Case team search, add, remove, and activity refresh', async ({ page }
   expect((await membersReloadPromise).status()).toBe(200)
   expect((await activitiesReloadPromise).status()).toBe(200)
   await expect(team.getByText(CANDIDATE_DISPLAY_NAME)).toBeVisible()
-  await expect(team.getByText('复核员')).toBeVisible()
-
   const candidateMember = team.locator('li').filter({ hasText: CANDIDATE_DISPLAY_NAME })
+  await expect(candidateMember.getByText('复核员', { exact: true })).toBeVisible()
+
   const memberDeleteResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) ===
@@ -95,4 +107,43 @@ test('real Case team search, add, remove, and activity refresh', async ({ page }
   expect((await activityDeleteReloadPromise).status()).toBe(200)
   await expect(team.getByText(CANDIDATE_DISPLAY_NAME)).toHaveCount(0)
   await expect(page.getByText('review_case.member_removed')).toBeVisible()
+
+  const finalManagerResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) ===
+        `/api/v1/review-cases/${CASE_ID}/members/${'00000000-0000-4000-8000-0000000003b1'}` &&
+      response.request().method() === 'DELETE',
+  )
+  await leadMember.getByRole('button', { name: '移除' }).click()
+  expect((await finalManagerResponsePromise).status()).toBe(409)
+  await expect(team.getByText('团队状态发生冲突，请刷新后重试。')).toBeVisible()
+  await expect(team.locator('li').filter({ hasText: LEAD_DISPLAY_NAME })).toHaveCount(1)
+})
+
+test('real non-manager sees safe permission failure without candidate names', async ({ page }) => {
+  await page.goto(`/review-cases/${CASE_ID}`)
+  await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
+  const loginResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === '/api/v1/auth/login' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByLabel('登录名').fill(OBSERVER_LOGIN_NAME)
+  await page.getByLabel('密码').fill(OBSERVER_PASSWORD)
+  await page.getByRole('button', { name: '登录' }).click()
+  expect((await loginResponsePromise).status()).toBe(200)
+
+  const team = page.getByRole('region', { name: '团队管理' })
+  await expect(team.getByText('M5.3 Browser Observer')).toBeVisible()
+  await team.getByLabel('团队角色').selectOption('reviewer')
+  await team.getByLabel('搜索成员').fill('Candidate')
+  const forbiddenResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/member-candidates` &&
+      response.request().method() === 'GET',
+  )
+  await team.getByRole('button', { name: '搜索候选人' }).click()
+  expect((await forbiddenResponsePromise).status()).toBe(403)
+  await expect(team.getByRole('alert')).toContainText('当前用户没有管理 Case 团队的权限。')
+  await expect(team.getByText(CANDIDATE_DISPLAY_NAME)).toHaveCount(0)
 })

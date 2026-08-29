@@ -23,12 +23,15 @@ from easyaudit_next.review_core.persistence.models import (
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-0000000003B0")
 LEAD_USER_ID = UUID("00000000-0000-4000-8000-0000000003B1")
 CANDIDATE_USER_ID = UUID("00000000-0000-4000-8000-0000000003B2")
+OBSERVER_USER_ID = UUID("00000000-0000-4000-8000-0000000003B6")
 SCENARIO_ID = UUID("00000000-0000-4000-8000-0000000003B3")
 SCENARIO_VERSION_ID = UUID("00000000-0000-4000-8000-0000000003B4")
 CASE_ID = UUID("00000000-0000-4000-8000-0000000003B5")
 
 LOGIN_NAME = "browser-m5-3-lead"
 PASSWORD = "m5-3-browser-password-000"
+OBSERVER_LOGIN_NAME = "browser-m5-3-observer"
+OBSERVER_PASSWORD = "m5-3-observer-password-000"
 PASSWORD_HASH = PasswordHash.recommended()
 BASE_TIME = datetime(2026, 8, 30, 3, 0, tzinfo=UTC)
 
@@ -53,6 +56,12 @@ def main() -> None:
                         display_name="M5.3 Browser Candidate",
                         platform_role="ordinary_user",
                     ),
+                    UserRecord(
+                        id=OBSERVER_USER_ID,
+                        organization_id=ORGANIZATION_ID,
+                        display_name="M5.3 Browser Observer",
+                        platform_role="ordinary_user",
+                    ),
                 ]
             )
             session.flush()
@@ -62,6 +71,16 @@ def main() -> None:
                     organization_id=ORGANIZATION_ID,
                     login_name=LOGIN_NAME,
                     password_hash=PASSWORD_HASH.hash(PASSWORD),
+                    password_changed_at=BASE_TIME,
+                    must_change_password=False,
+                )
+            )
+            session.add(
+                LocalCredentialRecord(
+                    user_id=OBSERVER_USER_ID,
+                    organization_id=ORGANIZATION_ID,
+                    login_name=OBSERVER_LOGIN_NAME,
+                    password_hash=PASSWORD_HASH.hash(OBSERVER_PASSWORD),
                     password_changed_at=BASE_TIME,
                     must_change_password=False,
                 )
@@ -107,6 +126,15 @@ def main() -> None:
                     case_id=CASE_ID,
                     user_id=LEAD_USER_ID,
                     role_key="lead",
+                    joined_at=BASE_TIME,
+                )
+            )
+            session.add(
+                CaseMemberRecord(
+                    organization_id=ORGANIZATION_ID,
+                    case_id=CASE_ID,
+                    user_id=OBSERVER_USER_ID,
+                    role_key="observer",
                     joined_at=BASE_TIME,
                 )
             )

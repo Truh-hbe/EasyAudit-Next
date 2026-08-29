@@ -642,6 +642,36 @@ def test_failed_deactivation_is_atomic_and_keeps_sessions_and_audit_unchanged(
             )
         ) == 1
 
+    admin_client = _identity_client(postgres_engine, fixture.admin_id)
+    response = admin_client.patch(
+        f"/api/v1/admin/users/{fixture.manager_id}",
+        json={"is_active": False},
+    )
+    assert response.status_code == 409
+    with Session(postgres_engine) as verification:
+        manager = SqlAlchemyUserRepository(verification).get(fixture.manager_id)
+        assert manager is not None and manager.is_active
+        session_record = verification.scalar(
+            select(AuthSessionRecord).where(AuthSessionRecord.user_id == fixture.manager_id)
+        )
+        assert session_record is not None and session_record.revoked_at is None
+        assert verification.scalar(
+            select(func.count()).select_from(PlatformAuditEventRecord).where(
+                PlatformAuditEventRecord.target_user_id == fixture.manager_id,
+                PlatformAuditEventRecord.event_type == "admin.user_updated",
+            )
+        ) == 0
+        assert verification.scalar(
+            select(func.count()).select_from(CaseMemberRecord).where(
+                CaseMemberRecord.case_id == case_id
+            )
+        ) == 1
+        assert verification.scalar(
+            select(func.count()).select_from(ActivityRecord).where(
+                ActivityRecord.review_case_id == case_id,
+            )
+        ) == 1
+
 
 def test_concurrent_final_manager_removal_has_one_success_and_no_zero_manager_case(
     postgres_engine: Engine,
