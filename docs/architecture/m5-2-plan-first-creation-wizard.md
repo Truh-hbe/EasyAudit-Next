@@ -31,8 +31,9 @@ review catalog
   -> exact scenario/version adapter
   -> POST /review-plans
   -> planId URL checkpoint
-  -> GET /review-plans/{planId}
-  -> POST /review-cases with planId + adapter-built scenario_data
+  -> GET /review-plans/{planId} + GET /review-catalog
+  -> POST /review-cases with planId + explicit title + adapter-built scenario_data
+  -> caseId URL checkpoint
   -> GET /review-cases/{caseId}
   -> case detail
 ```
@@ -49,21 +50,30 @@ authorization.
 2. Submitting the first step makes exactly one `POST /api/v1/review-plans`.
    The returned `plan_id` is immediately placed in the second route before
    the case request is submitted.
-3. The second step loads `GET /api/v1/review-plans/{plan_id}` on entry and
-   refresh. A missing, unauthorized or unavailable plan stops the flow and
+3. Every entry and refresh of the second step loads both
+   `GET /api/v1/review-plans/{plan_id}` and `GET /api/v1/review-catalog`.
+   A missing, unauthorized or unavailable plan/catalog stops the flow and
    does not submit a Case.
-4. The second step selects an exact catalog identity and resolves the exact
+4. The second step requires an explicit non-empty Case title. The Plan title
+   is never copied, transformed or otherwise used as the Case title. Plan
+   dates are not silently inherited by the Case; Case dates are omitted/null
+   in M5.2.
+5. The second step selects an exact catalog identity and resolves the exact
    adapter. The adapter renders its fields and builds `scenario_data`; the
    page never uses latest, nearby-version or key-only fallback.
-5. Submitting the second step makes one `POST /api/v1/review-cases` with the
-   checkpointed `plan_id`. On failure, only the Case request is retryable; the
-   UI must not create another ReviewPlan.
-6. After Case creation succeeds, the page re-reads the returned Case and
-   navigates to `/review-cases/{caseId}`.
-7. A network ambiguity after a successful Plan request is a documented
+6. Submitting the second step uses the exact payload
+   `{plan_id, scenario_key, scenario_version, title, scenario_data}`. A
+   definitive Case rejection is correctable and retryable, but an ambiguous
+   transport outcome after dispatch must show that Case creation is unknown
+   and must not automatically repeat the Case request. The UI must never
+   create another ReviewPlan.
+7. After a known successful Case creation returns `case_id`, the page
+   immediately navigates to `/review-cases/{caseId}`. The existing detail
+   route performs the authoritative Case GET; no extra Case POST is needed.
+8. A network ambiguity after a successful Plan request is a documented
    controlled-pilot limitation. The client must not guess a Plan by title or
    silently issue a second Plan request.
-8. Existing plan authorization is preserved: any active organization user
+9. Existing plan authorization is preserved: any active organization user
    allowed by the backend may use the flow. The product UI must not add an
    administrator-only or manager-only rule.
 
@@ -94,6 +104,10 @@ GET  /api/v1/review-catalog
 No new merge-style creation endpoint, aggregate, persistence model, migration,
 authorization semantic, team-management operation, administrator page or
 scenario version is part of this Gate.
+
+The M5.1 scenario registry and adapters are read-only dependencies in this
+slice. If an implementation needs to modify `web/src/scenarios/**`, add a
+dependency, or change package-lock state, stop and return to Gate review.
 
 ## Acceptance summary
 
