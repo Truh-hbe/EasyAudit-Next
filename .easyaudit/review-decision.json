@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "review-decision",
+  "project": "EasyAudit-Next",
+  "milestone": "M5",
+  "slice": "M5.1",
+  "status": "PENDING",
+  "verdict": null,
+  "reviewed_head": null,
+  "reviewed_tree": null,
+  "ci": {
+    "run": null,
+    "conclusion": null
+  },
+  "scope": {
+    "pass": null,
+    "violations": []
+  },
+  "p1": [],
+  "p2": [],
+  "reviewer_mode": "Web ChatGPT / GPT-5.6 sol Review",
+  "next_allowed_action": "Architecture / Acceptance review"
+}
