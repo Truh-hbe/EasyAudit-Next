@@ -90,6 +90,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   expect(planPostCount).toBe(1)
 
   await expectStepTwoReload(page, firstPlan.id)
+  await page.getByLabel('审查场景').selectOption('process_review@1')
   await expect(page.getByLabel('区域代码')).toBeVisible()
   await page.getByLabel('案例名称').fill('M5.2 Process Case')
   await page.getByLabel('区域代码').fill('area-a')
