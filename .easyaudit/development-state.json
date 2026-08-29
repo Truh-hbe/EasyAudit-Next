@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.2-plan-first-creation-wizard",
-  "phase": "IMPLEMENTATION",
+  "phase": "FINAL_REVIEW",
   "base": {
     "branch": "main",
     "sha": "94435e2af6ca3bd86c666e5340c0f5ff1f44601e"
@@ -46,9 +46,9 @@
       "web/src/features/workbench/**"
     ]
   },
-  "fixed_head": null,
+  "fixed_head": "990b34977ef20d73270c78cd29ec6b12d6a806c6",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Implement M5.2 plan-first creation wizard"
+  "next_allowed_action": "Final review"
 }
