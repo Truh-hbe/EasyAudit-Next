@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.5-controlled-pilot-hardening",
-  "phase": "FINAL_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "28055c6b3da5ed266ad6f4128feffd602d436b2e"
@@ -43,5 +43,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Complete final review on fixed candidate; only state-only finalization changes are allowed"
+  "next_allowed_action": "Merge PR #35 with expected-head protection"
 }
