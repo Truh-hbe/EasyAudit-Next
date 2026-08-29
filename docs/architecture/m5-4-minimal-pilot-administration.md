@@ -27,9 +27,9 @@ of platform facts and mutations.
 - A `must_change_password` identity is allowed to reach the credential
   remediation flow and is blocked from business APIs until it completes the
   existing `/api/v1/me/password` flow.
-- Scenario state is read from the existing organization catalog and exact
-  published versions. The administrator page must not create, edit or infer
-  Scenario definitions.
+- Scenario state is read from the existing organization catalog, exact
+  published versions and the exact code registry. The administrator page must
+  not create, edit or infer Scenario definitions.
 
 ## Backend contract
 
@@ -46,12 +46,45 @@ GET   /api/v1/admin/users/{user_id}
 PATCH /api/v1/admin/users/{user_id}
 GET   /api/v1/admin/scenarios
 GET   /api/v1/admin/scenarios/{key}/versions
+GET   /api/v1/admin/scenario-status
 ```
 
-The UI may compose the two existing Scenario reads, but it must display each
-publication as the exact `scenario_key@version` returned by the server. It may
-not use `latest`, key-only matching, client-created versions or a generic
-Scenario editor.
+The existing Scenario reads remain available for their existing consumers. The
+administrator page must use the new aggregate status projection rather than
+reconstructing readiness from separate responses. Its response is:
+
+```json
+{
+  "items": [
+    {
+      "scenario_key": "process_review",
+      "display_name": "Process Review",
+      "is_active": true,
+      "versions": [
+        {
+          "scenario_version": 1,
+          "published_at": "2026-08-30T00:00:00Z",
+          "registry_present": true,
+          "ready": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+The server computes `registry_present` with an exact
+`ScenarioRegistry.get(scenario_key, scenario_version)` lookup. `ready` is true
+only when the organization Scenario is active, that exact version is
+published, and the exact code registry entry exists. A persisted publication
+without its exact registry entry remains visible but is `ready: false`; it may
+not be presented as installed or healthy. No `latest`, nearby-version,
+key-only or frontend fallback is allowed. The projection includes inactive
+Scenarios so stale state is visible, but inactive versions are not ready.
+
+The UI must display each exact `scenario_key@version` returned by this server
+projection and may not use client-created versions or a generic Scenario
+editor.
 
 Add the following endpoint:
 
@@ -67,6 +100,20 @@ Request:
 }
 ```
 
+The successful response is HTTP 200 with the existing `UserResponse` for the
+target user. The response contains no credential, session token or password
+field. A missing or cross-organization target returns HTTP 404 without
+revealing whether another organization contains it; a target without a local
+credential returns HTTP 409; a valid request for either an active or inactive
+same-organization user is allowed. An ordinary authenticated user receives
+HTTP 403 before target data is loaded, and an unauthenticated request receives
+HTTP 401.
+
+The request model treats `temporary_password` as an opaque string and the
+service applies the authoritative local password policy. Policy failure is a
+safe HTTP 422 response with a generic message; validation responses, logs and
+audit metadata must not echo the submitted password or its hash.
+
 The endpoint must:
 
 1. require the existing `system_admin` dependency before loading target data;
@@ -80,11 +127,15 @@ The endpoint must:
    reset operation; and
 8. commit all credential, session and audit changes as one request transaction.
 
-The response may acknowledge the target user, but must never return the
-temporary password or password hash and must never place either in audit
-metadata, logs or error text. A missing local credential is a clear conflict
-response. A caller with an ordinary platform role receives 403 and no target
-data is loaded.
+The target credential row lock is the serialization point shared with the
+existing login and password-change flows. The implementation must reuse that
+lock/update path and the existing session-revocation service, so reset versus
+login and reset versus password-change have deterministic safe outcomes.
+
+The response must be the frozen `UserResponse` contract above and must never
+return the temporary password or password hash or place either in audit
+metadata, logs or error text. A caller with an ordinary platform role receives
+403 and no target data is loaded.
 
 The existing department and user mutations remain the only mutations for those
 resources. No delete endpoint, bulk operation, email recovery, MFA, SSO or
@@ -124,6 +175,11 @@ status display.
 - Keep `PlatformAdministrationService` as the owner of department/user,
   credential, session and PlatformAudit mutations. Do not move ReviewCase or
   Scenario business rules into it.
+- The existing admin user update path must continue to delegate through the
+  M5.3 `CaseTeamCoordinator.update_user` orchestration before it reaches
+  `PlatformAdministrationService`, preserving the final-effective-case-manager
+  invariant. M5.4 must not bypass, duplicate or weaken that coordinator and
+  must not add Review imports to `PlatformAdministrationService`.
 - The credential reset may reuse the existing `AuthenticationService` session
   revocation path and `LocalCredentialRepository`; no general account-recovery
   subsystem is authorized.
@@ -147,10 +203,13 @@ Implementation is limited to:
 - the existing canonical frontend command registration if required for that
   browser spec.
 
-The following remain forbidden: `alembic/**`, `.github/workflows/**`, Review
-business semantics, notifications, workbench, evidence storage, dashboard
-redesign, generic Scenario builders, deployment, production scheduling, email
-recovery, MFA, SSO and a large design-system rewrite.
+The following remain forbidden: `alembic/**`, `.github/workflows/**`,
+`web/src/app/auth/**`, `web/src/app/router/**`, Review business semantics,
+notifications, workbench, evidence storage, dashboard redesign, generic
+Scenario builders, deployment, production scheduling, email recovery, MFA,
+SSO and a large design-system rewrite. The only `web/src/app/**` file in this
+Gate is the explicitly allowed `web/src/app/shell/ProductShell.tsx` route
+replacement.
 
 ## Gate lifecycle
 

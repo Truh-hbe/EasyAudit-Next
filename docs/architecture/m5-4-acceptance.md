@@ -54,22 +54,37 @@ For a target user with a local credential:
    existing forced password-change page before business access.
 
 The old password and all old sessions stop working. A short password is
-rejected without changing the credential, sessions or audit state. A missing
-credential returns a clear conflict. The temporary password, its hash and any
-credential secret are absent from response bodies, audit metadata, URLs and
-logs.
+rejected with a safe 422 without changing the credential, sessions or audit
+state. A missing or cross-organization target returns a safe 404, while a
+missing local credential returns a clear 409. The successful response is the
+existing `UserResponse` with HTTP 200 and no credential fields. A valid reset
+may target an active or inactive same-organization user. The temporary
+password, its hash and any credential secret are absent from response bodies,
+validation errors, audit metadata, URLs and logs.
+
+The credential row lock is shared with login and password change. PostgreSQL
+tests cover reset-vs-old-password-login and reset-vs-user-password-change
+ordering, with injected persistence/audit failure proving the whole request
+rolls back.
 
 ## Scenario installation status
 
-The administrator page reads the existing Scenario list and exact version
-endpoints and displays:
+The administrator page reads `GET /api/v1/admin/scenario-status`, whose server
+projection combines the organization catalog, exact published versions and
+the exact code registry. It displays:
 
-- each installed organization Scenario key and display name;
+- each organization Scenario key and display name;
 - its active/inactive state; and
-- every exact published version as `key@version` with its publication time.
+- every exact published version as `key@version` with its publication time;
+- whether the exact code registry entry is present; and
+- whether the exact version is ready (`active && published && registry_present`).
 
-It must not offer a runtime publish/editor action, substitute `latest`, merge
-versions by key, or display a version not returned by the server.
+An inactive Scenario or a persisted exact publication with an absent exact
+registry entry remains visible as not ready and must not be shown as installed
+or healthy. The server uses only exact
+`ScenarioRegistry.get(scenario_key, scenario_version)`; the UI must not offer
+a runtime publish/editor action, substitute `latest`, merge versions by key,
+or display a version not returned by the server.
 
 ## Browser journey
 
@@ -93,8 +108,9 @@ IDs, invalid password, missing credential and last-system-admin protection.
 
 The slice must include:
 
-- API/OpenAPI coverage for every existing admin route used by the page and the
-  credential-reset request/response;
+- API/OpenAPI coverage for every existing admin route used by the page, the
+  exact scenario-status projection, and the frozen credential-reset
+  request/response/status contract;
 - integration coverage for authorization, organization isolation, department
   and user mutations, credential hashing, `must_change_password`, session
   revocation, audit events and atomic failure;
