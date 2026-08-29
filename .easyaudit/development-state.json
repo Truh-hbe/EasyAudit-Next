@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.5-controlled-pilot-hardening",
-  "phase": "IMPLEMENTATION",
+  "phase": "FINAL_REVIEW",
   "base": {
     "branch": "main",
     "sha": "28055c6b3da5ed266ad6f4128feffd602d436b2e"
@@ -39,9 +39,9 @@
       "tests/unit/**"
     ]
   },
-  "fixed_head": null,
+  "fixed_head": "71c32e47f6508839dd04e9a4982b8a2928ae3c3a",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Implement M5.5 evidence slice; do not enter FINAL_REVIEW before bundle and full checks"
+  "next_allowed_action": "Complete final review on fixed candidate; only state-only finalization changes are allowed"
 }
