@@ -225,7 +225,7 @@ test('real administrator configures users, protects Case managers, and resets cr
     await submitLogin(targetPage, NEW_USER_LOGIN_NAME, RESET_PASSWORD)
     await expect(targetPage.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
     await submitPasswordChange(targetPage, RESET_PASSWORD, RESET_CHANGED_PASSWORD)
-    await expect(targetPage.getByRole('heading', { name: '我的工作' })).toBeVisible()
+    await expect(targetPage.getByRole('heading', { name: 'M5.4 Browser Manager Case' })).toBeVisible()
   } finally {
     await managerContext.close()
     await targetContext.close()
