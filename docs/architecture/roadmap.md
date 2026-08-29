@@ -5,7 +5,7 @@ This roadmap is rebaselined after M4 Second Scenario Validation completion.
 Current baseline:
 
 ```text
-main@27e750c4901c8abd81b6a55703cd664c237e057e
+main@90d5a1a6ba447d59f0941e85890c4eee8b00aee1
 ```
 
 ## Completed — M0 Bootstrap
@@ -88,13 +88,17 @@ M4.1 also exposed and closed the narrow generic direct-Finding-transition abstra
 
 M4 was intentionally not pre-numbered beyond M4.1. Because the merged M4.1 executable implementation satisfied the complete frozen M4 acceptance objective, no artificial `M4.2` is required solely for numbering continuity.
 
-## Next — Separate post-M4 Architecture / Acceptance Gate
+## Next — M5 Planning & Administration Product Surface
 
-The post-M4 milestone is intentionally not named or given executable scope by the M4 finalization PR.
+M5 is selected through a separate post-M4 Architecture / Acceptance Gate. Its first slice is deliberately narrow:
 
-The next product/platform objective must be selected through a separate Architecture / Acceptance Gate based on the highest-value remaining problem after M4 completion.
+### M5.1 — ReviewPlan Planning Surface
 
-No executable post-M4 work is authorized merely by this roadmap rebaseline.
+M5.1 defines the planning surface around the existing cross-Scenario ReviewPlan and ReviewCase model. The Gate must freeze the domain boundary, organization authorization, query/API shape, persistence/concurrency guarantees and Product acceptance before executable work begins.
+
+The planned product slice is plan discovery, plan creation/detail, organized Case discovery and Scenario-aware Case creation/association through the existing exact Scenario version contract. It does not introduce a Plan lifecycle, universal workflow/form builders or later M5 scope.
+
+The M5.1 Gate is docs-only and does not authorize executable product work while its state is GATE_DRAFT or GATE_REVIEW.
 
 ## Deferred / non-goals
 
