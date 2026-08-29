@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from easyaudit_next.platform.domain.ids import OrganizationId
+from easyaudit_next.platform.domain.ids import OrganizationId, UserId
 from easyaudit_next.review_core.domain.ids import (
     ActionItemId,
     ActivityId,
@@ -82,6 +82,18 @@ class ReviewCoreRepository(Protocol):
 
     def list_cases(self, organization_id: OrganizationId) -> tuple[ReviewCase, ...]: ...
 
+    def lock_case_for_team_management(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> ReviewCase | None: ...
+
+    def list_cases_for_member(
+        self,
+        organization_id: OrganizationId,
+        user_id: UserId,
+    ) -> tuple[ReviewCase, ...]: ...
+
     def update_case(
         self,
         review_case: ReviewCase,
@@ -96,6 +108,14 @@ class ReviewCoreRepository(Protocol):
         organization_id: OrganizationId,
         case_id: ReviewCaseId,
     ) -> tuple[CaseMember, ...]: ...
+
+    def remove_case_member(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+        user_id: UserId,
+        role_key: str,
+    ) -> bool: ...
 
     def add_finding(self, finding: Finding) -> None: ...
 

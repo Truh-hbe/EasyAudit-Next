@@ -16,6 +16,8 @@ def test_review_planning_routes_are_exposed_without_lifecycle_patch() -> None:
     assert "patch" not in paths["/api/v1/review-cases/{case_id}"]
     assert "post" in paths["/api/v1/review-cases/{case_id}/members"]
     assert "get" in paths["/api/v1/review-cases/{case_id}/members"]
+    assert "get" in paths["/api/v1/review-cases/{case_id}/member-candidates"]
+    assert "delete" in paths["/api/v1/review-cases/{case_id}/members/{user_id}"]
     assert "get" in paths["/api/v1/review-cases/{case_id}/activities"]
     assert "post" in paths["/api/v1/review-cases/{case_id}/transitions"]
     assert "post" in paths["/api/v1/review-cases/{case_id}/findings"]
@@ -114,3 +116,29 @@ def test_case_member_view_and_activity_contracts_are_presentation_safe() -> None
         "occurred_at",
     }
     assert "metadata" not in activity_schema["properties"]
+
+
+def test_case_member_candidate_and_remove_contracts_are_bounded() -> None:
+    schema = create_app().openapi()
+    candidate_operation = schema["paths"][
+        "/api/v1/review-cases/{case_id}/member-candidates"
+    ]["get"]
+    parameters = {item["name"]: item for item in candidate_operation["parameters"]}
+    assert parameters["limit"]["schema"]["maximum"] == 20
+    assert parameters["role_key"]["required"] is True
+    candidate_items = candidate_operation["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]["items"]
+    assert candidate_items["$ref"].endswith("/CaseMemberCandidateResponse")
+    assert set(schema["components"]["schemas"]["CaseMemberCandidateResponse"]["properties"]) == {
+        "user_id",
+        "display_name",
+    }
+
+    remove_operation = schema["paths"][
+        "/api/v1/review-cases/{case_id}/members/{user_id}"
+    ]["delete"]
+    assert remove_operation["operationId"] == "removeReviewCaseMember"
+    assert remove_operation["responses"]["200"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/CaseMemberResponse")

@@ -92,6 +92,13 @@ class CaseMemberResponse(BaseModel):
     joined_at: datetime
 
 
+class CaseMemberCandidateResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    user_id: UUID
+    display_name: str
+
+
 class ReviewCaseTransitionRequest(BaseModel):
     action: str = Field(min_length=1, max_length=100)
     reason: str | None = Field(default=None, max_length=2_000)

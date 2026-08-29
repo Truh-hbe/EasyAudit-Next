@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
@@ -269,6 +269,44 @@ class SqlAlchemyReviewCoreRepository:
         )
         return tuple(self._case_to_domain(record) for record in records)
 
+    def lock_case_for_team_management(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> ReviewCase | None:
+        record = self._session.scalar(
+            select(ReviewCaseRecord)
+            .where(
+                ReviewCaseRecord.organization_id == organization_id,
+                ReviewCaseRecord.id == case_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return self._case_to_domain(record) if record is not None else None
+
+    def list_cases_for_member(
+        self,
+        organization_id: OrganizationId,
+        user_id: UserId,
+    ) -> tuple[ReviewCase, ...]:
+        records = self._session.scalars(
+            select(ReviewCaseRecord)
+            .join(
+                CaseMemberRecord,
+                (CaseMemberRecord.case_id == ReviewCaseRecord.id)
+                & (CaseMemberRecord.organization_id == ReviewCaseRecord.organization_id),
+            )
+            .where(
+                ReviewCaseRecord.organization_id == organization_id,
+                CaseMemberRecord.user_id == user_id,
+            )
+            .distinct()
+            .order_by(ReviewCaseRecord.id)
+            .execution_options(populate_existing=True)
+        )
+        return tuple(self._case_to_domain(record) for record in records)
+
     def _case_to_domain(self, record: ReviewCaseRecord) -> ReviewCase:
         version = self._session.scalar(
             select(ScenarioVersionRecord).where(
@@ -368,6 +406,26 @@ class SqlAlchemyReviewCoreRepository:
             )
             for record in records
         )
+
+    def remove_case_member(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+        user_id: UserId,
+        role_key: str,
+    ) -> bool:
+        result = self._session.execute(
+            delete(CaseMemberRecord)
+            .where(
+                CaseMemberRecord.organization_id == organization_id,
+                CaseMemberRecord.case_id == case_id,
+                CaseMemberRecord.user_id == user_id,
+                CaseMemberRecord.role_key == role_key,
+            )
+            .returning(CaseMemberRecord.user_id)
+        )
+        self._session.flush()
+        return result.scalar_one_or_none() is not None
 
     def add_finding(self, finding: Finding) -> None:
         self._session.add(

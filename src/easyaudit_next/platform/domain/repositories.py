@@ -41,6 +41,12 @@ class UserRepository(Protocol):
 
     def list_for_organization(self, organization_id: OrganizationId) -> tuple[User, ...]: ...
 
+    def lock_users_for_update(
+        self,
+        organization_id: OrganizationId,
+        user_ids: tuple[UserId, ...],
+    ) -> tuple[User, ...]: ...
+
     def count_active_system_admins(self, organization_id: OrganizationId) -> int: ...
 
 
