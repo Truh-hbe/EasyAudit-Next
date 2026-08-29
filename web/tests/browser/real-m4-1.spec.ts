@@ -79,6 +79,22 @@ test('real compliance observation closes through shared Product routes and exact
   await expect(page.getByRole('button', { name: '接受 Observation' })).toBeVisible()
   await expect(page.getByRole('button', { name: '签发不符合项' })).toHaveCount(0)
 
+  const nudgeRequestPromise = page.waitForRequest(
+    (request) =>
+      apiPath(request.url()) === `/api/v1/findings/${FINDING_ID}/nudge` &&
+      request.method() === 'POST',
+  )
+  const nudgeResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/findings/${FINDING_ID}/nudge` &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '催一下', exact: true }).click()
+  const nudgeRequest = await nudgeRequestPromise
+  const nudgeResponse = await nudgeResponsePromise
+  expect(nudgeRequest.postData()).toBeNull()
+  expect(nudgeResponse.status()).toBe(422)
+
   const transitionRequestPromise = page.waitForRequest(
     (request) =>
       apiPath(request.url()) === `/api/v1/findings/${FINDING_ID}/transitions` &&
