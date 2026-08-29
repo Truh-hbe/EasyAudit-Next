@@ -8,8 +8,6 @@
 secrets/
 **/*.pem
 **/*.key
-**/*credential*
-**/*secret*
 
 # Private deployment / operational material
 deploy/private/
