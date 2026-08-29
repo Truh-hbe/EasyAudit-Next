@@ -40,6 +40,33 @@ export function ComplianceReviewV1CaseSection({ reviewCase }: ScenarioCaseSectio
   )
 }
 
+export function ComplianceReviewV1CaseCreateFields({
+  values,
+  onChange,
+  disabled,
+}: ScenarioFormFieldsProps) {
+  return (
+    <div className="form-grid">
+      <label>
+        标准 / 依据
+        <input
+          value={formValue(values, 'standard_reference')}
+          onChange={(event) => onChange('standard_reference', event.target.value)}
+          disabled={disabled}
+        />
+      </label>
+      <label>
+        范围摘要
+        <input
+          value={formValue(values, 'scope_summary')}
+          onChange={(event) => onChange('scope_summary', event.target.value)}
+          disabled={disabled}
+        />
+      </label>
+    </div>
+  )
+}
+
 export function ComplianceReviewV1FindingSection({ finding }: ScenarioFindingSectionProps) {
   return (
     <section className="surface-card" aria-labelledby="compliance-review-v1-finding-title">
@@ -310,6 +337,11 @@ export function ComplianceReviewV1FindingInteraction({
 
 export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
   CaseScenarioSection: ComplianceReviewV1CaseSection,
+  CaseCreateFields: ComplianceReviewV1CaseCreateFields,
+  buildCaseScenarioData: (values) => ({
+    standard_reference: formValue(values, 'standard_reference'),
+    scope_summary: formValue(values, 'scope_summary'),
+  }),
   FindingScenarioSection: ComplianceReviewV1FindingSection,
   FindingCreateFields: ComplianceReviewV1FindingCreateFields,
   buildFindingScenarioData: (values) => ({

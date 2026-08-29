@@ -6,6 +6,8 @@ def test_review_planning_routes_are_exposed_without_lifecycle_patch() -> None:
     paths = schema["paths"]
 
     assert "post" in paths["/api/v1/review-plans"]
+    assert "get" in paths["/api/v1/review-catalog"]
+    assert paths["/api/v1/review-catalog"]["get"]["operationId"] == "listReviewCatalog"
     assert "get" in paths["/api/v1/review-plans"]
     assert "get" in paths["/api/v1/review-plans/{plan_id}"]
     assert "post" in paths["/api/v1/review-cases"]
@@ -29,6 +31,25 @@ def test_review_planning_routes_are_exposed_without_lifecycle_patch() -> None:
     assert "lifecycle" not in create_schema.get("properties", {})
     finding_create_schema = schema["components"]["schemas"]["FindingCreateRequest"]
     assert "lifecycle" not in finding_create_schema.get("properties", {})
+
+
+def test_review_catalog_contract_is_minimal_and_exact() -> None:
+    schema = create_app().openapi()
+    operation = schema["paths"]["/api/v1/review-catalog"]["get"]
+    assert operation["tags"] == ["review-planning"]
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    item_schema = schema["components"]["schemas"]["ReviewCatalogItemResponse"]
+    assert response_schema["items"] == {"$ref": "#/components/schemas/ReviewCatalogItemResponse"}
+    assert set(item_schema["required"]) == {
+        "scenario_key",
+        "scenario_version",
+        "display_name",
+    }
+    assert set(item_schema["properties"]) == {
+        "scenario_key",
+        "scenario_version",
+        "display_name",
+    }
 
 
 def test_review_case_collection_contract_is_bounded_and_enveloped() -> None:

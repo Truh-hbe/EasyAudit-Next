@@ -12,6 +12,7 @@ from easyaudit_next.api.review_contracts import (
     ReviewCaseCreateRequest,
     ReviewCaseResponse,
     ReviewCaseTransitionRequest,
+    ReviewCatalogItemResponse,
     ReviewPlanCreateRequest,
     ReviewPlanResponse,
 )
@@ -19,6 +20,7 @@ from easyaudit_next.composition import (
     build_notification_orchestrator,
     build_review_case_collection_query_service,
     build_review_case_context_query_service,
+    build_review_catalog_query_service,
     build_review_planning_service,
 )
 from easyaudit_next.platform.domain.ids import UserId
@@ -146,6 +148,26 @@ def create_review_plan(
     except (ReviewAuthorizationError, ValueError, IntegrityError) as exc:
         _raise_api_error(exc)
     return _plan_response(plan)
+
+
+@review_planning_router.get(
+    "/review-catalog",
+    response_model=list[ReviewCatalogItemResponse],
+    operation_id="listReviewCatalog",
+)
+def list_review_catalog(
+    identity: BusinessIdentity,
+    session: DatabaseSession,
+) -> list[ReviewCatalogItemResponse]:
+    items = build_review_catalog_query_service(session).list_creatable(identity.user)
+    return [
+        ReviewCatalogItemResponse(
+            scenario_key=item.scenario_key,
+            scenario_version=item.scenario_version,
+            display_name=item.display_name,
+        )
+        for item in items
+    ]
 
 
 @review_planning_router.get(

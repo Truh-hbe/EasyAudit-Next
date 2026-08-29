@@ -25,6 +25,8 @@ export interface ScenarioFormFieldsProps {
 
 export interface ScenarioCaseAdapter {
   CaseScenarioSection: ComponentType<ScenarioCaseSectionProps>
+  CaseCreateFields: ComponentType<ScenarioFormFieldsProps>
+  buildCaseScenarioData: (values: ScenarioFormValues) => Record<string, unknown>
 }
 
 export interface ScenarioRelationshipOption {

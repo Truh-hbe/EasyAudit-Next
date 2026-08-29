@@ -1,11 +1,12 @@
 import argparse
 import getpass
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pwdlib import PasswordHash
 from sqlalchemy.orm import Session
 
+from easyaudit_next.composition import build_scenario_registry
 from easyaudit_next.infrastructure.database import (
     create_database_engine,
     create_session_factory,
@@ -16,7 +17,7 @@ from easyaudit_next.platform.application.password_policy import (
     validate_local_password,
 )
 from easyaudit_next.platform.application.services import IdentityOrganizationService
-from easyaudit_next.platform.domain.ids import PlatformAuditEventId
+from easyaudit_next.platform.domain.ids import OrganizationId, PlatformAuditEventId
 from easyaudit_next.platform.domain.models import (
     LocalCredential,
     PlatformAuditEvent,
@@ -29,6 +30,9 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
+from easyaudit_next.review_core.application.scenario_catalog import ScenarioCatalogService
+from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersion
+from easyaudit_next.review_core.persistence.repositories import SqlAlchemyScenarioCatalogRepository
 
 
 def _ensure_bootstrap_available(session: Session) -> None:
@@ -100,6 +104,41 @@ def bootstrap_admin(organization_name: str, admin_name: str, login_name: str) ->
         engine.dispose()
 
 
+def publish_scenario_in_session(
+    session: Session,
+    organization_id: OrganizationId,
+    scenario_key: ScenarioKey,
+    scenario_version: ScenarioVersion,
+) -> None:
+    """Publish one exact, code-defined Scenario version for an existing Organization."""
+
+    if SqlAlchemyOrganizationRepository(session).get(organization_id) is None:
+        raise LookupError(f"Organization {organization_id} does not exist")
+    ScenarioCatalogService(
+        SqlAlchemyScenarioCatalogRepository(session),
+        build_scenario_registry(),
+    ).publish(organization_id, scenario_key, scenario_version)
+
+
+def publish_scenario(
+    organization_id: OrganizationId,
+    scenario_key: ScenarioKey,
+    scenario_version: ScenarioVersion,
+) -> None:
+    engine = create_database_engine()
+    factory = create_session_factory(engine)
+    try:
+        with session_scope(factory) as session:
+            publish_scenario_in_session(
+                session,
+                organization_id,
+                scenario_key,
+                scenario_version,
+            )
+    finally:
+        engine.dispose()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="easyaudit-next")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -110,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--organization-name", required=True)
     bootstrap.add_argument("--admin-name", required=True)
     bootstrap.add_argument("--login-name", required=True)
+    publish = subparsers.add_parser(
+        "publish-scenario",
+        help="Publish one exact code-defined Scenario version for an Organization",
+    )
+    publish.add_argument("--organization-id", required=True, type=UUID)
+    publish.add_argument("--key", required=True, type=ScenarioKey)
+    publish.add_argument("--version", required=True, type=int)
     return parser
 
 
@@ -117,6 +163,12 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.command == "bootstrap-admin":
         bootstrap_admin(args.organization_name, args.admin_name, args.login_name)
+    elif args.command == "publish-scenario":
+        publish_scenario(
+            OrganizationId(args.organization_id),
+            ScenarioKey(args.key),
+            ScenarioVersion(args.version),
+        )
 
 
 if __name__ == "__main__":
