@@ -5,6 +5,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from easyaudit_next.api.contracts import (
+    AdminScenarioStatusItem,
+    AdminScenarioStatusResponse,
+    AdminScenarioVersionStatus,
+    CredentialResetRequest,
     CurrentUserResponse,
     DepartmentCreateRequest,
     DepartmentPatchRequest,
@@ -32,6 +36,7 @@ from easyaudit_next.application.case_team_coordination import UserDeactivationCo
 from easyaudit_next.composition import (
     build_case_team_coordinator,
     build_platform_administration_service,
+    build_scenario_registry,
 )
 from easyaudit_next.platform.application.administration import PlatformAdministrationService
 from easyaudit_next.platform.application.authentication import (
@@ -52,7 +57,7 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyUserRepository,
 )
 from easyaudit_next.platform.settings import get_settings
-from easyaudit_next.review_core.domain.models import ScenarioKey
+from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersion
 from easyaudit_next.review_core.persistence.repositories import (
     SqlAlchemyScenarioCatalogRepository,
 )
@@ -488,6 +493,39 @@ def update_admin_user(
     return _user_response(user)
 
 
+@api_router.post(
+    "/api/v1/admin/users/{user_id}/credential-reset",
+    response_model=UserResponse,
+    operation_id="resetAdminUserCredential",
+    tags=["admin"],
+)
+def reset_admin_user_credential(
+    user_id: UUID,
+    payload: CredentialResetRequest,
+    identity: SystemAdminIdentity,
+    session: DatabaseSession,
+) -> UserResponse:
+    try:
+        user = _administration_service(session).reset_local_credential(
+            identity.user,
+            UserId(user_id),
+            payload.temporary_password,
+        )
+    except LocalCredentialUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local credential is unavailable",
+        ) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
+    except PasswordPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Temporary password does not meet the local password policy",
+        ) from exc
+    return _user_response(user)
+
+
 @api_router.get(
     "/api/v1/admin/scenarios",
     response_model=list[ScenarioResponse],
@@ -537,3 +575,47 @@ def list_admin_scenario_versions(
         )
         for publication in repository.list_versions(identity.user.organization_id, scenario.id)
     ]
+
+
+@api_router.get(
+    "/api/v1/admin/scenario-status",
+    response_model=AdminScenarioStatusResponse,
+    operation_id="getAdminScenarioStatus",
+    tags=["admin"],
+)
+def get_admin_scenario_status(
+    identity: SystemAdminIdentity,
+    session: DatabaseSession,
+) -> AdminScenarioStatusResponse:
+    repository = SqlAlchemyScenarioCatalogRepository(session)
+    registry = build_scenario_registry()
+    items: list[AdminScenarioStatusItem] = []
+    for scenario in repository.list_for_organization(identity.user.organization_id):
+        versions: list[AdminScenarioVersionStatus] = []
+        for publication in repository.list_versions(
+            identity.user.organization_id,
+            scenario.id,
+        ):
+            try:
+                registry.get(scenario.key, ScenarioVersion(publication.version))
+            except LookupError:
+                registry_present = False
+            else:
+                registry_present = True
+            versions.append(
+                AdminScenarioVersionStatus(
+                    scenario_version=publication.version,
+                    published_at=publication.published_at,
+                    registry_present=registry_present,
+                    ready=scenario.is_active and registry_present,
+                )
+            )
+        items.append(
+            AdminScenarioStatusItem(
+                scenario_key=scenario.key,
+                display_name=scenario.name,
+                is_active=scenario.is_active,
+                versions=versions,
+            )
+        )
+    return AdminScenarioStatusResponse(items=items)

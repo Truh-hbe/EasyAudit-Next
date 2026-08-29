@@ -102,6 +102,12 @@ class UserPatchRequest(BaseModel):
     is_active: bool | None = None
 
 
+class CredentialResetRequest(BaseModel):
+    """Opaque reset input; the service owns the authoritative password policy."""
+
+    temporary_password: str
+
+
 class ScenarioResponse(BaseModel):
     id: UUID
     organization_id: UUID
@@ -115,3 +121,21 @@ class ScenarioVersionResponse(BaseModel):
     scenario_id: UUID
     version: int
     published_at: datetime
+
+
+class AdminScenarioVersionStatus(BaseModel):
+    scenario_version: int
+    published_at: datetime
+    registry_present: bool
+    ready: bool
+
+
+class AdminScenarioStatusItem(BaseModel):
+    scenario_key: str
+    display_name: str
+    is_active: bool
+    versions: list[AdminScenarioVersionStatus]
+
+
+class AdminScenarioStatusResponse(BaseModel):
+    items: list[AdminScenarioStatusItem]
