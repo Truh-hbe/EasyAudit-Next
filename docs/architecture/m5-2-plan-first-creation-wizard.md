@@ -113,7 +113,8 @@ dependency, or change package-lock state, stop and return to Gate review.
 
 - both exact scenarios can be created through the plan-first UI;
 - the plan ID survives route refresh and recovers from the server;
-- a failed Case request retries only the second step;
+- a definitively rejected Case request may retry only the Case step; an
+  ambiguous dispatched Case request is never automatically retried;
 - exact adapter resolution fails closed;
 - server errors and permission errors are visible and recoverable;
 - organization and existing business permissions remain server-controlled;

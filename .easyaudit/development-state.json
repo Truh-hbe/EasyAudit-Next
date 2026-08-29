@@ -31,7 +31,6 @@
       "web/tests/browser/real-m5-2.spec.ts",
       "web/tests/browser/seed_m5_2_real_acceptance.py",
       "web/package.json",
-      "web/package-lock.json",
       "tests/integration/test_m5_2_plan_first_creation.py"
     ],
     "forbidden_paths": [
