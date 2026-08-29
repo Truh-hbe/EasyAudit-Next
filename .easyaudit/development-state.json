@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.4-minimal-pilot-administration",
-  "phase": "FINAL_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "9a33982875fbaf3bcd0a28d56ca245eaf46b0e3b"
@@ -56,5 +56,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Exact-head GitHub CI and ChatGPT final review"
+  "next_allowed_action": "Merge PR #34 with expected-head protection"
 }
