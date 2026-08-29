@@ -316,6 +316,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     expect(processCase.scenario_key).toBe('process_review')
     expect(processCase.scenario_version).toBe(1)
     expect(processCase.scenario_data).toEqual({ area_code: 'M55-PROCESS', review_type: 'standard' })
+    expect(casePostCount).toBe(2)
     expect((await processDetailPromise).status()).toBe(200)
     await expect(firstPage.getByRole('heading', { name: 'M5.5 Process Case' })).toBeVisible()
     await firstPage.reload()
