@@ -8,6 +8,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActionItemWorkflowPolicy,
     AuthorizationPolicy,
     CollaborationRecipientPolicy,
+    DirectFindingTransitionPolicy,
     FindingOperationPolicy,
     FindingWorkflowPolicy,
     ReviewCaseCreationPolicy,
@@ -41,6 +42,9 @@ class ScenarioPolicy(Protocol):
 
     @property
     def finding_operations(self) -> FindingOperationPolicy: ...
+
+    @property
+    def finding_direct_transitions(self) -> DirectFindingTransitionPolicy: ...
 
     @property
     def action_workflow(self) -> ActionItemWorkflowPolicy: ...

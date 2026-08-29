@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import MappingProxyType
 from uuid import uuid4
 
 from easyaudit_next.platform.domain.ids import DepartmentId, UserId
@@ -25,7 +26,6 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActorKind,
     AuthorizationContext,
     FindingOperationContext,
-    FindingTransitionContext,
     PermissionSource,
     RoleGrant,
 )
@@ -33,7 +33,6 @@ from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, 
 
 VIEW_FINDING_PERMISSION = "view_finding"
 CREATE_FINDING_PERMISSION = "create_finding"
-ISSUE_FINDING_PERMISSION = "issue_finding"
 MANAGE_FINDING_PARTICIPANTS_PERMISSION = "manage_finding_participants"
 
 
@@ -229,32 +228,21 @@ class FindingLifecycleService:
         occurred_at: datetime | None = None,
     ) -> Finding:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
-        if not policy.authorization.allows(ISSUE_FINDING_PERMISSION, context):
-            raise ReviewAuthorizationError("lead or auditor role required to transition Finding")
-        operation_context = self._finding_operation_context(
-            review_case,
-            finding,
-            reason=reason,
-        )
-        policy.finding_operations.validate_transition(action, operation_context)
-        if finding.lifecycle is not FindingLifecycle.OPEN:
-            raise ValueError("M2.3 only supports issuing or voiding an open Finding")
-        target = policy.finding_workflow.transition(
-            finding.lifecycle,
-            action,
-            FindingTransitionContext(
+        operation_context = replace(
+            self._finding_operation_context(
+                review_case,
+                finding,
                 reason=reason,
-                non_cancelled_action_count=operation_context.non_cancelled_action_count,
-                all_non_cancelled_actions_done=(
-                    operation_context.all_non_cancelled_actions_done
-                ),
             ),
+            scenario_data=MappingProxyType(dict(finding.scenario_data)),
         )
-        if target not in {
-            FindingLifecycle.RECTIFYING,
-            FindingLifecycle.VOIDED,
-        }:
-            raise ValueError("M2.3 only supports issuing or voiding an open Finding")
+        decision = policy.finding_direct_transitions.decide(action, operation_context)
+        if not policy.authorization.allows(decision.required_permission, context):
+            raise ReviewAuthorizationError(
+                "Finding transition requires Scenario permission "
+                f"{decision.required_permission!r}"
+            )
+        target = decision.target_lifecycle
 
         updated = replace(finding, lifecycle=target)
         if not self._repository.update_finding(
