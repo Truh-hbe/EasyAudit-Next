@@ -170,9 +170,11 @@ def _department_member_role_keys(grants: frozenset[RoleGrant]) -> frozenset[str]
 
 def _finding_type(context: FindingOperationContext) -> ComplianceReviewFindingType:
     raw = context.scenario_data.get("finding_type")
+    if not isinstance(raw, str):
+        raise FindingOperationError("Compliance Finding requires a valid finding_type")
     try:
         return ComplianceReviewFindingType(raw)
-    except (TypeError, ValueError) as exc:
+    except ValueError as exc:
         raise FindingOperationError("Compliance Finding requires a valid finding_type") from exc
 
 
