@@ -138,6 +138,15 @@ def _user(organization_id: OrganizationId) -> User:
     )
 
 
+def _finding_service(repository: Repository) -> FindingLifecycleService:
+    return FindingLifecycleService(
+        repository,  # type: ignore[arg-type]
+        Users(),  # type: ignore[arg-type]
+        Departments(),  # type: ignore[arg-type]
+        build_scenario_registry(),
+    )
+
+
 def _service() -> tuple[FindingLifecycleService, Repository, User, User]:
     organization_id = OrganizationId(uuid4())
     lead = _user(organization_id)
@@ -158,13 +167,7 @@ def _service() -> tuple[FindingLifecycleService, Repository, User, User]:
         },
     )
     repository = Repository(review_case, lead, reviewer)
-    service = FindingLifecycleService(
-        repository,  # type: ignore[arg-type]
-        Users(),  # type: ignore[arg-type]
-        Departments(),  # type: ignore[arg-type]
-        build_scenario_registry(),
-    )
-    return service, repository, lead, reviewer
+    return _finding_service(repository), repository, lead, reviewer
 
 
 def test_registry_registers_exact_compliance_policy() -> None:
@@ -271,3 +274,56 @@ def test_generic_finding_service_accepts_observation_with_scenario_returned_perm
         "from_lifecycle": "open",
         "to_lifecycle": "closed",
     }
+
+
+def test_same_generic_transition_surface_dispatches_both_exact_scenarios() -> None:
+    compliance_service, compliance_repository, compliance_lead, compliance_reviewer = _service()
+    compliance_finding = compliance_service.create_finding(
+        compliance_lead,
+        compliance_repository.review_case.id,
+        "Compliance observation",
+        FindingSeverity.LOW,
+        {"criterion_reference": "7.5.3", "finding_type": "observation"},
+        occurred_at=NOW,
+    )
+    compliance_result = compliance_service.transition_finding(
+        compliance_reviewer,
+        compliance_finding.id,
+        "accept_observation",
+        occurred_at=NOW,
+    )
+    assert compliance_result.lifecycle is FindingLifecycle.CLOSED
+
+    organization_id = OrganizationId(uuid4())
+    process_lead = _user(organization_id)
+    process_reviewer = _user(organization_id)
+    process_case = ReviewCase(
+        id=ReviewCaseId(uuid4()),
+        organization_id=organization_id,
+        plan_id=None,
+        scenario_key=ScenarioKey("process_review"),
+        scenario_version=ScenarioVersion(1),
+        title="Process review comparison",
+        lifecycle=ReviewCaseLifecycle.IN_PROGRESS,
+        created_by=process_lead.id,
+        created_at=NOW,
+        scenario_data={"area_code": "LINE-A", "review_type": "routine"},
+    )
+    process_repository = Repository(process_case, process_lead, process_reviewer)
+    process_service = _finding_service(process_repository)
+    process_finding = process_service.create_finding(
+        process_lead,
+        process_case.id,
+        "Process review finding",
+        FindingSeverity.LOW,
+        {"issue_type": "control_gap", "project_category": "assembly"},
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ValueError, match="Unknown Finding action"):
+        process_service.transition_finding(
+            process_lead,
+            process_finding.id,
+            "accept_observation",
+            occurred_at=NOW,
+        )
