@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.5-controlled-pilot-hardening",
-  "phase": "GATE_DRAFT",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "28055c6b3da5ed266ad6f4128feffd602d436b2e"
@@ -21,21 +21,27 @@
     "allowed_paths": [
       ".easyaudit/development-state.json",
       "docs/architecture/m5-5-controlled-pilot-hardening.md",
-      "docs/architecture/m5-5-acceptance.md"
+      "docs/architecture/m5-5-acceptance.md",
+      "tests/api/test_m5_5_*.py",
+      "tests/integration/test_m5_5_*.py",
+      "web/package.json",
+      "web/tests/browser/real-m5-5.spec.ts",
+      "web/tests/browser/seed_m5_5_real_acceptance.py"
     ],
     "forbidden_paths": [
       "src/**",
-      "web/**",
-      "tests/**",
       "alembic/**",
       ".github/workflows/**",
       "openapi/**",
-      "scripts/**"
+      "scripts/**",
+      "web/src/**",
+      "web/package-lock.json",
+      "tests/unit/**"
     ]
   },
   "fixed_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Architecture / Acceptance review"
+  "next_allowed_action": "Implement M5.5 evidence slice; do not enter FINAL_REVIEW before bundle and full checks"
 }
