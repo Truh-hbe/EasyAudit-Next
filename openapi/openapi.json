@@ -66,6 +66,9 @@
       "get": {"operationId": "listReviewPlans", "tags": ["review-planning"]},
       "post": {"operationId": "createReviewPlan", "tags": ["review-planning"]}
     },
+    "/api/v1/review-catalog": {
+      "get": {"operationId": "listReviewCatalog", "tags": ["review-planning"]}
+    },
     "/api/v1/review-plans/{plan_id}": {
       "get": {"operationId": "getReviewPlan", "tags": ["review-planning"]}
     },

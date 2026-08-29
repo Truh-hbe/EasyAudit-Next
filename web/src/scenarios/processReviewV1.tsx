@@ -40,6 +40,33 @@ export function ProcessReviewV1CaseSection({ reviewCase }: ScenarioCaseSectionPr
   )
 }
 
+export function ProcessReviewV1CaseCreateFields({
+  values,
+  onChange,
+  disabled,
+}: ScenarioFormFieldsProps) {
+  return (
+    <div className="form-grid">
+      <label>
+        区域代码
+        <input
+          value={formValue(values, 'area_code')}
+          onChange={(event) => onChange('area_code', event.target.value)}
+          disabled={disabled}
+        />
+      </label>
+      <label>
+        审查类型
+        <input
+          value={formValue(values, 'review_type')}
+          onChange={(event) => onChange('review_type', event.target.value)}
+          disabled={disabled}
+        />
+      </label>
+    </div>
+  )
+}
+
 export function ProcessReviewV1FindingSection({ finding }: ScenarioFindingSectionProps) {
   return (
     <section className="surface-card" aria-labelledby="process-review-v1-finding-title">
@@ -281,6 +308,11 @@ export function ProcessReviewV1FindingInteraction({
 
 export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
   CaseScenarioSection: ProcessReviewV1CaseSection,
+  CaseCreateFields: ProcessReviewV1CaseCreateFields,
+  buildCaseScenarioData: (values) => ({
+    area_code: formValue(values, 'area_code'),
+    review_type: formValue(values, 'review_type'),
+  }),
   FindingScenarioSection: ProcessReviewV1FindingSection,
   FindingCreateFields: ProcessReviewV1FindingCreateFields,
   buildFindingScenarioData: (values) => ({

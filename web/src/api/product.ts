@@ -105,6 +105,12 @@ export interface ReviewCaseResponse {
   created_at: string
 }
 
+export interface ReviewCatalogItemResponse {
+  scenario_key: string
+  scenario_version: number
+  display_name: string
+}
+
 export interface ReviewCaseCollectionResponse {
   items: ReviewCaseResponse[]
   total: number
@@ -300,6 +306,10 @@ export interface ActionItemCreateInput {
 
 export function getWorkbench(signal?: AbortSignal): Promise<WorkbenchResponse> {
   return sessionApiRequest<WorkbenchResponse>('/api/v1/me/workbench', { signal })
+}
+
+export function getReviewCatalog(signal?: AbortSignal): Promise<ReviewCatalogItemResponse[]> {
+  return sessionApiRequest<ReviewCatalogItemResponse[]>('/api/v1/review-catalog', { signal })
 }
 
 export function listReviewCases(

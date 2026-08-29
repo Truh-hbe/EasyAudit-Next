@@ -12,7 +12,7 @@ from sqlalchemy import Engine, create_engine, delete, inspect, select, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
-from easyaudit_next.cli import bootstrap_admin_in_session
+from easyaudit_next.cli import bootstrap_admin_in_session, publish_scenario_in_session
 from easyaudit_next.platform.application.administration import (
     LastSystemAdminError,
     PlatformAdministrationService,
@@ -36,6 +36,8 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
+from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersion
+from easyaudit_next.review_core.persistence.repositories import SqlAlchemyScenarioCatalogRepository
 
 
 @pytest.fixture(scope="module")
@@ -107,6 +109,39 @@ def test_bootstrap_creates_first_admin_without_defaults_and_rejects_repeat(
             "second-admin",
             "another-secret-password",
         )
+
+
+def test_bootstrap_path_can_seed_an_exact_m51_scenario_publication(session: Session) -> None:
+    bootstrap_admin_in_session(
+        session,
+        "M5.1 Bootstrap Organization",
+        "M5.1 Bootstrap Administrator",
+        "m51-bootstrap-admin",
+        "bootstrap-secret-password",
+        now=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+    organization = session.scalar(
+        select(OrganizationRecord).where(
+            OrganizationRecord.name == "M5.1 Bootstrap Organization"
+        )
+    )
+    assert organization is not None
+
+    publish_scenario_in_session(
+        session,
+        OrganizationId(organization.id),
+        ScenarioKey("process_review"),
+        ScenarioVersion(1),
+    )
+
+    catalog = SqlAlchemyScenarioCatalogRepository(session)
+    scenario = catalog.get_by_key(OrganizationId(organization.id), ScenarioKey("process_review"))
+    assert scenario is not None
+    assert catalog.get_version(
+        OrganizationId(organization.id),
+        scenario.id,
+        ScenarioVersion(1),
+    ) is not None
 
 
 def create_local_user(session: Session, login_name: str = "m12-admin") -> tuple[User, str]:

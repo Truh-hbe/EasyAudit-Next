@@ -13,6 +13,7 @@ from easyaudit_next.platform.persistence.repositories import (
 )
 from easyaudit_next.review_case_queries.context_service import ReviewCaseContextQueryService
 from easyaudit_next.review_case_queries.query_service import ReviewCaseCollectionQueryService
+from easyaudit_next.review_case_queries.review_catalog import ReviewCatalogQueryService
 from easyaudit_next.review_core.application.review_closure_findings import (
     ClosureAwareFindingLifecycleService,
 )
@@ -110,6 +111,15 @@ def build_review_case_context_query_service(
     """Wire Case-scoped presentation reads after canonical Case authorization."""
 
     return ReviewCaseContextQueryService(session, build_review_planning_service(session))
+
+
+def build_review_catalog_query_service(session: Session) -> ReviewCatalogQueryService:
+    """Wire the creatable Scenario projection without expanding Review Core."""
+
+    return ReviewCatalogQueryService(
+        SqlAlchemyScenarioCatalogRepository(session),
+        build_scenario_registry(),
+    )
 
 
 def build_review_resource_context_query_service(

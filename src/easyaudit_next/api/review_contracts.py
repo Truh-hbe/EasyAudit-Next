@@ -31,6 +31,14 @@ class ReviewPlanResponse(BaseModel):
     created_by: UUID
 
 
+class ReviewCatalogItemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    scenario_key: str
+    scenario_version: int
+    display_name: str
+
+
 class ReviewCaseCreateRequest(BaseModel):
     plan_id: UUID | None = None
     scenario_key: str = Field(min_length=1, max_length=100)
