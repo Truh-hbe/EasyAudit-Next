@@ -1,16 +1,24 @@
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
+from easyaudit_next.api.dependencies import (
+    CurrentIdentity,
+    get_database_session,
+    require_business_identity,
+)
 from easyaudit_next.composition import build_scenario_registry
-from easyaudit_next.platform.domain.ids import OrganizationId, UserId
+from easyaudit_next.main import create_app
+from easyaudit_next.platform.domain.ids import AuthSessionId, OrganizationId, UserId
+from easyaudit_next.platform.domain.models import AuthSession
 from easyaudit_next.platform.persistence.models import OrganizationRecord, UserRecord
 from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
@@ -286,3 +294,69 @@ def test_case_close_racing_accept_observation_preserves_committed_terminality(
             "from_lifecycle": "open",
             "to_lifecycle": "closed",
         }
+
+
+def test_generic_http_transition_endpoint_accepts_compliance_observation(
+    postgres_engine: Engine,
+) -> None:
+    organization_id, _, finding_id, _, reviewer_id = _seed_observation_case(
+        postgres_engine
+    )
+    with Session(postgres_engine) as session:
+        reviewer = SqlAlchemyUserRepository(session).get(reviewer_id)
+        assert reviewer is not None
+
+    identity = CurrentIdentity(
+        auth_session=AuthSession(
+            id=AuthSessionId(uuid4()),
+            organization_id=organization_id,
+            user_id=reviewer_id,
+            token_hash="0" * 64,
+            expires_at=NOW + timedelta(hours=1),
+            created_at=NOW,
+        ),
+        user=reviewer,
+    )
+    app = create_app()
+
+    def database_session() -> Iterator[Session]:
+        with Session(postgres_engine) as session:
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    def business_identity() -> CurrentIdentity:
+        return identity
+
+    app.dependency_overrides[get_database_session] = database_session
+    app.dependency_overrides[require_business_identity] = business_identity
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.post(
+            f"/api/v1/findings/{finding_id}/transitions",
+            json={"action": "accept_observation"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(finding_id)
+    assert body["lifecycle"] == "closed"
+    assert body["scenario_data"]["finding_type"] == "observation"
+
+    with Session(postgres_engine) as verification:
+        finding_lifecycle = verification.scalar(
+            select(FindingRecord.lifecycle).where(FindingRecord.id == finding_id)
+        )
+        transition_activity = verification.scalar(
+            select(ActivityRecord).where(
+                ActivityRecord.organization_id == organization_id,
+                ActivityRecord.finding_id == finding_id,
+                ActivityRecord.event_type == "finding.transitioned",
+            )
+        )
+        assert finding_lifecycle == "closed"
+        assert transition_activity is not None
+        assert transition_activity.metadata_json["action"] == "accept_observation"
