@@ -75,7 +75,10 @@ export function ReviewCaseCollectionPage() {
           <p className="eyebrow">authorization-safe collection</p>
           <h1 id="review-case-list-title">审查活动</h1>
         </div>
-        <p>已授权 {data.total} 项</p>
+        <div className="heading-actions">
+          <Link className="primary-button" to="/review-plans/new">新建审查计划</Link>
+          <p>已授权 {data.total} 项</p>
+        </div>
       </div>
 
       {data.items.length === 0 ? (
