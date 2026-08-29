@@ -79,6 +79,15 @@ Example:
 
 When Architecture / Acceptance review passes, Codex changes the outer state to `IMPLEMENTATION` and updates allowed/forbidden scope according to the approved Gate. The Gate itself remains the source of semantic constraints; the JSON file is only the machine-readable routing/enforcement layer.
 
+`fixed_head` has one precise meaning: the last executable candidate that
+completed Implementation Review. It is not the commit that happens to contain
+the `FINAL_REVIEW` state. In `FINAL_REVIEW`, the candidate HEAD must descend
+from `fixed_head`, and the range after `fixed_head` may contain only paths named
+by `finalization_allowed_paths` (normally the development state file). This
+allows the state transition to be recorded without requiring a commit to know
+its own future SHA. Any source, test, CI or configuration change after
+`fixed_head` fails the Gate and starts a new implementation review.
+
 ## 3. Gate check
 
 Run:
@@ -93,7 +102,8 @@ When `active=true`, the check validates:
 - allowed path boundaries;
 - forbidden path boundaries;
 - required Gate documents;
-- fixed-head match when one is frozen;
+- a non-empty, resolvable fixed head in `FINAL_REVIEW`;
+- fixed-head ancestry and finalization-only changes in `FINAL_REVIEW`;
 - expected work branch when a branch name is available.
 
 The check deliberately does not decide architecture correctness. It prevents mechanical Scope drift so review time can focus on architecture and business invariants.
@@ -104,7 +114,14 @@ Before an implementation or Final Review request, Codex runs:
 
 ```bash
 python scripts/easyaudit_gate.py bundle
+python scripts/easyaudit_gate.py check --require-clean --require-bundle
 ```
+
+The second command is mandatory for Final Review. It rejects a missing or
+malformed bundle and verifies that `gate-proof.json` matches the current HEAD,
+tree, base, branch, changed paths, Gate phase, state fingerprint and working
+tree. If anything changes after bundle generation, regenerate the bundle before
+requesting review.
 
 The generated `.easyaudit-review/` directory is intentionally ignored by Git and intentionally readable through C2C.
 
@@ -136,6 +153,18 @@ This is fast feedback only.
 
 Before implementation/final review, Codex runs the Gate-relevant local PostgreSQL/API/browser tests and generates the Review Bundle. ChatGPT independently reads the committed diff and relevant source.
 
+PostgreSQL tests are opt-in outside CI. A skipped PostgreSQL suite is not
+candidate evidence and must be reported as incomplete. When a local PostgreSQL
+instance is available, use the same switch as CI:
+
+```bash
+EASYAUDIT_RUN_POSTGRES_TESTS=1 python3 -m pytest
+```
+
+If PostgreSQL is unavailable, keep the local result as fast feedback only and
+rely on the exact-head GitHub run for final evidence. Do not summarize skipped
+tests as passed tests.
+
 ### Final evidence
 
 GitHub Actions is the final CI authority. A C2C execution record is never accepted as proof that exact-head CI passed.
@@ -159,6 +188,8 @@ The existing CI remains responsible for Ruff, mypy, architecture checks, OpenAPI
 - execute edits/tests/git work;
 - keep Gate scope machine-valid;
 - generate the Review Bundle before review;
+- record each completed execution immediately through the C2C execution-record
+  path; an unrecorded run is not candidate evidence;
 - isolate out-of-scope prerequisites into separate PRs unless the Gate is formally revised;
 - push candidates and collect GitHub CI evidence;
 - merge only after explicit user authorization and expected-head protection.
@@ -215,9 +246,11 @@ User selects slice
   -> bundle
   -> ChatGPT implementation review
   -> fixes + regressions
-  -> state = FINAL_REVIEW + fixed_head
+  -> state = FINAL_REVIEW + fixed_head (executable review head)
+  -> finalization-only state commit
+  -> bundle + check --require-clean --require-bundle
   -> GitHub exact-head CI
-  -> bundle + GitHub evidence
+  -> GitHub evidence attached to the actual candidate HEAD
   -> ChatGPT Final Review
   -> user merge authorization
   -> expected-head merge
