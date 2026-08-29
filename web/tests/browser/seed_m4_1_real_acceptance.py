@@ -132,7 +132,9 @@ def main() -> None:
                     organization_id=ORGANIZATION_ID,
                     case_id=COMPLIANCE_CASE_ID,
                     title="M4.1 Compliance Observation",
-                    description="Observation closes directly without synthetic rectification facts.",
+                    description=(
+                        "Observation closes directly without synthetic rectification facts."
+                    ),
                     severity="low",
                     lifecycle="open",
                     raised_by=COMPLIANCE_USER_ID,
