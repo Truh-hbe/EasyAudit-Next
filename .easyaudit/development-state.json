@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.1",
-  "phase": "IMPLEMENTATION",
+  "phase": "FINAL_REVIEW",
   "base": {
     "branch": "main",
     "sha": "90d5a1a6ba447d59f0941e85890c4eee8b00aee1"
@@ -50,5 +50,5 @@
     ]
   },
   "fixed_head": null,
-  "next_allowed_action": "ChatGPT M5.1 implementation review"
+  "next_allowed_action": "ChatGPT M5.1 final review"
 }
