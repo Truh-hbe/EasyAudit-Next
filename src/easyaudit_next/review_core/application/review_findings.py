@@ -228,6 +228,8 @@ class FindingLifecycleService:
         occurred_at: datetime | None = None,
     ) -> Finding:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
+        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
+            raise ReviewAuthorizationError("Finding is not visible to this user")
         operation_context = replace(
             self._finding_operation_context(
                 review_case,
