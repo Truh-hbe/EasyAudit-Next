@@ -327,3 +327,24 @@ def test_same_generic_transition_surface_dispatches_both_exact_scenarios() -> No
             "accept_observation",
             occurred_at=NOW,
         )
+
+
+def test_invisible_actor_cannot_observe_scenario_validation_through_transition() -> None:
+    service, repository, lead, _ = _service()
+    finding = service.create_finding(
+        lead,
+        repository.review_case.id,
+        "Compliance nonconformity",
+        FindingSeverity.HIGH,
+        {"criterion_reference": "8.5.1", "finding_type": "nonconformity"},
+        occurred_at=NOW,
+    )
+    outsider = _user(lead.organization_id)
+
+    with pytest.raises(ReviewAuthorizationError, match="not visible"):
+        service.transition_finding(
+            outsider,
+            finding.id,
+            "issue",
+            occurred_at=NOW,
+        )
