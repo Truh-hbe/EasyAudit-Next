@@ -85,6 +85,17 @@ class Repository:
             return finding
         return None
 
+    def list_findings(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> tuple[Finding, ...]:
+        return tuple(
+            finding
+            for finding in self.findings.values()
+            if finding.organization_id == organization_id and finding.case_id == case_id
+        )
+
     def update_finding(
         self,
         finding: Finding,
