@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.1",
-  "phase": "GATE_DRAFT",
+  "phase": "GATE_REVIEW",
   "base": {
     "branch": "main",
     "sha": "90d5a1a6ba447d59f0941e85890c4eee8b00aee1"
