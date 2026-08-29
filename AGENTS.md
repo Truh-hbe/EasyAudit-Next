@@ -10,6 +10,16 @@ This repository uses a two-layer development protocol.
 
 Codex with ChatGPT (C2C) is only the read-only transport/review bridge between ChatGPT and the local workspace. It does not replace repository gates or GitHub evidence.
 
+## EasyAudit overrides of upstream C2C defaults
+
+The user has explicitly approved these repository-specific overrides for EasyAudit-Next:
+
+1. **Conversation lifecycle:** use one C2C ChatGPT conversation per milestone slice / PR. The upstream preference for one indefinite conversation per workspace does not apply here. A new slice may start a fresh conversation without asking again; reconstruct context from repository state rather than old chat history.
+2. **Tool updates:** do not perform C2C's automatic/daily self-update workflow while working on EasyAudit. Do not silently run an update because `c2c update-check` reports a newer revision. The pinned revision in `.easyaudit/toolchain.json` is authoritative until an explicit tooling upgrade is approved between slices.
+3. **Workflow authority:** upstream C2C `DONE` closes only the inner loop. EasyAudit outer Gate state and merge authorization always take precedence.
+
+If the installed C2C Skill gives a conflicting generic instruction on these three points, follow this project contract.
+
 ## Outer EasyAudit state machine
 
 The project phase is authoritative and must be read from `.easyaudit/development-state.json` when `active=true`.
@@ -42,8 +52,9 @@ Before changing code or docs:
 1. Read `.easyaudit/development-state.json`.
 2. Read the Gate / Acceptance documents named there.
 3. Verify the current branch and base SHA against the state file.
-4. Run `python scripts/easyaudit_gate.py check` when the workflow is active.
-5. Do not perform work belonging to a later outer phase.
+4. Verify the installed C2C revision against `.easyaudit/toolchain.json` when C2C is used; report a mismatch rather than silently upgrading it.
+5. Run `python scripts/easyaudit_gate.py check` when the workflow is active.
+6. Do not perform work belonging to a later outer phase.
 
 If the state file is inactive, no milestone Gate is currently machine-enforced; follow the explicit user request and repository architecture documents.
 
