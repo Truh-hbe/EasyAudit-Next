@@ -50,8 +50,7 @@ def _git(*args: str, cwd: Path | None = None) -> str:
         ["git", *args],
         cwd=cwd or ROOT,
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
     if completed.returncode != 0:
