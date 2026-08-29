@@ -43,6 +43,13 @@ export function canSubmitCase(state: CaseSubmitState): boolean {
   return state.status !== 'submitting' && state.status !== 'unknown'
 }
 
+export function canCreateCase(
+  adapter: ScenarioCaseAdapter | undefined,
+  state: CaseSubmitState,
+): boolean {
+  return adapter !== undefined && canSubmitCase(state)
+}
+
 export async function executeCaseSubmission(
   request: () => Promise<ReviewCaseResponse>,
 ): Promise<{ state: CaseSubmitState; reviewCase?: ReviewCaseResponse }> {
@@ -133,7 +140,7 @@ export function ReviewCaseCreatePage() {
       loadState.status !== 'ready' ||
       selectedItem === undefined ||
       scenarioAdapter === undefined ||
-      !canSubmitCase(submitState)
+      !canCreateCase(scenarioAdapter, submitState)
     ) return
     if (caseTitle.trim() === '') {
       setSubmitState({ status: 'rejected', message: '请输入案例名称。' })
@@ -251,7 +258,7 @@ export function ReviewCaseCreatePage() {
             <Link className="secondary-button" to="/review-cases">取消</Link>
             <button
               type="submit"
-              disabled={scenarioAdapter === undefined || !canSubmitCase(submitState)}
+              disabled={!canCreateCase(scenarioAdapter, submitState)}
             >
               {submitState.status === 'submitting' ? '正在创建案例…' : '创建案例'}
             </button>

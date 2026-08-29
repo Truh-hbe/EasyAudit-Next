@@ -4,6 +4,7 @@ import { ApiError } from '../../api/client'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import {
   buildCaseCreateInput,
+  canCreateCase,
   canSubmitCase,
   executeCaseSubmission,
   isDefinitiveRejection,
@@ -111,9 +112,12 @@ describe('M5.2 plan-first creation contracts', () => {
   })
 
   it('does not create a Case when no exact adapter exists', () => {
-    const request = vi.fn()
+    const request = vi.fn<() => Promise<ReviewCaseResponse>>()
     const unsupported = resolveCaseScenarioAdapter('process_review', 99)
     expect(unsupported).toBeUndefined()
+    const state = { status: 'idle' } as const
+    expect(canCreateCase(unsupported, state)).toBe(false)
+    if (canCreateCase(unsupported, state)) void executeCaseSubmission(request)
     expect(request).not.toHaveBeenCalled()
   })
 })
