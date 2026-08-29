@@ -48,20 +48,28 @@ and the existing frontend command registration required to execute that spec
 in CI. It must not add a new production route or domain aggregate merely to
 make the test pass.
 
-The fresh real-browser journey must prove, in one reproducible acceptance
-path:
+The evidence has two independent layers so that a shared browser job cannot
+claim to be an empty database.
 
-1. an empty migrated database can bootstrap the first organization and
-   system administrator through the existing bootstrap path;
-2. the two exact code-defined Scenario versions can be published through the
-   existing exact publication path and appear in the administrator status;
-3. the administrator can create the pilot department and ordinary users;
-4. a newly created user can log in, complete the existing first-login password
+The clean-initialization layer is a focused real-PostgreSQL integration/CLI
+proof on an isolated fresh database. It must prove that migrations, the
+existing bootstrap path, and exact Scenario publication work without direct
+Scenario row insertion. It also proves repeat-bootstrap, duplicate-publication
+and unknown-version failures.
+
+The integrated real-browser layer runs after the CI job's ordinary database
+initialization and proves, through FastAPI and React:
+
+1. the two exact code-defined Scenario versions appear in administrator
+   status;
+2. the administrator can create the pilot department and ordinary users;
+3. a newly created user can log in, complete the existing first-login password
    change, and reach business pages;
-5. the user can create a `process_review@1` plan and case, then a
+4. the user can create a `process_review@1` plan and case, then a
    `compliance_review@1` plan and case, with exact IDs and scenario payloads;
-6. the plan-first page can be refreshed after the plan checkpoint and can
-   retry a failed case request without posting the plan again;
+5. the plan-first page can be refreshed after the plan checkpoint;
+6. a definitive server rejection permits a Case-only retry without posting the
+   Plan again, while a transport/response ambiguity remains non-retriable;
 7. authorized users can add and remove Case members, while the last-effective-
    manager conflict leaves the Case and activity state intact;
 8. a second same-organization user can use the permitted business flow, while
@@ -76,17 +84,23 @@ path:
 
 The fixture must use stable, unique IDs and names, be safe to run after the
 existing real-browser foundation fixtures, and must not depend on the order of
-unrelated tests. It must exercise the existing CLI/service bootstrap and exact
-publication behavior rather than silently inserting a second, untested source
-of Scenario truth.
+unrelated tests. The clean-init proof must exercise the existing CLI/service
+bootstrap and exact publication behavior rather than silently inserting a
+second, untested source of Scenario truth.
 
 ## Failure and recovery proof
 
-The browser proof must inject one controlled network failure during the Case
-step after a plan has been created. The UI must keep the persisted plan
-checkpoint, show a safe retry state, and a successful retry must issue only
-the Case request. A page refresh or direct re-entry must resolve the plan by
-its exact ID and never guess by title.
+The browser proof must cover both classes of failure after a plan has been
+created. For a definitive server rejection (for example invalid scenario
+data), the UI must keep the persisted plan checkpoint, show a safe retry state,
+and a successful retry must issue only the Case request. A page refresh or
+direct re-entry must resolve the plan by its exact ID and never guess by title.
+
+For a transport/response ambiguity, the UI must keep the persisted plan
+checkpoint but must not offer or perform a blind Case repost, because the
+server may already have committed the Case. The existing safe unknown-result
+and reconciliation/navigation behavior remains the contract. The test must
+assert that no duplicate Case request is issued from that ambiguous state.
 
 The credential recovery proof must use two browser contexts for the target
 user and administrator. After reset, the old target context must no longer be
@@ -112,7 +126,8 @@ following narrow paths:
 - `.easyaudit/development-state.json`;
 - this Gate and its acceptance document;
 - `tests/api/test_m5_5_*.py` and
-  `tests/integration/test_m5_5_*.py` for final cross-slice assertions;
+  `tests/integration/test_m5_5_*.py` for initialization and cross-slice
+  assertions;
 - `web/package.json` for the existing canonical real-browser command;
 - `web/tests/browser/real-m5-5.spec.ts` and
   `web/tests/browser/seed_m5_5_real_acceptance.py`; and

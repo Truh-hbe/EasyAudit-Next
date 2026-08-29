@@ -2,20 +2,23 @@
 
 ## Clean initialization
 
-On a fresh PostgreSQL service after the repository's clean migration command:
+An isolated real-PostgreSQL integration/CLI test, separate from the shared
+browser database, must start after a clean migration and:
 
 1. bootstrap the first organization and system administrator through the
-   existing bootstrap path;
+   existing bootstrap service/CLI path;
 2. publish exactly `process_review@1` and `compliance_review@1` through the
-   exact publication path;
-3. verify duplicate publication and an unknown exact version fail safely; and
-4. verify the administrator status shows both exact versions as ready because
-   the organization publication and exact code registry are present.
+   exact publication service/CLI path;
+3. verify duplicate publication and an unknown exact version fail safely;
+4. verify a second bootstrap is rejected without a partial mutation; and
+5. verify the resulting exact publication and registry state is ready for the
+   administrator status projection.
 
-The fixture must not pre-create the target administrator or silently bypass the
-bootstrap/publication path. Any supporting fixture data must belong to a
-separate, clearly named test organization or be created through the same
-application service used by the product.
+The test must not weaken the one-organization bootstrap rule, pre-create the
+target administrator, or directly insert `ScenarioRecord` or
+`ScenarioVersionRecord` rows as a substitute for bootstrap/publication. The
+shared real-browser job must not claim this isolated proof; it starts from its
+own explicitly initialized deterministic pilot fixture.
 
 ## Administrator and first login
 
@@ -32,7 +35,8 @@ response bodies beyond the submitted request, audit metadata or test logs.
 
 ## Two exact plan-first cases
 
-The first user creates both supported cases through the React plan-first flow.
+The first user creates both supported cases through the React plan-first flow
+in the integrated real-browser proof.
 For each case, acceptance verifies:
 
 - a `ReviewPlan` is created before the `ReviewCase`;
@@ -43,9 +47,14 @@ For each case, acceptance verifies:
 - invalid scenario data receives a safe validation response; and
 - refresh/re-entry restores the exact plan by ID.
 
-During one Case creation, the network request fails after the plan response.
-The retry succeeds with exactly one plan POST and two Case POST attempts. No
-title matching or duplicate plan is allowed.
+During one Case creation, a definitive server rejection occurs after the plan
+response. The corrected retry succeeds with exactly one plan POST and two Case
+POST attempts. No title matching or duplicate plan is allowed.
+
+A separate transport/response ambiguity check must verify that the UI does not
+blindly repost the Case and does not produce a duplicate request from that
+unknown result. The existing reconciliation/navigation behavior remains
+unchanged.
 
 ## Team management and collaboration access
 
@@ -97,9 +106,11 @@ leave credential, session and audit state unchanged and must not echo secrets.
 
 The slice must include:
 
+- an isolated real-PostgreSQL integration/CLI assertion for clean migrations,
+  bootstrap, exact publication and their negative paths;
 - focused API/integration assertions for cross-slice isolation, exact version
-  behavior, failed Case retry semantics, member revocation and credential
-  recovery;
+  behavior, definitive-rejection Case retry semantics, transport-ambiguity
+  safety, member revocation and credential recovery;
 - a real browser test and deterministic seed registered in
   `npm run test:browser:real`;
 - full backend checks, including architecture, OpenAPI, migrations and
