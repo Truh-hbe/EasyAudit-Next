@@ -11,7 +11,7 @@
   },
   "work_branch": "codex/m5-1-reviewplan-planning-gate",
   "pr": {
-    "number": null
+    "number": 29
   },
   "gate_docs": [
     "docs/architecture/project-status.md",
