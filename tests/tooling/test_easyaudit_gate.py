@@ -469,6 +469,9 @@ def test_generated_bundle_rejects_old_candidate_diff(
     _commit_git(repo, "candidate")
 
     monkeypatch.setattr(gate, "ROOT", repo)
+    # The test owns a temporary repository. Do not let a surrounding PR
+    # workflow's GitHub event substitute the real PR head for this repo.
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
     evidence_now = gate._collect_git_evidence(base_sha)
     proof_now = gate._proof(state, evidence_now, state_path)
     bundle_dir = repo / ".easyaudit-review"
