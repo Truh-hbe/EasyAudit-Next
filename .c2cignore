@@ -1,0 +1,36 @@
+# EasyAudit-Next C2C read boundary
+# Keep source, tests, Gate docs and .easyaudit-review readable for independent review.
+
+# Credentials / secrets
+.env
+.env.*
+!.env.example
+secrets/
+**/*.pem
+**/*.key
+
+# Private deployment / operational material
+deploy/private/
+private/
+
+# Runtime/customer/business data that must never become review context
+data/
+exports/
+attachments/
+evidence-storage/
+customer-data/
+fixtures/customer/
+
+# Local tool/runtime noise
+.venv/
+node_modules/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+coverage/
+htmlcov/
+dist/
+build/
+web/test-results/
+web/playwright-report/
+*.log
