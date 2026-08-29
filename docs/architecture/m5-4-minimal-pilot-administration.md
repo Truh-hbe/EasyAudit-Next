@@ -176,7 +176,7 @@ status display.
   credential, session and PlatformAudit mutations. Do not move ReviewCase or
   Scenario business rules into it.
 - The existing admin user update path must continue to delegate through the
-  M5.3 `CaseTeamCoordinator.update_user` orchestration before it reaches
+  M5.3 `CaseTeamUserCoordinator.update_user` orchestration before it reaches
   `PlatformAdministrationService`, preserving the final-effective-case-manager
   invariant. M5.4 must not bypass, duplicate or weaken that coordinator and
   must not add Review imports to `PlatformAdministrationService`.

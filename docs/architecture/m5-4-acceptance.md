@@ -110,7 +110,7 @@ IDs, invalid password, missing credential, last-system-admin protection and the
 M5.3 final-effective-Case-manager deactivation protection. The latter must
 assert the 409 response and no User, Session, PlatformAudit or ReviewCase
 membership mutation, proving the M5.4 admin route still uses the existing
-`CaseTeamCoordinator.update_user` orchestration.
+`CaseTeamUserCoordinator.update_user` orchestration.
 
 ## Required verification
 
