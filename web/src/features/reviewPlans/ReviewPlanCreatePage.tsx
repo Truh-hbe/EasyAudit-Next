@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 
+import { ApiError } from '../../api/client'
 import { createReviewPlan, getReviewCatalog } from '../../api/product'
 import type { ReviewCatalogItemResponse } from '../../api/product'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
@@ -9,6 +10,12 @@ type CatalogState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; items: ReviewCatalogItemResponse[] }
+
+type SubmitState =
+  | { status: 'idle' }
+  | { status: 'submitting' }
+  | { status: 'rejected'; message: string }
+  | { status: 'unknown'; message: string }
 
 export function dateInputToApi(value: string): string | null {
   if (value.trim() === '') return null
@@ -20,14 +27,18 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+export function isDefinitivePlanRejection(error: unknown): boolean {
+  return error instanceof ApiError
+}
+
 export function ReviewPlanCreatePage() {
   const navigate = useNavigate()
   const [catalog, setCatalog] = useState<CatalogState>({ status: 'loading' })
   const [title, setTitle] = useState('')
   const [plannedStartAt, setPlannedStartAt] = useState('')
   const [plannedEndAt, setPlannedEndAt] = useState('')
-  const [submitError, setSubmitError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' })
+  const submitting = submitState.status === 'submitting'
 
   useEffect(() => {
     const controller = new AbortController()
@@ -45,16 +56,15 @@ export function ReviewPlanCreatePage() {
   async function submitPlan(): Promise<void> {
     if (submitting) return
     if (title.trim() === '') {
-      setSubmitError('请输入审查计划名称。')
+      setSubmitState({ status: 'rejected', message: '请输入审查计划名称。' })
       return
     }
     if (title !== title.trim()) {
-      setSubmitError('审查计划名称前后不能有空格。')
+      setSubmitState({ status: 'rejected', message: '审查计划名称前后不能有空格。' })
       return
     }
 
-    setSubmitting(true)
-    setSubmitError(null)
+    setSubmitState({ status: 'submitting' })
     try {
       const plan = await createReviewPlan({
         title,
@@ -63,9 +73,14 @@ export function ReviewPlanCreatePage() {
       })
       await navigate(`/review-plans/${encodeURIComponent(plan.id)}/review-cases/new`)
     } catch (error: unknown) {
-      setSubmitError(errorMessage(error, '审查计划创建失败，请稍后重试。'))
-    } finally {
-      setSubmitting(false)
+      setSubmitState(
+        isDefinitivePlanRejection(error)
+          ? { status: 'rejected', message: errorMessage(error, '审查计划创建被服务器拒绝，请修正后重试。') }
+          : {
+              status: 'unknown',
+              message: '审查计划创建结果未知。为避免重复创建，系统不会自动再次提交；请返回审查活动查看服务器结果。',
+            },
+      )
     }
   }
 
@@ -124,15 +139,28 @@ export function ReviewPlanCreatePage() {
           {catalog.status === 'ready' && catalog.items.length === 0 ? (
             <p role="alert">当前没有可创建的已发布审查场景。</p>
           ) : null}
-          {submitError === null ? null : <p role="alert">{submitError}</p>}
+          {submitState.status === 'rejected' ? <p role="alert">{submitState.message}</p> : null}
+          {submitState.status === 'unknown' ? <p role="alert">{submitState.message}</p> : null}
           <div className="wizard-actions">
             <button
               type="submit"
-              disabled={submitting || catalog.status !== 'ready' || catalog.items.length === 0}
+              disabled={
+                submitting ||
+                submitState.status === 'unknown' ||
+                catalog.status !== 'ready' ||
+                catalog.items.length === 0
+              }
             >
-              {submitting ? '正在保存计划…' : '保存计划并继续'}
+              {submitting
+                ? '正在保存计划…'
+                : submitState.status === 'rejected'
+                  ? '重试保存计划'
+                  : '保存计划并继续'}
             </button>
           </div>
+          {submitState.status === 'unknown' ? (
+            <Link to="/review-cases">返回审查活动，查看服务器结果</Link>
+          ) : null}
         </form>
       </div>
 

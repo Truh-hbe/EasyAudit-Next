@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../api/client'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import { buildCaseCreateInput, isDefinitiveRejection } from './ReviewCaseCreatePage'
-import { dateInputToApi } from './ReviewPlanCreatePage'
+import { dateInputToApi, isDefinitivePlanRejection } from './ReviewPlanCreatePage'
 
 describe('M5.2 plan-first creation contracts', () => {
   it('converts optional local date input to an aware API value', () => {
@@ -42,5 +42,7 @@ describe('M5.2 plan-first creation contracts', () => {
   it('treats a server response as definitive but a transport error as ambiguous', () => {
     expect(isDefinitiveRejection(new ApiError(422, 'invalid'))).toBe(true)
     expect(isDefinitiveRejection(new TypeError('network disconnected'))).toBe(false)
+    expect(isDefinitivePlanRejection(new ApiError(422, 'invalid'))).toBe(true)
+    expect(isDefinitivePlanRejection(new TypeError('network disconnected'))).toBe(false)
   })
 })
