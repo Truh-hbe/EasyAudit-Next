@@ -324,6 +324,10 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await addMember(firstPage, processCase.id, 'reviewer', SECOND_DISPLAY_NAME, SECOND_DISPLAY_NAME)
     expect(await removeMember(firstPage, processCase.id, secondUserId, SECOND_DISPLAY_NAME)).toBe(200)
     await expect(firstPage.getByText('review_case.member_removed')).toBeVisible()
+    const activitiesBeforeFinalManager = await fetchStatus(
+      firstPage,
+      `/api/v1/review-cases/${processCase.id}/activities`,
+    )
     const finalManagerResponse = await (async () => {
       const team = firstPage.getByRole('region', { name: '团队管理' })
       const lead = team.locator('ul.surface-list').first().locator('li').filter({ hasText: FIRST_DISPLAY_NAME })
@@ -337,6 +341,12 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     })()
     expect((await finalManagerResponse).status()).toBe(409)
     await expect(firstPage.getByText('团队状态发生冲突，请刷新后重试。')).toBeVisible()
+    const activitiesAfterFinalManager = await fetchStatus(
+      firstPage,
+      `/api/v1/review-cases/${processCase.id}/activities`,
+    )
+    expect(activitiesAfterFinalManager.status).toBe(200)
+    expect(activitiesAfterFinalManager.body).toBe(activitiesBeforeFinalManager.body)
     await expect(firstPage.getByRole('region', { name: '团队管理' }).getByText(FIRST_DISPLAY_NAME)).toHaveCount(1)
     await addMember(firstPage, processCase.id, 'lead', SECOND_DISPLAY_NAME, SECOND_DISPLAY_NAME)
 

@@ -24,6 +24,7 @@ from easyaudit_next.review_core.persistence.models import (
     CaseMemberRecord,
     ReviewCaseRecord,
     ReviewPlanRecord,
+    ScenarioRecord,
     ScenarioVersionRecord,
 )
 
@@ -154,14 +155,20 @@ def _seed(engine: Engine) -> dict[str, UUID | str]:
         )
         session.flush()
         own_process_version_id = session.scalar(
-            select(ScenarioVersionRecord).where(
+            select(ScenarioVersionRecord)
+            .join(ScenarioRecord, ScenarioRecord.id == ScenarioVersionRecord.scenario_id)
+            .where(
                 ScenarioVersionRecord.organization_id == organization_id,
+                ScenarioRecord.key == "process_review",
                 ScenarioVersionRecord.version == 1,
             )
         )
         foreign_process_version_id = session.scalar(
-            select(ScenarioVersionRecord).where(
+            select(ScenarioVersionRecord)
+            .join(ScenarioRecord, ScenarioRecord.id == ScenarioVersionRecord.scenario_id)
+            .where(
                 ScenarioVersionRecord.organization_id == foreign_organization_id,
+                ScenarioRecord.key == "process_review",
                 ScenarioVersionRecord.version == 1,
             )
         )
