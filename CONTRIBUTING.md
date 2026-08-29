@@ -13,6 +13,22 @@
 9. 正式业务动作必须能产生 `Activity`；需要保留原始用户表达时使用 `Submission`。
 10. 每项架构级改变必须新增或更新 ADR。
 
+## Agent / Codex 开发流程
+
+使用 ChatGPT + Codex 协作开发时，以 `AGENTS.md` 和 `docs/architecture/agent-development-workflow.md` 为执行契约。机器可读阶段状态位于 `.easyaudit/development-state.json`；当其 `active=true` 时，提交前必须通过：
+
+```bash
+python scripts/easyaudit_gate.py check
+```
+
+请求实现或 Final Review 前生成只读 Review Bundle：
+
+```bash
+python scripts/easyaudit_gate.py bundle
+```
+
+C2C 本地执行记录仅用于迭代反馈；GitHub Actions 仍是 Final CI 权威。
+
 ## 本地验证
 
 验证命令见 README；提交前至少执行架构检查、OpenAPI 检查与测试。
