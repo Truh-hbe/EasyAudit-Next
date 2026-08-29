@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
-from sqlalchemy import Engine, create_engine, func, select
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
 from easyaudit_next.api.dependencies import get_database_session
@@ -385,6 +386,9 @@ def test_admin_status_is_exact_and_reset_revokes_old_sessions(
             )
         ).all()
         assert len(reset_events) == 1
+        reset_metadata = json.dumps(reset_events[0].metadata_json, sort_keys=True)
+        assert TEMPORARY_PASSWORD not in reset_metadata
+        assert credential.password_hash not in reset_metadata
         sessions = session.scalars(
             select(AuthSessionRecord).where(AuthSessionRecord.user_id == fixture.target_id)
         ).all()
@@ -525,6 +529,14 @@ def test_credential_reset_audit_failure_rolls_back_hash_sessions_and_audit(
     old_token, old_session_id = _login(postgres_engine, fixture.target_login, TARGET_PASSWORD)
 
     with Session(postgres_engine) as session:
+        before_audits = [
+            (event.id, event.event_type, event.metadata_json)
+            for event in session.scalars(
+                select(PlatformAuditEventRecord).where(
+                    PlatformAuditEventRecord.organization_id == fixture.organization_id
+                ).order_by(PlatformAuditEventRecord.id)
+            ).all()
+        ]
         audit = _FailOnCredentialResetAudit(SqlAlchemyPlatformAuditRepository(session))
         service = _administration_service(session, audit=audit)
         admin = SqlAlchemyUserRepository(session).get(fixture.admin_id)
@@ -546,14 +558,15 @@ def test_credential_reset_audit_failure_rolls_back_hash_sessions_and_audit(
         assert PASSWORD_HASH.verify(TARGET_PASSWORD, credential.password_hash)
         assert credential.must_change_password is False
         assert old_session.revoked_at is None
-        assert session.scalar(
-            select(func.count())
-            .select_from(PlatformAuditEventRecord)
-            .where(
-                PlatformAuditEventRecord.target_user_id == fixture.target_id,
-                PlatformAuditEventRecord.event_type == "admin.user_credential_reset",
-            )
-        ) == 0
+        after_audits = [
+            (event.id, event.event_type, event.metadata_json)
+            for event in session.scalars(
+                select(PlatformAuditEventRecord).where(
+                    PlatformAuditEventRecord.organization_id == fixture.organization_id
+                ).order_by(PlatformAuditEventRecord.id)
+            ).all()
+        ]
+        assert after_audits == before_audits
 
     _login(postgres_engine, fixture.target_login, TARGET_PASSWORD)
     assert _authentication_service_for_token(postgres_engine, old_token) is True
