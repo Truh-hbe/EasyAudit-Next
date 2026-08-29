@@ -10,6 +10,10 @@ function apiPath(url: string): string {
   return new URL(url).pathname
 }
 
+function isCaseDetailPath(pathname: string): boolean {
+  return /^\/api\/v1\/review-cases\/[^/]+$/.test(pathname)
+}
+
 async function submitLogin(page: Page) {
   const responsePromise = page.waitForResponse(
     (response) =>
@@ -106,6 +110,10 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
       apiPath(response.url()) === '/api/v1/review-cases' &&
       response.request().method() === 'POST',
   )
+  const firstDetailResponsePromise = page.waitForResponse(
+    (response) =>
+      isCaseDetailPath(apiPath(response.url())) && response.request().method() === 'GET',
+  )
   await page.getByLabel('审查类型').fill('standard')
   await page.getByRole('button', { name: '创建案例' }).click()
   const firstCaseResponse = await firstCasePromise
@@ -115,15 +123,18 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
     plan_id: string
     scenario_key: string
     scenario_version: number
+    scenario_data: Record<string, string>
     planned_start_at: string | null
     planned_end_at: string | null
   }
   expect(firstCase.plan_id).toBe(firstPlan.id)
   expect(firstCase.scenario_key).toBe('process_review')
   expect(firstCase.scenario_version).toBe(1)
+  expect(firstCase.scenario_data).toEqual({ area_code: 'area-a', review_type: 'standard' })
   expect(firstCase.planned_start_at).toBeNull()
   expect(firstCase.planned_end_at).toBeNull()
   expect(new URL(page.url()).pathname).toBe(`/review-cases/${firstCase.id}`)
+  expect((await firstDetailResponsePromise).status()).toBe(200)
   await expect(page.getByRole('heading', { name: 'M5.2 Process Case' })).toBeVisible()
 
   await page.reload()
@@ -144,6 +155,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   const secondPlan = (await secondPlanResponse.json()) as { id: string }
   await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
   await page.getByLabel('审查场景').selectOption('compliance_review@1')
+  await expect(page.getByLabel('标准 / 依据')).toBeVisible()
   await page.getByLabel('案例名称').fill('M5.2 Compliance Case')
   await page.getByLabel('标准 / 依据').fill('standard-a')
   await page.getByLabel('范围摘要').fill('pilot scope')
@@ -152,6 +164,10 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
     (response) =>
       apiPath(response.url()) === '/api/v1/review-cases' &&
       response.request().method() === 'POST',
+  )
+  const secondDetailResponsePromise = page.waitForResponse(
+    (response) =>
+      isCaseDetailPath(apiPath(response.url())) && response.request().method() === 'GET',
   )
   await page.getByRole('button', { name: '创建案例' }).click()
   const secondCaseResponse = await secondCaseResponsePromise
@@ -171,6 +187,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
     scope_summary: 'pilot scope',
   })
   expect(new URL(page.url()).pathname).toBe(`/review-cases/${secondCase.id}`)
+  expect((await secondDetailResponsePromise).status()).toBe(200)
   await expect(page.getByRole('heading', { name: 'M5.2 Compliance Case' })).toBeVisible()
   expect(planPostCount).toBe(2)
 })
