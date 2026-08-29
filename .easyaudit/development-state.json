@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.3-case-team-management",
-  "phase": "GATE_REVIEW",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "065813901c412e941c284525f0478fa7135c35ce"
@@ -21,14 +21,45 @@
     "allowed_paths": [
       ".easyaudit/development-state.json",
       "docs/architecture/m5-3-case-team-management.md",
-      "docs/architecture/m5-3-acceptance.md"
+      "docs/architecture/m5-3-acceptance.md",
+      "src/easyaudit_next/api/review_contracts.py",
+      "src/easyaudit_next/api/review_planning.py",
+      "src/easyaudit_next/api/router.py",
+      "src/easyaudit_next/application/__init__.py",
+      "src/easyaudit_next/application/case_team_coordination.py",
+      "src/easyaudit_next/composition.py",
+      "src/easyaudit_next/platform/domain/repositories.py",
+      "src/easyaudit_next/platform/persistence/repositories.py",
+      "src/easyaudit_next/review_core/application/mutation_results.py",
+      "src/easyaudit_next/review_core/application/review_planning.py",
+      "src/easyaudit_next/review_core/domain/repositories.py",
+      "src/easyaudit_next/review_core/persistence/repositories.py",
+      "openapi/openapi.json",
+      "web/package.json",
+      "web/src/api/product.ts",
+      "web/src/features/reviewCases/ReviewCaseDetailPage.tsx",
+      "web/src/features/reviewCases/ReviewCaseTeamPanel.tsx",
+      "web/src/features/reviewCases/ReviewCaseTeamPanel.test.tsx",
+      "web/src/scenarios/complianceReviewV1.tsx",
+      "web/src/scenarios/processReviewV1.tsx",
+      "web/src/scenarios/registry.test.ts",
+      "web/src/scenarios/registry.ts",
+      "tests/api/test_review_planning_openapi.py",
+      "tests/integration/test_m5_3_*.py",
+      "web/tests/browser/real-m5-3.spec.ts",
+      "web/tests/browser/seed_m5_3_real_acceptance.py"
     ],
     "forbidden_paths": [
-      "src/**",
-      "web/**",
       "alembic/**",
       ".github/workflows/**",
-      "tests/**"
+      "src/easyaudit_next/notifications/**",
+      "src/easyaudit_next/workbench/**",
+      "web/src/app/**",
+      "web/src/features/management/**",
+      "web/src/features/notifications/**",
+      "web/src/features/workbench/**",
+      "web/package-lock.json",
+      "tests/unit/**"
     ]
   },
   "fixed_head": null,
