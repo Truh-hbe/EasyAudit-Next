@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router'
 
 import { ApiError } from '../../api/client'
 import { createReviewPlan, getReviewCatalog } from '../../api/product'
-import type { ReviewCatalogItemResponse } from '../../api/product'
+import type { ReviewCatalogItemResponse, ReviewPlanResponse } from '../../api/product'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 
 type CatalogState =
@@ -11,7 +11,7 @@ type CatalogState =
   | { status: 'error'; message: string }
   | { status: 'ready'; items: ReviewCatalogItemResponse[] }
 
-type SubmitState =
+export type PlanSubmitState =
   | { status: 'idle' }
   | { status: 'submitting' }
   | { status: 'rejected'; message: string }
@@ -31,13 +31,34 @@ export function isDefinitivePlanRejection(error: unknown): boolean {
   return error instanceof ApiError
 }
 
+export function canSubmitPlan(state: PlanSubmitState): boolean {
+  return state.status !== 'submitting' && state.status !== 'unknown'
+}
+
+export async function executePlanSubmission(
+  request: () => Promise<ReviewPlanResponse>,
+): Promise<{ state: PlanSubmitState; plan?: ReviewPlanResponse }> {
+  try {
+    return { state: { status: 'idle' }, plan: await request() }
+  } catch (error: unknown) {
+    return {
+      state: isDefinitivePlanRejection(error)
+        ? { status: 'rejected', message: errorMessage(error, '审查计划创建被服务器拒绝，请修正后重试。') }
+        : {
+            status: 'unknown',
+            message: '审查计划创建结果未知。为避免重复创建，系统不会自动再次提交；请返回审查活动查看服务器结果。',
+          },
+    }
+  }
+}
+
 export function ReviewPlanCreatePage() {
   const navigate = useNavigate()
   const [catalog, setCatalog] = useState<CatalogState>({ status: 'loading' })
   const [title, setTitle] = useState('')
   const [plannedStartAt, setPlannedStartAt] = useState('')
   const [plannedEndAt, setPlannedEndAt] = useState('')
-  const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' })
+  const [submitState, setSubmitState] = useState<PlanSubmitState>({ status: 'idle' })
   const submitting = submitState.status === 'submitting'
 
   useEffect(() => {
@@ -54,7 +75,7 @@ export function ReviewPlanCreatePage() {
   }, [])
 
   async function submitPlan(): Promise<void> {
-    if (submitting) return
+    if (!canSubmitPlan(submitState)) return
     if (title.trim() === '') {
       setSubmitState({ status: 'rejected', message: '请输入审查计划名称。' })
       return
@@ -65,22 +86,15 @@ export function ReviewPlanCreatePage() {
     }
 
     setSubmitState({ status: 'submitting' })
-    try {
-      const plan = await createReviewPlan({
+    const result = await executePlanSubmission(() => createReviewPlan({
         title,
         planned_start_at: dateInputToApi(plannedStartAt),
         planned_end_at: dateInputToApi(plannedEndAt),
-      })
-      await navigate(`/review-plans/${encodeURIComponent(plan.id)}/review-cases/new`)
-    } catch (error: unknown) {
-      setSubmitState(
-        isDefinitivePlanRejection(error)
-          ? { status: 'rejected', message: errorMessage(error, '审查计划创建被服务器拒绝，请修正后重试。') }
-          : {
-              status: 'unknown',
-              message: '审查计划创建结果未知。为避免重复创建，系统不会自动再次提交；请返回审查活动查看服务器结果。',
-            },
-      )
+      }))
+    if (result.plan !== undefined) {
+      await navigate(`/review-plans/${encodeURIComponent(result.plan.id)}/review-cases/new`)
+    } else {
+      setSubmitState(result.state)
     }
   }
 
@@ -145,8 +159,7 @@ export function ReviewPlanCreatePage() {
             <button
               type="submit"
               disabled={
-                submitting ||
-                submitState.status === 'unknown' ||
+                !canSubmitPlan(submitState) ||
                 catalog.status !== 'ready' ||
                 catalog.items.length === 0
               }

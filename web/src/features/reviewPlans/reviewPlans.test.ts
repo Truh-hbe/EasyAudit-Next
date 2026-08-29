@@ -1,9 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../../api/client'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
-import { buildCaseCreateInput, isDefinitiveRejection } from './ReviewCaseCreatePage'
-import { dateInputToApi, isDefinitivePlanRejection } from './ReviewPlanCreatePage'
+import {
+  buildCaseCreateInput,
+  canSubmitCase,
+  executeCaseSubmission,
+  isDefinitiveRejection,
+} from './ReviewCaseCreatePage'
+import {
+  canSubmitPlan,
+  dateInputToApi,
+  executePlanSubmission,
+  isDefinitivePlanRejection,
+} from './ReviewPlanCreatePage'
+import type { ReviewCaseResponse, ReviewPlanResponse } from '../../api/product'
 
 describe('M5.2 plan-first creation contracts', () => {
   it('converts optional local date input to an aware API value', () => {
@@ -44,5 +55,65 @@ describe('M5.2 plan-first creation contracts', () => {
     expect(isDefinitiveRejection(new TypeError('network disconnected'))).toBe(false)
     expect(isDefinitivePlanRejection(new ApiError(422, 'invalid'))).toBe(true)
     expect(isDefinitivePlanRejection(new TypeError('network disconnected'))).toBe(false)
+  })
+
+  it('blocks a second Plan mutation after an ambiguous outcome', async () => {
+    const request = vi
+      .fn<() => Promise<ReviewPlanResponse>>()
+      .mockRejectedValueOnce(new TypeError('network disconnected'))
+    const first = await executePlanSubmission(request)
+
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(first.state.status).toBe('unknown')
+    expect(canSubmitPlan(first.state)).toBe(false)
+    if (canSubmitPlan(first.state)) await executePlanSubmission(request)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows a definitive Plan rejection to be corrected and retried', async () => {
+    const plan = { id: 'plan-123' } as ReviewPlanResponse
+    const request = vi
+      .fn<() => Promise<ReviewPlanResponse>>()
+      .mockRejectedValueOnce(new ApiError(422, 'invalid'))
+      .mockResolvedValueOnce(plan)
+    const first = await executePlanSubmission(request)
+
+    expect(first.state.status).toBe('rejected')
+    expect(canSubmitPlan(first.state)).toBe(true)
+    const second = await executePlanSubmission(request)
+    expect(second.plan).toBe(plan)
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('blocks a second Case mutation after ambiguity and permits only definitive retry', async () => {
+    const request = vi
+      .fn<() => Promise<ReviewCaseResponse>>()
+      .mockRejectedValueOnce(new TypeError('network disconnected'))
+    const first = await executeCaseSubmission(request)
+
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(first.state.status).toBe('unknown')
+    expect(canSubmitCase(first.state)).toBe(false)
+    if (canSubmitCase(first.state)) await executeCaseSubmission(request)
+    expect(request).toHaveBeenCalledTimes(1)
+
+    const reviewCase = { id: 'case-123' } as ReviewCaseResponse
+    const retryRequest = vi
+      .fn<() => Promise<ReviewCaseResponse>>()
+      .mockRejectedValueOnce(new ApiError(422, 'invalid'))
+      .mockResolvedValueOnce(reviewCase)
+    const rejected = await executeCaseSubmission(retryRequest)
+    expect(rejected.state.status).toBe('rejected')
+    expect(canSubmitCase(rejected.state)).toBe(true)
+    const retry = await executeCaseSubmission(retryRequest)
+    expect(retry.reviewCase).toBe(reviewCase)
+    expect(retryRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not create a Case when no exact adapter exists', () => {
+    const request = vi.fn()
+    const unsupported = resolveCaseScenarioAdapter('process_review', 99)
+    expect(unsupported).toBeUndefined()
+    expect(request).not.toHaveBeenCalled()
   })
 })

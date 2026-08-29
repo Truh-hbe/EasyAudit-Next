@@ -9,6 +9,7 @@ import {
 } from '../../api/product'
 import type {
   ReviewCaseCreateInput,
+  ReviewCaseResponse,
   ReviewCatalogItemResponse,
   ReviewPlanResponse,
 } from '../../api/product'
@@ -20,7 +21,7 @@ type LoadState =
   | { status: 'error'; message: string }
   | { status: 'ready'; plan: ReviewPlanResponse; catalog: ReviewCatalogItemResponse[] }
 
-type SubmitState =
+export type CaseSubmitState =
   | { status: 'idle' }
   | { status: 'submitting' }
   | { status: 'rejected'; message: string }
@@ -36,6 +37,27 @@ function identity(item: ReviewCatalogItemResponse): string {
 
 export function isDefinitiveRejection(error: unknown): boolean {
   return error instanceof ApiError
+}
+
+export function canSubmitCase(state: CaseSubmitState): boolean {
+  return state.status !== 'submitting' && state.status !== 'unknown'
+}
+
+export async function executeCaseSubmission(
+  request: () => Promise<ReviewCaseResponse>,
+): Promise<{ state: CaseSubmitState; reviewCase?: ReviewCaseResponse }> {
+  try {
+    return { state: { status: 'idle' }, reviewCase: await request() }
+  } catch (error: unknown) {
+    return {
+      state: isDefinitiveRejection(error)
+        ? { status: 'rejected', message: errorMessage(error, '案例创建被服务器拒绝，请修正后重试。') }
+        : {
+            status: 'unknown',
+            message: '案例创建结果未知。为避免重复创建，系统不会自动再次提交；请返回审查活动查看服务器结果。',
+          },
+    }
+  }
 }
 
 export function buildCaseCreateInput(
@@ -61,7 +83,7 @@ export function ReviewCaseCreatePage() {
   const [selectedIdentity, setSelectedIdentity] = useState('')
   const [caseTitle, setCaseTitle] = useState('')
   const [scenarioValues, setScenarioValues] = useState<ScenarioFormValues>({})
-  const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' })
+  const [submitState, setSubmitState] = useState<CaseSubmitState>({ status: 'idle' })
 
   useEffect(() => {
     if (planId === undefined || planId.trim() === '') {
@@ -110,7 +132,8 @@ export function ReviewCaseCreatePage() {
       planId === undefined ||
       loadState.status !== 'ready' ||
       selectedItem === undefined ||
-      scenarioAdapter === undefined
+      scenarioAdapter === undefined ||
+      !canSubmitCase(submitState)
     ) return
     if (caseTitle.trim() === '') {
       setSubmitState({ status: 'rejected', message: '请输入案例名称。' })
@@ -122,20 +145,13 @@ export function ReviewCaseCreatePage() {
     }
 
     setSubmitState({ status: 'submitting' })
-    try {
-      const reviewCase = await createReviewCase(
+    const result = await executeCaseSubmission(() => createReviewCase(
         buildCaseCreateInput(planId, selectedItem, caseTitle, scenarioAdapter, scenarioValues),
-      )
-      await navigate(`/review-cases/${encodeURIComponent(reviewCase.id)}`)
-    } catch (error: unknown) {
-      setSubmitState(
-        isDefinitiveRejection(error)
-          ? { status: 'rejected', message: errorMessage(error, '案例创建被服务器拒绝，请修正后重试。') }
-          : {
-              status: 'unknown',
-              message: '案例创建结果未知。为避免重复创建，系统不会自动再次提交；请返回审查活动查看服务器结果。',
-            },
-      )
+      ))
+    if (result.reviewCase !== undefined) {
+      await navigate(`/review-cases/${encodeURIComponent(result.reviewCase.id)}`)
+    } else {
+      setSubmitState(result.state)
     }
   }
 
@@ -192,7 +208,7 @@ export function ReviewCaseCreatePage() {
               onChange={(event) => setCaseTitle(event.target.value)}
               required
               maxLength={300}
-              disabled={submitState.status === 'submitting' || submitState.status === 'unknown'}
+              disabled={!canSubmitCase(submitState)}
               autoComplete="off"
             />
           </label>
@@ -205,7 +221,7 @@ export function ReviewCaseCreatePage() {
                 setScenarioValues({})
                 setSubmitState({ status: 'idle' })
               }}
-              disabled={submitState.status === 'submitting' || submitState.status === 'unknown'}
+              disabled={!canSubmitCase(submitState)}
             >
               <option value="" disabled>请选择精确场景版本</option>
               {loadState.catalog.map((item) => (
@@ -235,7 +251,7 @@ export function ReviewCaseCreatePage() {
             <Link className="secondary-button" to="/review-cases">取消</Link>
             <button
               type="submit"
-              disabled={scenarioAdapter === undefined || submitState.status === 'submitting' || submitState.status === 'unknown'}
+              disabled={scenarioAdapter === undefined || !canSubmitCase(submitState)}
             >
               {submitState.status === 'submitting' ? '正在创建案例…' : '创建案例'}
             </button>
