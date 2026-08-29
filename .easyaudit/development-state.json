@@ -15,13 +15,17 @@
   },
   "gate_docs": [
     "docs/architecture/project-status.md",
+    "docs/architecture/web-chatgpt-driver-protocol.md",
     "docs/architecture/m5-1-reviewplan-planning-gate.md",
     "docs/architecture/m5-1-acceptance.md"
   ],
+  "review_record": ".easyaudit/review-decision.json",
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
+      ".easyaudit/review-decision.json",
       "docs/architecture/project-status.md",
+      "docs/architecture/web-chatgpt-driver-protocol.md",
       "docs/architecture/m5-1-reviewplan-planning-gate.md",
       "docs/architecture/m5-1-acceptance.md",
       "docs/architecture/roadmap.md"
