@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "process-gate-evidence-hardening",
-  "phase": "FINAL_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "5887503a3d5ff84a98f5ad7d993a6c68687fd048"
@@ -37,5 +37,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Generate Review Bundle and request independent final review"
+  "next_allowed_action": "Merge"
 }
