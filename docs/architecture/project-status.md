@@ -9,7 +9,7 @@ Last verified: 2026-08-29
 - M4 Second Scenario Validation is complete. No artificial M4.2 is required.
 - Development workflow foundation is merged through PR #28.
 - Current slice: M5.1 ReviewPlan Planning Surface Architecture / Acceptance Gate.
-- Current Gate branch: codex/m5-1-reviewplan-planning-gate.
+- Current Gate PR: #29 (codex/m5-1-reviewplan-planning-gate), currently Draft / GATE_DRAFT.
 
 ## Completed product milestones
 
