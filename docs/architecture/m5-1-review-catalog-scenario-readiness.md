@@ -87,7 +87,9 @@ with the Case-create presentation/payload seam:
 
 - `CaseCreateFields`;
 - `buildCaseScenarioData`;
-- exact Case role presentation metadata where needed by later slices.
+
+Case member role-selection and role-presentation metadata is deferred to M5.3
+and is not part of M5.1 implementation.
 
 The adapter may own field rendering and payload construction. It must not own
 authorization methods or business truth. M5.1 adds exact adapters for:

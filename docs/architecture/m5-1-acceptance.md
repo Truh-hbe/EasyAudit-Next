@@ -29,6 +29,19 @@ alembic upgrade head
 Both exact versions must be visible and ready for later Case creation. A second
 organization must not inherit the first organization's publications.
 
+The same credential-ready business user must then use the existing ReviewCase
+creation path with valid scenario data and successfully create both returned
+exact identities:
+
+- `process_review@1` with `{"area_code":"area-a","review_type":"standard"}`;
+- `compliance_review@1` with
+  `{"standard_reference":"standard-a","scope_summary":"pilot scope"}`.
+
+This must exercise the existing API/service contract, not a test-only bypass.
+The catalog is valid only when each returned item is creatable by that actor;
+if exact Case creation is not permitted for an actor, that exact item must not
+appear in the catalog.
+
 ## Catalog contract
 
 - The endpoint requires the existing business identity.
@@ -42,6 +55,8 @@ organization must not inherit the first organization's publications.
 - Ordering is deterministic.
 - Unknown or stale exact versions are omitted with no fallback.
 - Cross-organization data is never returned.
+- Catalog eligibility and the existing exact Case-creation authorization remain
+  correlated for the same actor.
 
 ## Frontend exact-version seam
 
