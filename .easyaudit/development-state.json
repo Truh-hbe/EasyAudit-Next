@@ -11,7 +11,7 @@
   },
   "work_branch": "codex/m5-5-controlled-pilot-hardening",
   "pr": {
-    "number": null
+    "number": 35
   },
   "gate_docs": [
     "docs/architecture/m5-5-controlled-pilot-hardening.md",
