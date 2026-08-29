@@ -4,14 +4,14 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.3-case-team-management",
-  "phase": "GATE_DRAFT",
+  "phase": "GATE_REVIEW",
   "base": {
     "branch": "main",
     "sha": "065813901c412e941c284525f0478fa7135c35ce"
   },
   "work_branch": "codex/m5-3-case-team-management",
   "pr": {
-    "number": null
+    "number": 33
   },
   "gate_docs": [
     "docs/architecture/m5-3-case-team-management.md",
@@ -35,5 +35,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Architecture / Acceptance review"
+  "next_allowed_action": "ChatGPT M5.3 Gate re-review"
 }

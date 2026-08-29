@@ -25,6 +25,11 @@ The candidate query must not call or reuse the administrator user-list
 operation. A rejected authorization or role request is checked before any
 candidate presentation data is loaded.
 
+An active same-organization system administrator is absent from candidates.
+This does not change the existing add contract: an authorized Case manager may
+explicitly add that account with an exact valid Case role, and the account's
+Case role—not its platform role—then supplies Case business authority.
+
 ## Add and remove
 
 - Both `process_review@1` and `compliance_review@1` accept the exact Case role
@@ -35,22 +40,37 @@ candidate presentation data is loaded.
 - A valid DELETE removes only the requested `(case_id, user_id, role_key)`.
 - The delete response identifies the removed membership.
 - A successful delete creates exactly one `review_case.member_removed` Activity
-  whose metadata identifies the target user and role.
+  whose metadata identifies the target user and role. The Case detail UI
+  refreshes both the member list and Activity after the mutation.
 - A missing membership, unauthorized actor or cross-organization target does
   not remove anything or create an Activity.
 
 ## Last-manager invariant
 
 The creator's `lead` membership is initially present. With one effective active
-manager remaining, deleting that manager returns HTTP 409 and leaves both the
-membership and Activity count unchanged. If another effective manager exists,
-deleting one manager succeeds. An inactive account holding a manager role does
+manager remaining, deleting that manager's `lead` returns HTTP 409 and leaves
+both the membership and Activity count unchanged. A sole manager holding both
+`lead` and `observer` may delete `observer`, because the complete remaining
+role set still grants management; deleting `lead` then returns 409. If another
+effective manager exists, deleting one manager succeeds. Effective managers
+are unique active User IDs evaluated through the exact Scenario authorization
+policy, not membership rows. An inactive account holding a manager role does
 not count as an effective actor for this protection.
 
-Two concurrent transactions attempting to delete the final two effective
-managers must result in one success and one HTTP 409 (or an equivalent
-conflict), with at least one effective manager remaining and no partial
-Activity.
+Two concurrent transactions attempting to remove the final two effective
+managers must serialize on the Case row lock, re-read memberships and actor
+authorization after lock acquisition, and leave at least one effective manager.
+The second result may be HTTP 409 when its actor remains authorized but its
+delete would remove the final manager, or HTTP 403 when the earlier committed
+delete removed its management authority. In either case the rejected
+transaction creates no partial Activity. A deterministic ordering test must
+prove the explicit final-manager 409, and a genuine two-session race must
+assert the safety invariant rather than one universal status code.
+
+The same Case-before-User lock order is used by member removal and the existing
+user deactivation service. A concurrent removal and deactivation of managers
+must not commit a state with zero effective managers; the deactivation is
+rejected when it would violate the post-deactivation invariant.
 
 ## Frontend journey
 
@@ -63,8 +83,9 @@ Using a real authenticated React page:
 4. add one candidate and observe the member list refresh;
 5. remove that membership and observe the list and Activity refresh;
 6. attempt to remove the final manager and display the conflict while keeping
-   the manager visible; and
-7. verify a non-manager sees a safe permission error and no candidate names.
+   the manager visible;
+7. observe member and Activity refresh after successful add/remove; and
+8. verify a non-manager sees a safe permission error and no candidate names.
 
 ## Required verification
 
@@ -74,11 +95,18 @@ The slice must include:
 - service/repository tests for exact role validation, organization/active-user
   filtering, permission-before-name ordering, atomic Activity behavior and
   last-manager protection;
-- PostgreSQL integration tests for concurrent final-manager removal;
+- PostgreSQL integration tests for multi-role post-delete evaluation,
+  concurrent final-manager removal, and removal versus manager deactivation;
+- regression coverage for explicit system-admin Case membership semantics;
+- `openapi/openapi.json` updates and API contract checks for the new GET and
+  DELETE operations;
 - frontend tests for exact role option consumption, candidate query shaping,
   add/remove retry and error rendering; and
 - a real browser acceptance test reached by `npm run test:browser:real` using
   PostgreSQL, FastAPI and React.
+
+The canonical CI command must include the M5.3 browser specification through
+`web/package.json`; no workflow change is required.
 
 No migration is expected. If the implementation discovers a required schema
 change, stop implementation and reopen this Gate.
@@ -88,4 +116,3 @@ change, stop implementation and reopen this Gate.
 M5.3 does not include administrator pages, credential reset, email recovery,
 custom Scenario authoring, new Scenario versions, notifications, deployment,
 or production-scale team directory features.
-
