@@ -55,7 +55,7 @@ def clean_database_url() -> Iterator[str]:
     try:
         with admin_engine.connect() as connection:
             connection.execute(text(f"CREATE DATABASE {_quoted_database_name(database_name)}"))
-        yield str(base_url.set(database=database_name))
+        yield base_url.set(database=database_name).render_as_string(hide_password=False)
     finally:
         with admin_engine.connect() as connection:
             connection.execute(
@@ -90,9 +90,12 @@ def _run_success(
 ) -> subprocess.CompletedProcess[str]:
     result = _run_process(command, database_url, input_text=input_text)
     if result.returncode != 0:
+        redacted_url = make_url(database_url).render_as_string(hide_password=True)
+        safe_stdout = result.stdout.replace(database_url, redacted_url)
+        safe_stderr = result.stderr.replace(database_url, redacted_url)
         raise AssertionError(
             f"command failed ({result.returncode}): {' '.join(command)}\n"
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            f"stdout:\n{safe_stdout}\nstderr:\n{safe_stderr}"
         )
     return result
 
