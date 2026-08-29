@@ -11,7 +11,7 @@
   },
   "work_branch": "codex/m5-2-plan-first-creation-wizard",
   "pr": {
-    "number": null
+    "number": 32
   },
   "gate_docs": [
     "docs/architecture/m5-2-plan-first-creation-wizard.md",
