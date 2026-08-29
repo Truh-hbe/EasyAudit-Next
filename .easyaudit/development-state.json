@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.5-controlled-pilot-hardening",
-  "phase": "MERGE_AUTHORIZED",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
-    "sha": "28055c6b3da5ed266ad6f4128feffd602d436b2e"
+    "sha": "210a26999ec2adfd0400f7e0c243061cc20d2f3d"
   },
-  "work_branch": "codex/m5-5-controlled-pilot-hardening",
+  "work_branch": null,
   "pr": {
     "number": 35
   },
@@ -43,5 +43,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge PR #35 with expected-head protection"
+  "next_allowed_action": "Create and review a new Gate before further implementation"
 }
