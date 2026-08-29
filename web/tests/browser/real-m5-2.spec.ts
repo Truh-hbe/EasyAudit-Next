@@ -103,7 +103,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   )
   await page.getByRole('button', { name: '创建案例' }).click()
   expect((await rejectedCasePromise).status()).toBe(422)
-  await expect(page.getByRole('alert')).toContainText('案例')
+  await expect(page.getByRole('alert')).toContainText('review_type')
   expect(planPostCount).toBe(1)
 
   const firstCasePromise = page.waitForResponse(
