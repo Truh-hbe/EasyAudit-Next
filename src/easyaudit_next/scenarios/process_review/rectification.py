@@ -14,7 +14,11 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     AuthorizationContext,
     AuthorizationPolicy,
     CollaborationRecipientPolicy,
+    DirectFindingTransitionPolicy,
     PermissionSource,
+)
+from easyaudit_next.scenarios.process_review.direct_transitions import (
+    ProcessReviewDirectFindingTransitions,
 )
 from easyaudit_next.scenarios.process_review.recipient_policy import (
     ProcessReviewCollaborationRecipientPolicy,
@@ -120,6 +124,9 @@ class ProcessReviewRectificationAuthorizationPolicy(ProcessReviewAuthorizationPo
 class ProcessReviewV1Policy(ProcessReviewV1BasePolicy):
     """The single complete immutable policy registered for process_review@1."""
 
+    finding_direct_transitions: DirectFindingTransitionPolicy = field(
+        default_factory=ProcessReviewDirectFindingTransitions
+    )
     action_operations: ActionItemOperationPolicy = field(
         default_factory=ProcessReviewActionOperations
     )

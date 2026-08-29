@@ -25,14 +25,19 @@ describe('ScenarioUiRegistry exact version lookup', () => {
     expect(registry.resolve('process_review', 1)).toBe('AdapterV1')
   })
 
-  it('production registry exposes only the exact process_review@1 adapters', () => {
+  it('production registry exposes both exact v1 adapters and never falls back', () => {
     expect(resolveCaseScenarioAdapter('process_review', 1)).toBeDefined()
     expect(resolveFindingScenarioAdapter('process_review', 1)).toBeDefined()
+    expect(resolveCaseScenarioAdapter('compliance_review', 1)).toBeDefined()
+    expect(resolveFindingScenarioAdapter('compliance_review', 1)).toBeDefined()
+
     expect(resolveCaseScenarioAdapter('process_review', 99)).toBeUndefined()
     expect(resolveFindingScenarioAdapter('process_review', 99)).toBeUndefined()
+    expect(resolveCaseScenarioAdapter('compliance_review', 99)).toBeUndefined()
+    expect(resolveFindingScenarioAdapter('compliance_review', 99)).toBeUndefined()
   })
 
-  it('process_review@1 keeps relationship actor kinds and submission payloads in the adapter', () => {
+  it('process_review@1 keeps relationship semantics and Finding input in its adapter', () => {
     const adapter = resolveFindingScenarioAdapter('process_review', 1)
     expect(adapter).toBeDefined()
     if (adapter === undefined) return
@@ -43,22 +48,38 @@ describe('ScenarioUiRegistry exact version lookup', () => {
       { roleKey: 'collaborator', actorKind: 'user', label: '协作者' },
     ])
     expect(adapter.assigneeOptions.every((option) => option.actorKind === 'user')).toBe(true)
-    expect(adapter.buildFindingScenarioData({ issue_type: 'control_gap', project_category: 'assembly' })).toEqual({
+    expect(
+      adapter.buildFindingScenarioData({
+        issue_type: 'control_gap',
+        project_category: 'assembly',
+      }),
+    ).toEqual({
       issue_type: 'control_gap',
       project_category: 'assembly',
     })
-    expect(adapter.buildRectificationPlanPayload({ root_cause: 'training gap' })).toEqual({
-      stage: 'plan',
-      root_cause: 'training gap',
+    expect(adapter.FindingInteractionSection).toBeDefined()
+  })
+
+  it('compliance_review@1 keeps classification and relationships in its exact adapter', () => {
+    const adapter = resolveFindingScenarioAdapter('compliance_review', 1)
+    expect(adapter).toBeDefined()
+    if (adapter === undefined) return
+
+    expect(adapter.participantOptions).toEqual([
+      { roleKey: 'responsible_department', actorKind: 'department', label: '责任部门' },
+      { roleKey: 'owner', actorKind: 'user', label: '负责人' },
+      { roleKey: 'collaborator', actorKind: 'user', label: '协作者' },
+    ])
+    expect(adapter.assigneeOptions.every((option) => option.actorKind === 'user')).toBe(true)
+    expect(
+      adapter.buildFindingScenarioData({
+        criterion_reference: '8.5.1',
+        finding_type: 'observation',
+      }),
+    ).toEqual({
+      criterion_reference: '8.5.1',
+      finding_type: 'observation',
     })
-    expect(adapter.buildCompletionPayload({ completion_comment: 'done' })).toEqual({
-      stage: 'completion',
-      comment: 'done',
-    })
-    expect(adapter.buildVerificationPayload('approve', {})).toEqual({ result: 'approved' })
-    expect(adapter.buildVerificationPayload('reject', { verification_comment: 'retry' })).toEqual({
-      result: 'rejected',
-      comment: 'retry',
-    })
+    expect(adapter.FindingInteractionSection).toBeDefined()
   })
 })

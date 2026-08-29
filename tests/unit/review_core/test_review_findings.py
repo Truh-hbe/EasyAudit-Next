@@ -307,7 +307,7 @@ def test_direct_and_department_participants_gain_visibility_but_not_write_author
 
     assert service.get_finding(owner, finding.id) == finding
     assert service.get_finding(department_member, finding.id) == finding
-    with pytest.raises(ReviewAuthorizationError, match="lead or auditor"):
+    with pytest.raises(ReviewAuthorizationError, match="Scenario permission"):
         service.transition_finding(department_member, finding.id, "issue")
 
 
@@ -372,6 +372,14 @@ def test_issue_and_void_are_scenario_transitions_and_void_requires_reason() -> N
         occurred_at=NOW,
     )
     assert voided.lifecycle is FindingLifecycle.VOIDED
+
+
+def test_process_review_rejects_second_scenario_direct_action() -> None:
+    service, repository, lead, _, _, _ = _fixture()
+    finding = _create_finding(service, lead, repository.review_case.id)
+
+    with pytest.raises(ValueError, match="Unknown Finding action"):
+        service.transition_finding(lead, finding.id, "accept_observation")
 
 
 def test_terminal_finding_freezes_participant_management() -> None:

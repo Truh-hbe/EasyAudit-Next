@@ -17,53 +17,53 @@ function formValue(values: ScenarioFormValues, name: string): string {
   return values[name] ?? ''
 }
 
-export function ProcessReviewV1CaseSection({ reviewCase }: ScenarioCaseSectionProps) {
+export function ComplianceReviewV1CaseSection({ reviewCase }: ScenarioCaseSectionProps) {
   return (
-    <section className="surface-card" aria-labelledby="process-review-v1-title">
+    <section className="surface-card" aria-labelledby="compliance-review-v1-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">process_review@1</p>
-          <h2 id="process-review-v1-title">过程审查信息</h2>
+          <p className="eyebrow">compliance_review@1</p>
+          <h2 id="compliance-review-v1-title">合规审查信息</h2>
         </div>
       </div>
       <dl className="fact-grid">
         <div>
-          <dt>区域代码</dt>
-          <dd>{scenarioText(reviewCase.scenario_data.area_code)}</dd>
+          <dt>标准 / 依据</dt>
+          <dd>{scenarioText(reviewCase.scenario_data.standard_reference)}</dd>
         </div>
         <div>
-          <dt>审查类型</dt>
-          <dd>{scenarioText(reviewCase.scenario_data.review_type)}</dd>
+          <dt>范围摘要</dt>
+          <dd>{scenarioText(reviewCase.scenario_data.scope_summary)}</dd>
         </div>
       </dl>
     </section>
   )
 }
 
-export function ProcessReviewV1FindingSection({ finding }: ScenarioFindingSectionProps) {
+export function ComplianceReviewV1FindingSection({ finding }: ScenarioFindingSectionProps) {
   return (
-    <section className="surface-card" aria-labelledby="process-review-v1-finding-title">
+    <section className="surface-card" aria-labelledby="compliance-review-v1-finding-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">process_review@1</p>
-          <h2 id="process-review-v1-finding-title">过程审查 Finding 信息</h2>
+          <p className="eyebrow">compliance_review@1</p>
+          <h2 id="compliance-review-v1-finding-title">合规 Finding 信息</h2>
         </div>
       </div>
       <dl className="fact-grid">
         <div>
-          <dt>问题类型</dt>
-          <dd>{scenarioText(finding.scenario_data.issue_type)}</dd>
+          <dt>条款 / 要求</dt>
+          <dd>{scenarioText(finding.scenario_data.criterion_reference)}</dd>
         </div>
         <div>
-          <dt>项目类别</dt>
-          <dd>{scenarioText(finding.scenario_data.project_category)}</dd>
+          <dt>Finding 类型</dt>
+          <dd>{scenarioText(finding.scenario_data.finding_type)}</dd>
         </div>
       </dl>
     </section>
   )
 }
 
-export function ProcessReviewV1FindingCreateFields({
+export function ComplianceReviewV1FindingCreateFields({
   values,
   onChange,
   disabled,
@@ -71,33 +71,37 @@ export function ProcessReviewV1FindingCreateFields({
   return (
     <div className="form-grid">
       <label>
-        问题类型
+        条款 / 要求
         <input
-          value={formValue(values, 'issue_type')}
-          onChange={(event) => onChange('issue_type', event.target.value)}
+          value={formValue(values, 'criterion_reference')}
+          onChange={(event) => onChange('criterion_reference', event.target.value)}
           disabled={disabled}
-          placeholder="由 Scenario 校验"
+          placeholder="例如 8.5.1"
         />
       </label>
       <label>
-        项目类别
-        <input
-          value={formValue(values, 'project_category')}
-          onChange={(event) => onChange('project_category', event.target.value)}
+        Finding 类型
+        <select
+          value={formValue(values, 'finding_type')}
+          onChange={(event) => onChange('finding_type', event.target.value)}
           disabled={disabled}
-          placeholder="由 Scenario 校验"
-        />
+        >
+          <option value="">请选择</option>
+          <option value="nonconformity">Nonconformity</option>
+          <option value="observation">Observation</option>
+        </select>
       </label>
     </div>
   )
 }
 
-export function ProcessReviewV1FindingInteraction({
+export function ComplianceReviewV1FindingInteraction({
   finding,
   disabled,
   commands,
   execute,
 }: ScenarioFindingInteractionProps) {
+  const findingType = finding.scenario_data.finding_type
   const [voidReason, setVoidReason] = useState('')
   const [rootCause, setRootCause] = useState('')
   const [completionComment, setCompletionComment] = useState('')
@@ -108,18 +112,37 @@ export function ProcessReviewV1FindingInteraction({
     <section className="surface-card" aria-labelledby="finding-command-title">
       <h2 id="finding-command-title">业务操作</h2>
       <p className="empty-note">
-        当前操作由 process_review@1 adapter 展示；最终授权、生命周期与并发判断仍由服务器决定。
+        当前操作由 compliance_review@1 adapter 展示；最终授权、生命周期与并发判断仍由服务器决定。
       </p>
-      {finding.lifecycle === 'open' ? (
+      {finding.lifecycle === 'open' && findingType === 'observation' ? (
+        <div className="command-stack">
+          <button
+            type="button"
+            data-scenario-action="accept_observation"
+            onClick={() =>
+              void execute('接受 Observation', () => commands.transition('accept_observation'))
+            }
+            disabled={disabled}
+          >
+            接受 Observation
+          </button>
+        </div>
+      ) : null}
+      {finding.lifecycle === 'open' && findingType === 'nonconformity' ? (
         <div className="command-stack">
           <button
             type="button"
             data-scenario-action="issue"
-            onClick={() => void execute('签发 Finding', () => commands.transition('issue'))}
+            onClick={() => void execute('签发不符合项', () => commands.transition('issue'))}
             disabled={disabled}
           >
-            签发 Finding
+            签发不符合项
           </button>
+        </div>
+      ) : null}
+      {finding.lifecycle === 'open' &&
+      (findingType === 'observation' || findingType === 'nonconformity') ? (
+        <div className="command-stack">
           <label>
             作废原因
             <input
@@ -140,6 +163,11 @@ export function ProcessReviewV1FindingInteraction({
             作废 Finding
           </button>
         </div>
+      ) : null}
+      {finding.lifecycle === 'open' &&
+      findingType !== 'observation' &&
+      findingType !== 'nonconformity' ? (
+        <p role="status">当前 Finding 类型无法由 compliance_review@1 解释，业务操作已关闭。</p>
       ) : null}
       {finding.lifecycle === 'rectifying' ? (
         <div className="command-grid">
@@ -188,7 +216,6 @@ export function ProcessReviewV1FindingInteraction({
                 value={completionComment}
                 onChange={(event) => setCompletionComment(event.target.value)}
                 disabled={disabled}
-                placeholder="后端将验证 Action 完成状态与说明"
               />
             </label>
             <button
@@ -237,7 +264,6 @@ export function ProcessReviewV1FindingInteraction({
                 value={verificationComment}
                 onChange={(event) => setVerificationComment(event.target.value)}
                 disabled={disabled}
-                placeholder="驳回时由后端验证必填规则"
               />
             </label>
             <button
@@ -251,7 +277,7 @@ export function ProcessReviewV1FindingInteraction({
           </form>
         </div>
       ) : null}
-      {finding.lifecycle === 'closed' ? (
+      {finding.lifecycle === 'closed' && findingType === 'nonconformity' ? (
         <form
           className="command-form"
           onSubmit={(event) => {
@@ -272,6 +298,9 @@ export function ProcessReviewV1FindingInteraction({
           </button>
         </form>
       ) : null}
+      {finding.lifecycle === 'closed' && findingType === 'observation' ? (
+        <p className="empty-note">Observation 已接受并闭环。</p>
+      ) : null}
       {finding.lifecycle === 'voided' ? (
         <p className="empty-note">当前 Finding 已作废，无可用 Product mutation。</p>
       ) : null}
@@ -279,13 +308,13 @@ export function ProcessReviewV1FindingInteraction({
   )
 }
 
-export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
-  CaseScenarioSection: ProcessReviewV1CaseSection,
-  FindingScenarioSection: ProcessReviewV1FindingSection,
-  FindingCreateFields: ProcessReviewV1FindingCreateFields,
+export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
+  CaseScenarioSection: ComplianceReviewV1CaseSection,
+  FindingScenarioSection: ComplianceReviewV1FindingSection,
+  FindingCreateFields: ComplianceReviewV1FindingCreateFields,
   buildFindingScenarioData: (values) => ({
-    issue_type: formValue(values, 'issue_type'),
-    project_category: formValue(values, 'project_category'),
+    criterion_reference: formValue(values, 'criterion_reference'),
+    finding_type: formValue(values, 'finding_type'),
   }),
   participantOptions: [
     {
@@ -300,5 +329,5 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
     { role: 'primary', actorKind: 'user', label: '主要执行人' },
     { role: 'collaborator', actorKind: 'user', label: '协作者' },
   ],
-  FindingInteractionSection: ProcessReviewV1FindingInteraction,
+  FindingInteractionSection: ComplianceReviewV1FindingInteraction,
 }

@@ -99,6 +99,7 @@ class FindingOperationContext:
 
     case_lifecycle: ReviewCaseLifecycle
     current_finding_lifecycle: FindingLifecycle | None = None
+    scenario_data: Mapping[str, object] = field(default_factory=dict)
     participant_role_keys: frozenset[str] = field(default_factory=frozenset)
     non_cancelled_action_count: int = 0
     all_non_cancelled_actions_done: bool = False
@@ -106,6 +107,14 @@ class FindingOperationContext:
 
     def has_participant_role(self, role_key: str) -> bool:
         return role_key in self.participant_role_keys
+
+
+@dataclass(frozen=True, slots=True)
+class DirectFindingTransitionDecision:
+    """Scenario-owned direct Finding transition intent for generic persistence."""
+
+    required_permission: str
+    target_lifecycle: FindingLifecycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +211,14 @@ class FindingOperationPolicy(Protocol):
         action: str,
         context: FindingOperationContext,
     ) -> None: ...
+
+
+class DirectFindingTransitionPolicy(Protocol):
+    def decide(
+        self,
+        action: str,
+        context: FindingOperationContext,
+    ) -> DirectFindingTransitionDecision: ...
 
 
 class ActionItemWorkflowPolicy(Protocol):

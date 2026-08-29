@@ -1,3 +1,4 @@
+import { COMPLIANCE_REVIEW_V1_UI } from './complianceReviewV1'
 import { PROCESS_REVIEW_V1_UI } from './processReviewV1'
 import { ScenarioUiRegistry } from './registry'
 import type {
@@ -8,6 +9,7 @@ import type {
 
 const scenarioRegistry = new ScenarioUiRegistry<ScenarioUiAdapter>()
 scenarioRegistry.register('process_review', 1, PROCESS_REVIEW_V1_UI)
+scenarioRegistry.register('compliance_review', 1, COMPLIANCE_REVIEW_V1_UI)
 
 export function resolveCaseScenarioAdapter(
   scenarioKey: string,
