@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M5",
   "slice": "M5.4-minimal-pilot-administration",
-  "phase": "GATE_DRAFT",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "9a33982875fbaf3bcd0a28d56ca245eaf46b0e3b"
@@ -56,5 +56,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Architecture / Acceptance review"
+  "next_allowed_action": "ChatGPT M5.4 implementation plan"
 }
