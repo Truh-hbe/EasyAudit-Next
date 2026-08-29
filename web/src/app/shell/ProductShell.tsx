@@ -1,6 +1,7 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router'
 
 import { ActionItemDetailPage } from '../../features/actions/ActionItemDetailPage'
+import { AdminPage } from '../../features/admin/AdminPage'
 import { FindingDetailPage } from '../../features/findings/FindingDetailPage'
 import { ManagementCaseProgressPage } from '../../features/management/ManagementCaseProgressPage'
 import { ManagementPage } from '../../features/management/ManagementPage'
@@ -12,7 +13,6 @@ import { ReviewPlanCreatePage } from '../../features/reviewPlans/ReviewPlanCreat
 import { WorkbenchPage } from '../../features/workbench/WorkbenchPage'
 import { LogoutButton } from '../auth/LogoutButton'
 import { useSession } from '../auth/session'
-import { PlaceholderPage } from './PlaceholderPage'
 
 const primaryNavigation = [
   { to: '/me/workbench', label: '我的工作' },
@@ -71,13 +71,7 @@ export function ProductShell() {
           />
           <Route
             path="/admin/*"
-            element={
-              <PlaceholderPage
-                title="管理设置"
-                slice="Later Product Surface"
-                description="平台管理入口仅作为导航提示；后端平台授权仍是唯一权限边界。"
-              />
-            }
+            element={<AdminPage />}
           />
           <Route path="*" element={<Navigate replace to="/me/workbench" />} />
         </Routes>

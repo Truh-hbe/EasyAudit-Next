@@ -56,11 +56,17 @@
       "get": {"operationId": "getAdminUser", "tags": ["admin"]},
       "patch": {"operationId": "updateAdminUser", "tags": ["admin"]}
     },
+    "/api/v1/admin/users/{user_id}/credential-reset": {
+      "post": {"operationId": "resetAdminUserCredential", "tags": ["admin"]}
+    },
     "/api/v1/admin/scenarios": {
       "get": {"operationId": "listAdminScenarios", "tags": ["admin"]}
     },
     "/api/v1/admin/scenarios/{key}/versions": {
       "get": {"operationId": "listAdminScenarioVersions", "tags": ["admin"]}
+    },
+    "/api/v1/admin/scenario-status": {
+      "get": {"operationId": "getAdminScenarioStatus", "tags": ["admin"]}
     },
     "/api/v1/review-plans": {
       "get": {"operationId": "listReviewPlans", "tags": ["review-planning"]},

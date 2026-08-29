@@ -3,58 +3,48 @@
   "active": true,
   "project": "EasyAudit-Next",
   "milestone": "M5",
-  "slice": "M5.3-case-team-management",
+  "slice": "M5.4-minimal-pilot-administration",
   "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
-    "sha": "065813901c412e941c284525f0478fa7135c35ce"
+    "sha": "9a33982875fbaf3bcd0a28d56ca245eaf46b0e3b"
   },
-  "work_branch": "codex/m5-3-case-team-management",
+  "work_branch": "codex/m5-4-minimal-pilot-administration",
   "pr": {
-    "number": 33
+    "number": 34
   },
   "gate_docs": [
-    "docs/architecture/m5-3-case-team-management.md",
-    "docs/architecture/m5-3-acceptance.md"
+    "docs/architecture/m5-4-minimal-pilot-administration.md",
+    "docs/architecture/m5-4-acceptance.md"
   ],
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/m5-3-case-team-management.md",
-      "docs/architecture/m5-3-acceptance.md",
-      "src/easyaudit_next/api/review_contracts.py",
-      "src/easyaudit_next/api/review_planning.py",
+      "docs/architecture/m5-4-minimal-pilot-administration.md",
+      "docs/architecture/m5-4-acceptance.md",
+      "src/easyaudit_next/api/contracts.py",
       "src/easyaudit_next/api/router.py",
-      "src/easyaudit_next/application/__init__.py",
-      "src/easyaudit_next/application/case_team_coordination.py",
-      "src/easyaudit_next/composition.py",
-      "src/easyaudit_next/platform/domain/repositories.py",
-      "src/easyaudit_next/platform/persistence/repositories.py",
-      "src/easyaudit_next/review_core/application/mutation_results.py",
-      "src/easyaudit_next/review_core/application/review_planning.py",
-      "src/easyaudit_next/review_core/domain/repositories.py",
-      "src/easyaudit_next/review_core/persistence/repositories.py",
+      "src/easyaudit_next/platform/application/administration.py",
       "openapi/openapi.json",
+      "tests/api/test_auth_policy.py",
+      "tests/api/test_meta.py",
+      "tests/api/test_m5_4_*.py",
+      "tests/integration/test_m5_4_*.py",
       "web/package.json",
-      "web/src/api/product.ts",
-      "web/src/features/reviewCases/ReviewCaseDetailPage.tsx",
-      "web/src/features/reviewCases/ReviewCaseTeamPanel.tsx",
-      "web/src/features/reviewCases/ReviewCaseTeamPanel.test.tsx",
-      "web/src/scenarios/complianceReviewV1.tsx",
-      "web/src/scenarios/processReviewV1.tsx",
-      "web/src/scenarios/registry.test.ts",
-      "web/src/scenarios/registry.ts",
-      "tests/api/test_review_planning_openapi.py",
-      "tests/integration/test_m5_3_*.py",
-      "web/tests/browser/real-m5-3.spec.ts",
-      "web/tests/browser/seed_m5_3_real_acceptance.py"
+      "web/src/api/admin.ts",
+      "web/src/features/admin/AdminPage.tsx",
+      "web/src/features/admin/AdminPage.test.tsx",
+      "web/src/app/shell/ProductShell.tsx",
+      "web/tests/browser/real-m5-4.spec.ts",
+      "web/tests/browser/seed_m5_4_real_acceptance.py"
     ],
     "forbidden_paths": [
       "alembic/**",
       ".github/workflows/**",
       "src/easyaudit_next/notifications/**",
       "src/easyaudit_next/workbench/**",
-      "web/src/app/**",
+      "web/src/app/auth/**",
+      "web/src/app/router/**",
       "web/src/features/management/**",
       "web/src/features/notifications/**",
       "web/src/features/workbench/**",
@@ -62,9 +52,9 @@
       "tests/unit/**"
     ]
   },
-  "fixed_head": "a5a1c5bbcc43a05f0486bd54091c0cf26963e6e2",
+  "fixed_head": "7e9015f273aba4c0031146e6bdf02536bc353e44",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge"
+  "next_allowed_action": "Merge PR #34 with expected-head protection"
 }

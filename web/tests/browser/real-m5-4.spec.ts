@@ -1,0 +1,233 @@
+import { execFileSync } from 'node:child_process'
+
+import { expect, test, type Page } from '@playwright/test'
+
+const ADMIN_LOGIN_NAME = 'browser-m5-4-admin'
+const ADMIN_PASSWORD = 'm5-4-browser-admin-password-000'
+const MANAGER_DISPLAY_NAME = 'M5.4 Browser Case Manager'
+const MANAGER_LOGIN_NAME = 'browser-m5-4-manager'
+const MANAGER_PASSWORD = 'm5-4-browser-manager-password-000'
+const MANAGER_USER_ID = '00000000-0000-4000-8000-0000000003c2'
+const CASE_ID = '00000000-0000-4000-8000-0000000003c7'
+const NEW_USER_DISPLAY_NAME = 'M5.4 Browser Created User'
+const NEW_USER_LOGIN_NAME = 'browser-m5-4-created'
+const NEW_USER_INITIAL_PASSWORD = 'm5-4-browser-created-password-000'
+const NEW_USER_CHANGED_PASSWORD = 'm5-4-browser-changed-password-111'
+const RESET_PASSWORD = 'm5-4-browser-reset-password-222'
+const RESET_CHANGED_PASSWORD = 'm5-4-browser-reset-changed-333'
+const DEPARTMENT_NAME = 'M5.4 Pilot Department'
+const EDITED_DEPARTMENT_NAME = 'M5.4 Pilot Department Edited'
+
+function apiPath(url: string): string {
+  return new URL(url).pathname
+}
+
+async function submitLogin(page: Page, loginName: string, password: string) {
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === '/api/v1/auth/login' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByLabel('登录名').fill(loginName)
+  await page.getByLabel('密码').fill(password)
+  await page.getByRole('button', { name: '登录' }).click()
+  const response = await responsePromise
+  expect(response.status()).toBe(200)
+}
+
+async function submitPasswordChange(page: Page, currentPassword: string, newPassword: string) {
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === '/api/v1/me/password' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByLabel('当前密码').fill(currentPassword)
+  await page.getByLabel('新密码', { exact: true }).fill(newPassword)
+  await page.getByLabel('确认新密码').fill(newPassword)
+  await page.getByRole('button', { name: '修改密码' }).click()
+  expect((await responsePromise).status()).toBe(200)
+}
+
+async function addLeadMember(page: Page, search: string, displayName: string) {
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByLabel('团队角色').selectOption('lead')
+  await team.getByLabel('搜索成员').fill(search)
+  const searchResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/member-candidates` &&
+      response.request().method() === 'GET',
+  )
+  await team.getByRole('button', { name: '搜索候选人' }).click()
+  expect((await searchResponsePromise).status()).toBe(200)
+  const candidate = team
+    .getByRole('list', { name: '候选成员' })
+    .getByRole('listitem')
+    .filter({ hasText: displayName })
+  await expect(candidate).toBeVisible()
+  const addResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/members` &&
+      response.request().method() === 'POST',
+  )
+  await candidate.getByRole('button', { name: '添加' }).click()
+  expect((await addResponsePromise).status()).toBe(201)
+  await expect(team.locator('ul.surface-list').first().getByText(displayName)).toBeVisible()
+}
+
+async function removeMember(page: Page, userId: string, displayName: string) {
+  const team = page.getByRole('region', { name: '团队管理' })
+  const member = team.locator('ul.surface-list').first().locator('li').filter({ hasText: displayName })
+  await expect(member).toBeVisible()
+  const removeResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/members/${userId}` &&
+      response.request().method() === 'DELETE',
+  )
+  await member.getByRole('button', { name: '移除' }).click()
+  expect((await removeResponsePromise).status()).toBe(200)
+}
+
+test.describe.configure({ mode: 'serial', retries: 0 })
+
+test.beforeAll(() => {
+  execFileSync('python', ['tests/browser/seed_m5_4_real_acceptance.py'], {
+    env: process.env,
+    stdio: 'inherit',
+  })
+})
+
+test('real administrator configures users, protects Case managers, and resets credentials', async ({
+  page,
+  browser,
+}) => {
+  await page.goto('/admin')
+  await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
+  await submitLogin(page, ADMIN_LOGIN_NAME, ADMIN_PASSWORD)
+  await expect(page.getByRole('heading', { name: '管理设置' })).toBeVisible()
+  await expect(page.getByText('M5.4 Browser Acceptance')).toBeVisible()
+  await expect(page.getByText('process_review@1')).toBeVisible()
+  await expect(page.getByText('compliance_review@1')).toBeVisible()
+  await expect(page.getByText('代码已注册')).toHaveCount(2)
+  await expect(page.getByText('可用')).toHaveCount(2)
+
+  const departmentResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === '/api/v1/admin/departments' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByLabel('部门名称').fill(DEPARTMENT_NAME)
+  await page.getByRole('button', { name: '创建部门' }).click()
+  expect((await departmentResponsePromise).status()).toBe(201)
+  const departments = page.getByRole('region', { name: '部门' })
+  const departmentRow = departments.getByRole('listitem').filter({ hasText: DEPARTMENT_NAME })
+  await expect(departmentRow).toBeVisible()
+
+  await departmentRow.getByRole('button', { name: '编辑' }).click()
+  await departments.getByLabel('部门名称').fill(EDITED_DEPARTMENT_NAME)
+  const departmentEditResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()).startsWith('/api/v1/admin/departments/') &&
+      response.request().method() === 'PATCH',
+  )
+  await departments.getByRole('button', { name: '保存部门' }).click()
+  expect((await departmentEditResponsePromise).status()).toBe(200)
+  const editedDepartmentRow = departments.getByRole('listitem').filter({ hasText: EDITED_DEPARTMENT_NAME })
+  await expect(editedDepartmentRow).toBeVisible()
+
+  const userResponsePromise = page.waitForResponse(
+    (response) =>
+      apiPath(response.url()) === '/api/v1/admin/users' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByLabel('显示名称').fill(NEW_USER_DISPLAY_NAME)
+  await page.getByLabel('登录名').fill(NEW_USER_LOGIN_NAME)
+  await page.getByLabel('初始密码').fill(NEW_USER_INITIAL_PASSWORD)
+  await page.getByLabel('主要部门').selectOption({ label: EDITED_DEPARTMENT_NAME })
+  await page.getByRole('button', { name: '创建用户' }).click()
+  expect((await userResponsePromise).status()).toBe(201)
+  const users = page.getByRole('region', { name: '用户' })
+  await expect(users.getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME })).toBeVisible()
+
+  const targetContext = await browser.newContext({
+    baseURL: 'https://127.0.0.1:4173',
+    ignoreHTTPSErrors: true,
+  })
+  const targetPage = await targetContext.newPage()
+  const managerContext = await browser.newContext({
+    baseURL: 'https://127.0.0.1:4173',
+    ignoreHTTPSErrors: true,
+  })
+  const managerPage = await managerContext.newPage()
+  try {
+    await targetPage.goto('/me/workbench')
+    await expect(targetPage.getByRole('heading', { name: '登录' })).toBeVisible()
+    await submitLogin(targetPage, NEW_USER_LOGIN_NAME, NEW_USER_INITIAL_PASSWORD)
+    await expect(targetPage.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
+    await submitPasswordChange(targetPage, NEW_USER_INITIAL_PASSWORD, NEW_USER_CHANGED_PASSWORD)
+    await expect(targetPage.getByRole('heading', { name: '我的工作' })).toBeVisible()
+
+    await managerPage.goto(`/review-cases/${CASE_ID}`)
+    await expect(managerPage.getByRole('heading', { name: '登录' })).toBeVisible()
+    await submitLogin(managerPage, MANAGER_LOGIN_NAME, MANAGER_PASSWORD)
+    await expect(managerPage.getByRole('heading', { name: 'M5.4 Browser Manager Case' })).toBeVisible()
+    await addLeadMember(managerPage, NEW_USER_DISPLAY_NAME, NEW_USER_DISPLAY_NAME)
+    await removeMember(managerPage, MANAGER_USER_ID, MANAGER_DISPLAY_NAME)
+
+    const createdUserRow = page.getByRole('region', { name: '用户' }).getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME })
+    await createdUserRow.getByRole('button', { name: '编辑' }).click()
+    await page.getByRole('checkbox', { name: '用户启用' }).uncheck()
+    const conflictResponsePromise = page.waitForResponse(
+      (response) =>
+        apiPath(response.url()).includes('/api/v1/admin/users/') &&
+        response.request().method() === 'PATCH',
+    )
+    await page.getByRole('button', { name: '保存用户' }).click()
+    expect((await conflictResponsePromise).status()).toBe(409)
+    await expect(page.getByRole('status')).toContainText('状态冲突')
+
+    await targetPage.goto(`/review-cases/${CASE_ID}`)
+    await expect(targetPage.getByRole('heading', { name: 'M5.4 Browser Manager Case' })).toBeVisible()
+    await addLeadMember(targetPage, MANAGER_DISPLAY_NAME, MANAGER_DISPLAY_NAME)
+
+    const disableUserPromise = page.waitForResponse(
+      (response) =>
+        apiPath(response.url()).includes('/api/v1/admin/users/') &&
+        response.request().method() === 'PATCH',
+    )
+    await page.getByRole('button', { name: '保存用户' }).click()
+    expect((await disableUserPromise).status()).toBe(200)
+    await expect(users.getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME })).toBeVisible()
+
+    await users.getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME }).getByRole('button', { name: '编辑' }).click()
+    await page.getByRole('checkbox', { name: '用户启用' }).check()
+    const enableUserPromise = page.waitForResponse(
+      (response) =>
+        apiPath(response.url()).includes('/api/v1/admin/users/') &&
+        response.request().method() === 'PATCH',
+    )
+    await page.getByRole('button', { name: '保存用户' }).click()
+    expect((await enableUserPromise).status()).toBe(200)
+
+    await page.getByLabel('目标用户').selectOption({ label: NEW_USER_DISPLAY_NAME })
+    await page.getByLabel('临时密码').fill(RESET_PASSWORD)
+    const resetResponsePromise = page.waitForResponse(
+      (response) =>
+        apiPath(response.url()).includes('/credential-reset') &&
+        response.request().method() === 'POST',
+    )
+    await page.getByRole('button', { name: '重置凭据' }).click()
+    expect((await resetResponsePromise).status()).toBe(200)
+    await expect(page.getByRole('status')).toContainText('临时凭据已重置')
+    await expect(page.getByLabel('临时密码')).toHaveValue('')
+
+    await targetPage.reload()
+    await expect(targetPage.getByRole('heading', { name: '登录' })).toBeVisible()
+    await submitLogin(targetPage, NEW_USER_LOGIN_NAME, RESET_PASSWORD)
+    await expect(targetPage.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
+    await submitPasswordChange(targetPage, RESET_PASSWORD, RESET_CHANGED_PASSWORD)
+    await expect(targetPage.getByRole('heading', { name: 'M5.4 Browser Manager Case' })).toBeVisible()
+  } finally {
+    await managerContext.close()
+    await targetContext.close()
+  }
+})

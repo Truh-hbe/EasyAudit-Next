@@ -4,7 +4,10 @@ from uuid import uuid4
 
 from pwdlib import PasswordHash
 
-from easyaudit_next.platform.application.authentication import AuthenticationService
+from easyaudit_next.platform.application.authentication import (
+    AuthenticationService,
+    LocalCredentialUnavailableError,
+)
 from easyaudit_next.platform.application.password_policy import validate_local_password
 from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.domain.ids import DepartmentId, PlatformAuditEventId, UserId
@@ -151,6 +154,56 @@ class PlatformAdministrationService:
             )
         )
         return updated
+
+    def reset_local_credential(
+        self,
+        actor: User,
+        user_id: UserId,
+        temporary_password: str,
+        *,
+        now: datetime | None = None,
+    ) -> User:
+        """Replace one local credential inside the request-owned transaction."""
+
+        self._require_system_admin(actor)
+        user = self._users.get(user_id)
+        if user is None or user.organization_id != actor.organization_id:
+            raise LookupError(f"User {user_id} does not exist")
+
+        self._validate_password(temporary_password)
+        current_time = now or datetime.now(UTC)
+        # The credential row is the serialization point shared by login and the
+        # self-service password-change flow. Hashing before the lock keeps the
+        # lock hold time small; all credential-dependent mutation follows it.
+        password_hash = self._password_hash.hash(temporary_password)
+        credential = self._credentials.lock_by_user_id(user.id)
+        if credential is None or credential.organization_id != user.organization_id:
+            raise LocalCredentialUnavailableError("Local credential is unavailable")
+
+        self._credentials.update_password_state(
+            replace(
+                credential,
+                password_hash=password_hash,
+                password_changed_at=current_time,
+                must_change_password=True,
+            )
+        )
+        self._sessions.revoke_user_sessions(
+            user.id,
+            actor_user_id=actor.id,
+            now=current_time,
+        )
+        self._audit.add(
+            PlatformAuditEvent(
+                id=PlatformAuditEventId(uuid4()),
+                organization_id=user.organization_id,
+                actor_user_id=actor.id,
+                target_user_id=user.id,
+                event_type="admin.user_credential_reset",
+                occurred_at=current_time,
+            )
+        )
+        return user
 
     def create_department(
         self,
