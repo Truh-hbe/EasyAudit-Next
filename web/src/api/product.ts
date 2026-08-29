@@ -111,6 +111,29 @@ export interface ReviewCatalogItemResponse {
   display_name: string
 }
 
+export interface ReviewPlanResponse {
+  id: string
+  organization_id: string
+  title: string
+  planned_start_at: string | null
+  planned_end_at: string | null
+  created_by: string
+}
+
+export interface ReviewPlanCreateInput {
+  title: string
+  planned_start_at?: string | null
+  planned_end_at?: string | null
+}
+
+export interface ReviewCaseCreateInput {
+  plan_id: string
+  scenario_key: string
+  scenario_version: number
+  title: string
+  scenario_data: Record<string, unknown>
+}
+
 export interface ReviewCaseCollectionResponse {
   items: ReviewCaseResponse[]
   total: number
@@ -310,6 +333,31 @@ export function getWorkbench(signal?: AbortSignal): Promise<WorkbenchResponse> {
 
 export function getReviewCatalog(signal?: AbortSignal): Promise<ReviewCatalogItemResponse[]> {
   return sessionApiRequest<ReviewCatalogItemResponse[]>('/api/v1/review-catalog', { signal })
+}
+
+export function createReviewPlan(input: ReviewPlanCreateInput): Promise<ReviewPlanResponse> {
+  return sessionApiRequest<ReviewPlanResponse>('/api/v1/review-plans', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export function listReviewPlans(signal?: AbortSignal): Promise<ReviewPlanResponse[]> {
+  return sessionApiRequest<ReviewPlanResponse[]>('/api/v1/review-plans', { signal })
+}
+
+export function getReviewPlan(planId: string, signal?: AbortSignal): Promise<ReviewPlanResponse> {
+  return sessionApiRequest<ReviewPlanResponse>(
+    `/api/v1/review-plans/${encodeURIComponent(planId)}`,
+    { signal },
+  )
+}
+
+export function createReviewCase(input: ReviewCaseCreateInput): Promise<ReviewCaseResponse> {
+  return sessionApiRequest<ReviewCaseResponse>('/api/v1/review-cases', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
 }
 
 export function listReviewCases(

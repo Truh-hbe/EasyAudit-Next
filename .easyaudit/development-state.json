@@ -3,37 +3,50 @@
   "active": true,
   "project": "EasyAudit-Next",
   "milestone": "M5",
-  "slice": "process-gate-evidence-hardening",
+  "slice": "M5.2-plan-first-creation-wizard",
   "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
-    "sha": "5887503a3d5ff84a98f5ad7d993a6c68687fd048"
+    "sha": "94435e2af6ca3bd86c666e5340c0f5ff1f44601e"
   },
-  "work_branch": "codex/process-gate-evidence-hardening",
+  "work_branch": "codex/m5-2-plan-first-creation-wizard",
   "pr": {
-    "number": 31
+    "number": 32
   },
   "gate_docs": [
-    "docs/architecture/process-gate-evidence-hardening.md"
+    "docs/architecture/m5-2-plan-first-creation-wizard.md",
+    "docs/architecture/m5-2-acceptance.md"
   ],
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/process-gate-evidence-hardening.md",
-      "docs/architecture/agent-development-workflow.md",
-      "scripts/easyaudit_gate.py",
-      "tests/tooling/test_easyaudit_gate.py"
+      "docs/architecture/m5-2-plan-first-creation-wizard.md",
+      "docs/architecture/m5-2-acceptance.md",
+      "web/src/api/product.ts",
+      "web/src/app/shell/ProductShell.tsx",
+      "web/src/features/reviewCases/ReviewCaseCollectionPage.tsx",
+      "web/src/features/reviewPlans/**",
+      "web/src/styles.css",
+      "web/src/final-polish.css",
+      "web/tests/browser/real-m5-2.spec.ts",
+      "web/tests/browser/seed_m5_2_real_acceptance.py",
+      "web/package.json",
+      "tests/integration/test_m5_2_plan_first_creation.py"
     ],
     "forbidden_paths": [
       "src/**",
-      "web/**",
       "alembic/**",
       ".github/workflows/**",
-      "tests/integration/**",
-      "tests/unit/**"
+      "web/src/scenarios/**",
+      "web/package-lock.json",
+      "tests/unit/**",
+      "web/src/app/auth/**",
+      "web/src/features/management/**",
+      "web/src/features/notifications/**",
+      "web/src/features/workbench/**"
     ]
   },
-  "fixed_head": "d0a936eb734f63465594c9a2861ebd788401d49c",
+  "fixed_head": "990b34977ef20d73270c78cd29ec6b12d6a806c6",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],

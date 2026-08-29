@@ -7,6 +7,8 @@ import { ManagementPage } from '../../features/management/ManagementPage'
 import { NotificationCenterPage } from '../../features/notifications/NotificationCenterPage'
 import { ReviewCaseCollectionPage } from '../../features/reviewCases/ReviewCaseCollectionPage'
 import { ReviewCaseDetailPage } from '../../features/reviewCases/ReviewCaseDetailPage'
+import { ReviewCaseCreatePage } from '../../features/reviewPlans/ReviewCaseCreatePage'
+import { ReviewPlanCreatePage } from '../../features/reviewPlans/ReviewPlanCreatePage'
 import { WorkbenchPage } from '../../features/workbench/WorkbenchPage'
 import { LogoutButton } from '../auth/LogoutButton'
 import { useSession } from '../auth/session'
@@ -54,6 +56,11 @@ export function ProductShell() {
           <Route path="/me/workbench" element={<WorkbenchPage />} />
           <Route path="/review-cases" element={<ReviewCaseCollectionPage />} />
           <Route path="/review-cases/:caseId" element={<ReviewCaseDetailPage />} />
+          <Route path="/review-plans/new" element={<ReviewPlanCreatePage />} />
+          <Route
+            path="/review-plans/:planId/review-cases/new"
+            element={<ReviewCaseCreatePage />}
+          />
           <Route path="/findings/:findingId" element={<FindingDetailPage />} />
           <Route path="/action-items/:actionItemId" element={<ActionItemDetailPage />} />
           <Route path="/me/notifications" element={<NotificationCenterPage />} />
