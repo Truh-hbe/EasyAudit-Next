@@ -1,23 +1,44 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
-  "milestone": null,
-  "slice": null,
-  "phase": "UNSET",
+  "milestone": "M5",
+  "slice": "M5.1",
+  "phase": "GATE_DRAFT",
   "base": {
     "branch": "main",
-    "sha": null
+    "sha": "90d5a1a6ba447d59f0941e85890c4eee8b00aee1"
   },
-  "work_branch": null,
+  "work_branch": "codex/m5-1-reviewplan-planning-gate",
   "pr": {
     "number": null
   },
-  "gate_docs": [],
+  "gate_docs": [
+    "docs/architecture/project-status.md",
+    "docs/architecture/m5-1-reviewplan-planning-gate.md",
+    "docs/architecture/m5-1-acceptance.md"
+  ],
   "scope": {
-    "allowed_paths": [],
-    "forbidden_paths": []
+    "allowed_paths": [
+      ".easyaudit/development-state.json",
+      "docs/architecture/project-status.md",
+      "docs/architecture/m5-1-reviewplan-planning-gate.md",
+      "docs/architecture/m5-1-acceptance.md",
+      "docs/architecture/roadmap.md"
+    ],
+    "forbidden_paths": [
+      "src/**",
+      "web/**",
+      "alembic/**",
+      "openapi/**",
+      "tests/**",
+      "scripts/**",
+      ".github/workflows/**",
+      ".c2c.json",
+      ".c2cignore",
+      ".easyaudit/toolchain.json"
+    ]
   },
   "fixed_head": null,
-  "next_allowed_action": "Define the next Architecture / Acceptance Gate before executable product work."
+  "next_allowed_action": "Architecture / Acceptance review"
 }
