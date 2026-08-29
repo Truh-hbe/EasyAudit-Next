@@ -81,7 +81,29 @@ response; authorization remains a forbidden response.
 
 ## Atomic removal and concurrency boundary
 
-The removal use case must execute in one request transaction:
+All four operations that can change the effective-manager relationship set must
+share one coarse but stable serialization root:
+
+```text
+create Case / creator membership
+add CaseMember
+remove CaseMember
+deactivate User
+```
+
+The existing Organization row lock is the coordination root. Each operation
+must acquire it before reading or changing manager-relevant facts. The common
+lock order is:
+
+```text
+Organization row
+  -> operation-specific Case rows in deterministic Case-ID order
+  -> relevant User rows in deterministic User-ID order
+  -> fresh exact-policy evaluation
+  -> mutation
+```
+
+The removal use case must then execute in one request transaction:
 
 1. lock the authoritative ReviewCase row for update;
 2. re-read current memberships and lock all relevant User rows in deterministic
@@ -115,14 +137,27 @@ second response may be HTTP 409 when the actor is still authorized but the
 requested deletion would remove the final manager, or HTTP 403 when the first
 committed deletion removed that actor's management authority.
 
-Because manager effectiveness includes account activity, the existing user
-deactivation service must participate in the same narrow lock protocol for
-affected Cases: lock affected Case rows in deterministic Case-ID order, then
-lock/reload relevant User rows, evaluate the post-deactivation manager set, and
-reject a deactivation that would leave any affected Case unmanaged. Removal and
-deactivation use the same Case-before-User order to avoid deadlocks. This is a
-small invariant-preserving service change only; no M5.4 administrator page is
-authorized here.
+Because manager effectiveness includes account activity, user deactivation must
+use the same Organization-rooted coordinator. The coordinator acquires the
+Organization lock before enumerating affected Cases, then locks affected Case
+rows and relevant User rows in the order above, evaluates the post-deactivation
+manager set, and rejects a deactivation that would leave any Case unmanaged.
+The same root prevents a concurrent create/add/remove from creating a phantom
+manager relationship after the affected-Case set was enumerated.
+
+The coordinator is a narrow application boundary above Platform and Review
+Core. `PlatformAdministrationService` remains Review-neutral: it continues to
+own platform authorization, user mutation, session revocation, platform audit
+and last-system-admin protection, but it must not import ReviewCase,
+CaseMember, ScenarioPolicy or `manage_case_members`. The coordinator invokes it
+only after its cross-domain invariant passes.
+
+If deactivation would violate the invariant, the coordinator returns a
+conflict before invoking the platform mutation. The User remains active, its
+sessions remain valid, no `admin.user_updated` audit event is written, and no
+Case Activity or membership is changed. No M5.4 administrator page is
+authorized here; only the existing service/API path receives this invariant
+guard.
 
 No migration, new persistence model, Case aggregate or general concurrency
 framework is authorized by this Gate. If implementation needs one, stop and
@@ -160,9 +195,10 @@ Implementation is limited to:
   removal;
 - the existing composition wiring if required;
 - the Case-scoped context/query presentation types if required;
-- the existing platform administration service and narrow User repository
-  locking capability only as required to serialize Case-manager
-  deactivation; no administrator UI is part of this slice;
+- a narrow cross-domain Case-team/User-deactivation coordinator, its
+  composition/API wiring, and the narrow Organization/Case/User locking
+  capabilities it needs; `PlatformAdministrationService` remains
+  Review-neutral and no administrator UI is part of this slice;
 - exact frontend Scenario role display definitions, Product API calls, the
   existing Case detail team panel and focused tests;
 - `openapi/openapi.json` as the committed API contract baseline;

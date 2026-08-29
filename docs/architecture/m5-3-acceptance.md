@@ -67,10 +67,22 @@ transaction creates no partial Activity. A deterministic ordering test must
 prove the explicit final-manager 409, and a genuine two-session race must
 assert the safety invariant rather than one universal status code.
 
-The same Case-before-User lock order is used by member removal and the existing
-user deactivation service. A concurrent removal and deactivation of managers
-must not commit a state with zero effective managers; the deactivation is
-rejected when it would violate the post-deactivation invariant.
+All four effective-manager-changing operations—Case creation, member add,
+member removal and User deactivation—must acquire the same Organization row
+lock before enumerating or changing manager relationships. They then use the
+deterministic Case-ID and User-ID lock order before exact-policy evaluation.
+This prevents an add/create operation from appearing after deactivation has
+enumerated affected Cases.
+
+A concurrent add-vs-deactivate, create-vs-deactivate and remove-vs-deactivate
+PostgreSQL test must prove that no committed ordering produces zero active
+effective managers. A deactivation that would violate the invariant returns
+HTTP 409 through the existing admin user PATCH path and atomically preserves:
+the User's active state, its existing sessions, the absence of an
+`admin.user_updated` PlatformAuditEvent, and all Case memberships/Activities.
+
+The cross-domain coordinator owns this check. `PlatformAdministrationService`
+must remain unaware of ReviewCase and Scenario business concepts.
 
 ## Frontend journey
 
@@ -97,6 +109,10 @@ The slice must include:
   last-manager protection;
 - PostgreSQL integration tests for multi-role post-delete evaluation,
   concurrent final-manager removal, and removal versus manager deactivation;
+- PostgreSQL/API concurrency tests for add-vs-deactivate and
+  create-vs-deactivate using the shared Organization lock;
+- atomic failed-deactivation assertions covering User state, sessions and
+  PlatformAudit;
 - regression coverage for explicit system-admin Case membership semantics;
 - `openapi/openapi.json` updates and API contract checks for the new GET and
   DELETE operations;
