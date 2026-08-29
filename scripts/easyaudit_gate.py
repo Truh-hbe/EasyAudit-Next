@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import subprocess
@@ -16,6 +17,14 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATE = ROOT / ".easyaudit" / "development-state.json"
 DEFAULT_OUTPUT = ROOT / ".easyaudit-review"
+DEFAULT_FINALIZATION_ALLOWED_PATHS = [".easyaudit/development-state.json"]
+BUNDLE_ARTIFACT_NAMES = (
+    "changed-files.txt",
+    "branch.diff",
+    "candidate.diff",
+    "control.diff",
+    "working-tree.diff",
+)
 VALID_PHASES = {
     "UNSET",
     "GATE_DRAFT",
@@ -57,6 +66,29 @@ def _git(*args: str, cwd: Path | None = None) -> str:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise GateError(f"git {' '.join(args)} failed: {detail}")
     return completed.stdout.strip()
+
+
+def _git_is_ancestor(ancestor: str, descendant: str) -> bool:
+    completed = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0
+
+
+def _state_fingerprint(path: Path) -> str | None:
+    try:
+        contents = path.read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(contents).hexdigest()
+
+
+def _bundle_path(path: Path) -> Path:
+    return path if path.is_absolute() else ROOT / path
 
 
 def _load_state(path: Path) -> dict[str, Any]:
@@ -171,6 +203,54 @@ def _evaluate_scope(
     candidate_heads = {evidence.head_sha, github_context.get("pr_head_sha")}
     fixed_head_matches = fixed_head in (None, "") or fixed_head in candidate_heads
 
+    phase = state.get("phase")
+    control_head = str(github_context.get("pr_head_sha") or evidence.head_sha)
+    candidate_head = control_head
+    fixed_head_exists = False
+    fixed_head_ancestor = False
+    fixed_head_resolved: str | None = None
+    finalization_allowed = [
+        str(item)
+        for item in state.get("finalization_allowed_paths")
+        or DEFAULT_FINALIZATION_ALLOWED_PATHS
+    ]
+    finalization_changed_files: list[str] = []
+    finalization_outside_allowed: list[str] = []
+
+    if phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"}:
+        if not fixed_head:
+            fixed_head_matches = False
+        else:
+            try:
+                fixed_head_resolved = _git(
+                    "rev-parse", "--verify", f"{fixed_head}^{{commit}}"
+                )
+            except GateError:
+                fixed_head_resolved = None
+            fixed_head_exists = fixed_head_resolved is not None
+            if fixed_head_exists:
+                fixed_head_ancestor = _git_is_ancestor(
+                    fixed_head_resolved, control_head
+                )
+                if fixed_head_ancestor:
+                    finalization_text = _git(
+                        "diff", "--name-only", f"{fixed_head_resolved}..{control_head}"
+                    )
+                    finalization_changed_files = [
+                        line for line in finalization_text.splitlines() if line
+                    ]
+                    finalization_outside_allowed = [
+                        path
+                        for path in finalization_changed_files
+                        if not _matches(path, finalization_allowed)
+                    ]
+            fixed_head_matches = (
+                fixed_head_exists
+                and fixed_head_ancestor
+                and not finalization_outside_allowed
+            )
+            candidate_head = fixed_head_resolved or control_head
+
     expected_branch = state.get("work_branch")
     candidate_branches = {evidence.branch, github_context.get("pr_head_ref")}
     branch_matches = (
@@ -187,10 +267,29 @@ def _evaluate_scope(
     if missing_gate_docs:
         violations.append(f"missing Gate documents: {', '.join(missing_gate_docs)}")
     if not fixed_head_matches:
-        violations.append(
-            f"candidate HEAD does not match fixed_head {fixed_head}; "
-            f"checkout={evidence.head_sha}, pr_head={github_context.get('pr_head_sha')}"
-        )
+        if phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"}:
+            if not fixed_head:
+                violations.append(
+                    f"{phase} requires a non-empty fixed_head; set it to the "
+                    "implementation-reviewed executable head"
+                )
+            elif not fixed_head_exists:
+                violations.append(f"fixed_head does not resolve to a commit: {fixed_head}")
+            elif not fixed_head_ancestor:
+                violations.append(
+                    f"fixed_head {fixed_head} is not an ancestor of candidate HEAD "
+                    f"{control_head}"
+                )
+            if finalization_outside_allowed:
+                violations.append(
+                    "non-finalization files changed after fixed_head: "
+                    + ", ".join(finalization_outside_allowed)
+                )
+        else:
+            violations.append(
+                f"candidate HEAD does not match fixed_head {fixed_head}; "
+                f"checkout={evidence.head_sha}, pr_head={github_context.get('pr_head_sha')}"
+            )
     if not branch_matches:
         violations.append(
             f"candidate branch does not match work_branch {expected_branch!r}; "
@@ -204,13 +303,24 @@ def _evaluate_scope(
         "outside_allowed": outside_allowed,
         "missing_gate_docs": missing_gate_docs,
         "fixed_head_matches": fixed_head_matches,
+        "fixed_head": fixed_head,
+        "fixed_head_resolved": fixed_head_resolved,
+        "fixed_head_exists": fixed_head_exists,
+        "fixed_head_ancestor": fixed_head_ancestor,
+        "candidate_head": candidate_head,
+        "control_head": control_head,
+        "finalization_allowed_paths": finalization_allowed,
+        "finalization_changed_files": finalization_changed_files,
+        "finalization_outside_allowed": finalization_outside_allowed,
         "branch_matches": branch_matches,
         "violations": violations,
         "pass": not violations,
     }
 
 
-def _proof(state: dict[str, Any], evidence: GitEvidence) -> dict[str, Any]:
+def _proof(
+    state: dict[str, Any], evidence: GitEvidence, state_path: Path | None = None
+) -> dict[str, Any]:
     active = bool(state.get("active"))
     github_context = _github_pr_context()
     scope_result = (
@@ -230,6 +340,9 @@ def _proof(state: dict[str, Any], evidence: GitEvidence) -> dict[str, Any]:
         "slice": state.get("slice"),
         "phase": state.get("phase"),
         "next_allowed_action": state.get("next_allowed_action"),
+        "state_fingerprint": _state_fingerprint(
+            _bundle_path(state_path or DEFAULT_STATE)
+        ),
         "git": {
             "base_ref": evidence.base_ref,
             "merge_base": evidence.merge_base,
@@ -248,6 +361,17 @@ def _proof(state: dict[str, Any], evidence: GitEvidence) -> dict[str, Any]:
             **github_context,
         },
         "scope": scope_result,
+        "evidence_refs": {
+            "candidate": {
+                "base": evidence.base_ref,
+                "head": scope_result.get("candidate_head", evidence.head_sha),
+            },
+            "control": {
+                "base": scope_result.get("fixed_head_resolved"),
+                "head": scope_result.get("control_head", evidence.head_sha),
+            },
+            "working_tree": {"base": evidence.head_sha, "head": "WORKTREE"},
+        },
         "authority": {
             "c2c_execution_records_are_final_ci": False,
             "github_actions_is_final_ci_authority": True,
@@ -256,30 +380,134 @@ def _proof(state: dict[str, Any], evidence: GitEvidence) -> dict[str, Any]:
     }
 
 
-def _write_bundle(output: Path, state: dict[str, Any], evidence: GitEvidence) -> Path:
+def _write_bundle(
+    output: Path,
+    state: dict[str, Any],
+    evidence: GitEvidence,
+    state_path: Path | None = None,
+) -> Path:
+    output = _bundle_path(output)
     output.mkdir(parents=True, exist_ok=True)
-    proof = _proof(state, evidence)
+    proof = _proof(state, evidence, state_path)
+    artifacts = _bundle_artifacts(evidence, proof)
+    # Write every evidence artifact before gate-proof.json. The proof is the
+    # completion marker, so an interrupted generation cannot leave a fresh
+    # proof beside an older diff and still look like a complete bundle.
+    for name, contents in artifacts.items():
+        (output / name).write_text(contents, encoding="utf-8")
     (output / "gate-proof.json").write_text(
         json.dumps(proof, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    (output / "changed-files.txt").write_text(
-        "".join(f"{path}\n" for path in evidence.changed_files),
-        encoding="utf-8",
-    )
+    return output
+
+
+def _bundle_artifacts(
+    evidence: GitEvidence, proof: dict[str, Any]
+) -> dict[str, str]:
+    """Build the canonical non-proof artifacts for the current evidence."""
+
     committed_diff = _git(
         "diff", "--no-ext-diff", "--no-color", f"{evidence.base_ref}...HEAD"
     )
-    (output / "branch.diff").write_text(
-        committed_diff + ("\n" if committed_diff else ""),
-        encoding="utf-8",
-    )
     working_diff = _git("diff", "--no-ext-diff", "--no-color", "HEAD")
-    (output / "working-tree.diff").write_text(
-        working_diff + ("\n" if working_diff else ""),
-        encoding="utf-8",
+    scope = proof["scope"]
+    candidate_head = str(scope.get("candidate_head") or evidence.head_sha)
+    candidate_diff = _git(
+        "diff", "--no-ext-diff", "--no-color", f"{evidence.base_ref}...{candidate_head}"
     )
-    return output
+    fixed_head = scope.get("fixed_head_resolved")
+    control_head = str(scope.get("control_head") or evidence.head_sha)
+    control_diff = ""
+    if fixed_head:
+        control_diff = _git(
+            "diff", "--no-ext-diff", "--no-color", f"{fixed_head}..{control_head}"
+        )
+    return {
+        "changed-files.txt": "".join(f"{path}\n" for path in evidence.changed_files),
+        "branch.diff": committed_diff + ("\n" if committed_diff else ""),
+        "candidate.diff": candidate_diff + ("\n" if candidate_diff else ""),
+        "control.diff": control_diff + ("\n" if control_diff else ""),
+        "working-tree.diff": working_diff + ("\n" if working_diff else ""),
+    }
+
+
+def _validate_bundle(
+    output: Path,
+    state: dict[str, Any],
+    state_path: Path,
+    evidence: GitEvidence,
+    current_proof: dict[str, Any],
+) -> list[str]:
+    output = _bundle_path(output)
+    bundle_path = output / "gate-proof.json"
+    if not bundle_path.is_file():
+        return [f"Review Bundle is missing: {bundle_path.parent}"]
+
+    try:
+        bundle_proof = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"Review Bundle gate-proof.json is unreadable: {exc}"]
+
+    violations: list[str] = []
+    if bundle_proof != current_proof:
+        violations.append(
+            "Review Bundle gate-proof.json does not match current Git/state evidence"
+        )
+    bundle_git = bundle_proof.get("git") or {}
+    current_git = current_proof["git"]
+    if bundle_proof.get("schema_version") != 1:
+        violations.append("Review Bundle has an unsupported schema_version")
+    if bundle_proof.get("state_fingerprint") != _state_fingerprint(
+        _bundle_path(state_path)
+    ):
+        violations.append("Review Bundle does not match the current development state")
+    if bundle_git.get("head_sha") != current_git["head_sha"]:
+        violations.append("Review Bundle does not match the current HEAD")
+    if bundle_git.get("head_tree") != current_git["head_tree"]:
+        violations.append("Review Bundle does not match the current HEAD tree")
+    if bundle_git.get("base_ref") != current_git["base_ref"]:
+        violations.append("Review Bundle does not match the current base ref")
+    if bundle_git.get("branch") != current_git["branch"]:
+        violations.append("Review Bundle does not match the current branch")
+    if bundle_git.get("changed_files") != current_git["changed_files"]:
+        violations.append("Review Bundle changed-files evidence is stale")
+    if bundle_git.get("working_tree_clean") != current_git["working_tree_clean"]:
+        violations.append("Review Bundle working-tree status is stale")
+    if bundle_proof.get("phase") != state.get("phase"):
+        violations.append("Review Bundle does not match the current Gate phase")
+    if bundle_proof.get("evidence_refs") != current_proof.get("evidence_refs"):
+        violations.append("Review Bundle evidence refs are stale")
+    bundle_scope = bundle_proof.get("scope") or {}
+    current_scope = current_proof["scope"]
+    if bundle_scope.get("candidate_head") != current_scope.get("candidate_head"):
+        violations.append("Review Bundle does not match the fixed candidate head")
+    if bundle_scope.get("control_head") != current_scope.get("control_head"):
+        violations.append("Review Bundle does not match the control HEAD")
+    if not bundle_scope.get("pass"):
+        violations.append("Review Bundle contains a failing Gate scope proof")
+    if not current_proof["scope"].get("pass"):
+        violations.append("current Gate scope is failing")
+    try:
+        expected_artifacts = _bundle_artifacts(evidence, current_proof)
+    except GateError as exc:
+        violations.append(f"could not rebuild canonical Review Bundle artifacts: {exc}")
+    else:
+        for name in BUNDLE_ARTIFACT_NAMES:
+            artifact_path = output / name
+            if not artifact_path.is_file():
+                violations.append(f"Review Bundle is missing artifact: {artifact_path}")
+                continue
+            try:
+                actual = artifact_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                violations.append(f"Review Bundle artifact is unreadable ({name}): {exc}")
+                continue
+            if actual != expected_artifacts[name]:
+                violations.append(
+                    f"Review Bundle artifact is stale or modified: {name}"
+                )
+    return violations
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -293,6 +521,17 @@ def _parser() -> argparse.ArgumentParser:
         "--require-clean",
         action="store_true",
         help="also fail when the working tree is dirty",
+    )
+    check.add_argument(
+        "--require-bundle",
+        action="store_true",
+        help="also fail when the Review Bundle is missing or stale",
+    )
+    check.add_argument(
+        "--bundle-output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help="Review Bundle directory to validate",
     )
 
     bundle = subparsers.add_parser("bundle", help="generate the C2C review bundle")
@@ -310,16 +549,25 @@ def main(argv: list[str] | None = None) -> int:
 
         base_ref = _resolve_base(state, args.base)
         evidence = _collect_git_evidence(base_ref)
-        proof = _proof(state, evidence)
+        proof = _proof(state, evidence, args.state)
 
         if args.command == "bundle":
-            output = _write_bundle(args.output, state, evidence)
+            output = _write_bundle(
+                output=args.output,
+                state=state,
+                evidence=evidence,
+                state_path=args.state,
+            )
             print(str(output))
             return 0 if proof["scope"]["pass"] else 2
 
         violations = list(proof["scope"]["violations"])
         if args.require_clean and not evidence.working_tree_clean:
             violations.append("working tree is not clean")
+        if args.require_bundle:
+            violations.extend(
+                _validate_bundle(args.bundle_output, state, args.state, evidence, proof)
+            )
         result = {
             "active": True,
             "phase": state.get("phase"),

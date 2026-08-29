@@ -3,52 +3,39 @@
   "active": true,
   "project": "EasyAudit-Next",
   "milestone": "M5",
-  "slice": "M5.1",
-  "phase": "FINAL_REVIEW",
+  "slice": "process-gate-evidence-hardening",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
-    "sha": "90d5a1a6ba447d59f0941e85890c4eee8b00aee1"
+    "sha": "5887503a3d5ff84a98f5ad7d993a6c68687fd048"
   },
-  "work_branch": "codex/m5-1-review-catalog-scenario-readiness",
+  "work_branch": "codex/process-gate-evidence-hardening",
   "pr": {
-    "number": 30
+    "number": 31
   },
   "gate_docs": [
-    "docs/architecture/m5-0-controlled-pilot-charter.md",
-    "docs/architecture/m5-1-review-catalog-scenario-readiness.md",
-    "docs/architecture/m5-1-acceptance.md"
+    "docs/architecture/process-gate-evidence-hardening.md"
   ],
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/m5-0-controlled-pilot-charter.md",
-      "docs/architecture/m5-1-*.md",
-      "src/easyaudit_next/cli.py",
-      "src/easyaudit_next/composition.py",
-      "src/easyaudit_next/api/review_contracts.py",
-      "src/easyaudit_next/api/review_planning.py",
-      "src/easyaudit_next/review_case_queries/**",
-      "tests/unit/**",
-      "tests/api/**",
-      "tests/integration/**",
-      "openapi/openapi.json",
-      "web/src/api/product.ts",
-      "web/src/scenarios/**"
+      "docs/architecture/process-gate-evidence-hardening.md",
+      "docs/architecture/agent-development-workflow.md",
+      "scripts/easyaudit_gate.py",
+      "tests/tooling/test_easyaudit_gate.py"
     ],
     "forbidden_paths": [
+      "src/**",
+      "web/**",
       "alembic/**",
-      "src/easyaudit_next/review_core/persistence/models.py",
-      "src/easyaudit_next/platform/**",
-      "src/easyaudit_next/review_core/application/review_planning.py",
-      "src/easyaudit_next/review_core/domain/**",
-      "web/src/app/**",
-      "web/src/features/**",
-      "web/package.json",
-      "**/package.json",
-      "**/package-lock.json",
-      ".github/workflows/**"
+      ".github/workflows/**",
+      "tests/integration/**",
+      "tests/unit/**"
     ]
   },
-  "fixed_head": null,
-  "next_allowed_action": "ChatGPT M5.1 final review"
+  "fixed_head": "d0a936eb734f63465594c9a2861ebd788401d49c",
+  "finalization_allowed_paths": [
+    ".easyaudit/development-state.json"
+  ],
+  "next_allowed_action": "Merge"
 }
