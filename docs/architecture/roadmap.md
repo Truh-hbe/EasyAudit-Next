@@ -1,11 +1,12 @@
 # 实施路线
 
-This roadmap is rebaselined after M4 Second Scenario Validation completion.
+This roadmap is rebaselined after the M5 controlled-pilot hardening and the
+process Gate finalization PRs.
 
 Current baseline:
 
 ```text
-main@27e750c4901c8abd81b6a55703cd664c237e057e
+main@e643a3f43032908d8a0c59d2f6819ae42d38504a
 ```
 
 ## Completed — M0 Bootstrap
@@ -88,13 +89,71 @@ M4.1 also exposed and closed the narrow generic direct-Finding-transition abstra
 
 M4 was intentionally not pre-numbered beyond M4.1. Because the merged M4.1 executable implementation satisfied the complete frozen M4 acceptance objective, no artificial `M4.2` is required solely for numbering continuity.
 
-## Next — Separate post-M4 Architecture / Acceptance Gate
+## Completed — M5 Controlled Pilot
 
-The post-M4 milestone is intentionally not named or given executable scope by the M4 finalization PR.
+M5.1–M5.4 delivered the controlled-pilot product capabilities while
+preserving backend authority, exact Scenario policy and organization
+isolation:
 
-The next product/platform objective must be selected through a separate Architecture / Acceptance Gate based on the highest-value remaining problem after M4 completion.
+```text
+M5.1  Review Catalog and Scenario Readiness
+M5.2  Plan-first Planning Surface
+M5.3  Case Team Planning
+M5.4  Minimal Pilot Administration
+```
 
-No executable post-M4 work is authorized merely by this roadmap rebaseline.
+M5.1 established the exact catalog/publication readiness; M5.2 delivered the
+plan-first planning surface and creation checkpoint; M5.3 delivered Case team
+planning and collaboration administration; and M5.4 delivered minimal pilot
+administration and credential recovery. M5.5 then hardened the integrated
+pilot evidence. Its real PostgreSQL/API/React proof covers clean bootstrap and
+exact publication, both `process_review@1` and `compliance_review@1`, plan-first
+recovery, team safety, organization isolation and administrator credential
+reset. M5.5 is complete as a controlled-pilot evidence slice; it does not
+claim production deployment, binary Evidence storage, recurring scheduling or
+export.
+
+## Next — M6 Controlled Pilot Rollout Readiness v2
+
+M6.0 freezes the bounded rollout plan through a separate docs-only
+Architecture / Acceptance Gate. The fixed order and dependencies are:
+
+```text
+M6.1  no-traffic private infrastructure + joint backup/restore
+  -> M6.2  Plan/Case idempotency + unknown-result recovery
+  -> M6.3  Evidence binary upload + authorized download
+  -> M6.4  daily 09:00 Asia/Shanghai one-shot reminder
+  -> M6.5  authorized snapshot CSV/XLSX export (max 10,000 rows)
+  -> M6 Pre-rollout Readiness
+  -> explicit user authorization for bounded rollout
+  -> bounded controlled rollout
+  -> five-day soak
+  -> M6 Program Final Review
+```
+
+M6.1 is a no-traffic infrastructure Gate with PostgreSQL, private
+S3-compatible storage, fixed image digest, configuration/secret references,
+a jointly verifiable recovery-set manifest and RPO/RTO evidence; it does not
+add Evidence application APIs. M6.2 owns only the bounded Plan/Case create
+convergence contract. M6.3 owns the server-controlled binary/hash/download
+boundary and keeps pilot Evidence immutable and non-deletable by end users.
+M6.4 reuses the scheduler-neutral one-shot sweep; the scheduler adapter owns
+the daily clock and occurrence key, while exact Scenario recipient semantics
+and zero Review Activity remain unchanged. It makes no infrastructure
+exactly-once claim. M6.5 produces an authorization-checked, all-or-nothing
+snapshot rather than a new reporting model; more than 10,000 authorized rows
+must fail as one request and require narrower filters.
+
+The pilot envelope is one organization, two departments, 10–20 users and
+10–30 Cases, accessed only through an approved private network with
+organization-trusted HTTPS. Both exact Scenario versions must be exercised.
+Retention expiry, deletion, legal hold, backup-media erasure, external
+sharing, public access and unrelated product expansion remain separately
+deferred.
+
+Every M6 slice requires its own Gate, scope, implementation review, exact-head
+GitHub evidence and final review. This roadmap records dependencies only; it
+does not authorize implementation, deployment or real traffic by itself.
 
 ## Deferred / non-goals
 
