@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.0-controlled-pilot-rollout-readiness-v2",
-  "phase": "MERGE_AUTHORIZED",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
-    "sha": "e643a3f43032908d8a0c59d2f6819ae42d38504a"
+    "sha": "0d2a0408e0a80202c746ab92a8d8497babcff8cf"
   },
-  "work_branch": "codex/m6-v2-gate-draft",
+  "work_branch": null,
   "pr": {
     "number": 38
   },
@@ -36,10 +36,10 @@
       "deploy/**"
     ]
   },
-  "fixed_head": null,
+  "fixed_head": "47967a55c392ba74614c8cf12e2a60a500955046",
   "docs_review_head": "ea912a5c00dc386a79b7813feb637be3aace7769",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge PR #38 with expected-head protection; do not delete the source branch; then close state as MERGED"
+  "next_allowed_action": "Create and review a new Gate before further implementation"
 }
