@@ -4,9 +4,10 @@
 
 This is an independent process-hardening Gate Draft. It defines how a
 documentation-only milestone can be reviewed and finalized without weakening
-the executable `fixed_head` protocol. The current candidate is deliberately
-documentation-only: it changes state and process documents, but does not yet
-change the validator or its tests.
+the executable `fixed_head` protocol. The current diff is a
+documentation-only Gate Draft, while this process slice's state correctly
+keeps `candidate_kind: executable`; it changes state and process documents,
+but does not yet change the validator or its tests.
 
 The candidate is based exactly on:
 
@@ -57,12 +58,15 @@ invariants in the validator, regardless of the milestone's `allowed_paths`:
   candidate is represented by `active=false` after the merge, so it cannot
   bypass the reviewed-head check.
 
-The validator must reject executable content even if a state attempts to put
-it in `allowed_paths`. At minimum, the invariant covers source, scripts,
-tests, CI workflows, OpenAPI, migrations, frontend, container and deployment
-paths (`src/**`, `scripts/**`, `tests/**`, `.github/workflows/**`, `openapi/**`,
-`alembic/**`, `web/**`, `Dockerfile*`, `compose*` and `deploy/**`). The rule is
-process-owned and cannot be weakened by an individual milestone Gate.
+The validator must apply a process-owned positive allowlist to the complete
+`BASE...control_head` change set. For a docs-only candidate, every changed
+path must be either `.easyaudit/development-state.json` or under `docs/**`.
+The milestone's `scope.allowed_paths` must be a subset of that allowlist and
+must not expand it. `finalization_allowed_paths` must be a subset of the
+single state path. Any source, script, test, CI, OpenAPI, migration, frontend,
+container, deployment or other non-document path therefore fails even when a
+milestone explicitly lists it as allowed. The process-owned allowlist may only
+be expanded by a separately reviewed executable process Gate.
 
 For a GitHub pull request, the control head is the actual PR head from the
 event payload. A synthetic merge commit must not replace the candidate or
@@ -119,8 +123,10 @@ The next phase must add focused tests for:
   by a state-only control commit;
 - missing, malformed and non-ancestor `docs_review_head` rejection;
 - executable changes after `docs_review_head` rejection;
-- rejection when `allowed_paths` tries to include source, scripts, tests, CI,
-  migrations, frontend, container or deployment paths;
+- rejection when `allowed_paths` tries to include any path outside the
+  process-owned `.easyaudit/development-state.json` / `docs/**` allowlist,
+  including source, scripts, tests, CI, migrations, frontend, container or
+  deployment paths;
 - docs-only rejection of `fixed_head`, `IMPLEMENTATION`, `FINAL_REVIEW` and an
   active `MERGED` state;
 - docs-only `MERGE_AUTHORIZED` acceptance using the reviewed document head; and

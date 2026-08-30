@@ -8,12 +8,14 @@ This Gate Draft is based on:
 main@b4b74f4b4dd0ca46ee19d187c49d3f95de3eae42
 ~~~
 
-The current candidate is a docs-only Gate Draft. Its changed files must be
-limited to the active state, the two process documents named by the state and
-the necessary workflow documentation. It must not include validator code,
-tooling tests, product source, migrations, OpenAPI, frontend, CI, container or
+The current diff is a documentation-only Gate Draft; the process slice's
+machine candidate kind remains `executable`. Its changed files must be limited
+to the active state, the two process documents named by the state and the
+necessary workflow documentation. It must not include validator code, tooling
+tests, product source, migrations, OpenAPI, frontend, CI, container or
 deployment files. Those changes require a later `IMPLEMENTATION` phase after
-this Draft is independently reviewed.
+this Draft is independently reviewed. This current documentation-only diff
+must not be confused with the future `candidate_kind: docs-only` behavior.
 
 ## Architecture / Acceptance Review criteria
 
@@ -21,8 +23,9 @@ Review must confirm that the proposed process change:
 
 - distinguishes executable `fixed_head` from docs-only `docs_review_head`;
 - preserves the existing executable lifecycle and finalization-only rule;
-- makes docs-only path restrictions process-owned rather than dependent on a
-  milestone's self-declared scope;
+- makes docs-only path restrictions process-owned through a positive allowlist
+  of `.easyaudit/development-state.json` and `docs/**`, rather than dependent
+  on a milestone's self-declared scope;
 - rejects active docs-only `MERGED` and requires `active=false` after merge;
 - uses the actual PR head as control identity, not a synthetic merge commit;
 - separates candidate, control and working-tree evidence in the Bundle; and
@@ -43,12 +46,18 @@ implementation must then preserve executable behavior:
 For `candidate_kind: docs-only`, the validator must require:
 
 - null/empty `fixed_head`;
+- every path in the complete `BASE...control_head` change set is in the
+  process-owned `.easyaudit/development-state.json` / `docs/**` allowlist;
+- state `allowed_paths` is a subset of that process-owned allowlist;
+- `finalization_allowed_paths` is a subset of the single state path;
 - no `docs_review_head` in `GATE_DRAFT`;
 - a non-empty, resolvable ancestor `docs_review_head` in `GATE_REVIEW` and
   `MERGE_AUTHORIZED`;
 - finalization-only changes after the reviewed head;
 - rejection of `IMPLEMENTATION`, `FINAL_REVIEW` and active `MERGED`;
-- rejection of executable paths even when a state lists them as allowed; and
+- rejection of any non-document path even when a state lists it as allowed;
+  the test must include paths not present in an old denylist, such as
+  `pyproject.toml` and `.github/actions/example/action.yml`; and
 - candidate/control Bundle refs based on the reviewed document head and the
   actual PR head respectively.
 
@@ -99,4 +108,5 @@ Go for this Gate Draft requires exact docs-only scope, a clean working tree,
 passing local Gate checks, a current Bundle and an independent Review that
 accepts the proposed invariants. It does not mean the validator implementation
 is complete. Any ambiguity between `fixed_head` and `docs_review_head`, any
-scope escape, or any implied product/merge authorization is No-Go.
+scope escape, any attempt to expand the process-owned allowlist from a
+milestone, or any implied product/merge authorization is No-Go.

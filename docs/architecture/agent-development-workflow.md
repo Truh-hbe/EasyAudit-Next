@@ -96,9 +96,11 @@ contract above. A docs-only candidate has no executable fixed head and instead
 uses `docs_review_head` after its document candidate has been reviewed.
 
 The docs-only exception is process-owned and must not be created merely by
-adding executable paths to a milestone's `allowed_paths`. The validator
-implementation must reject source, scripts, tests, CI, OpenAPI, migrations,
-frontend, container and deployment paths for a docs-only candidate, reject
+adding paths to a milestone's `allowed_paths`. The validator implementation
+must require that the complete docs-only change set is a subset of the
+process-owned positive allowlist `.easyaudit/development-state.json` and
+`docs/**`; the milestone scope may only narrow that set. It must also require
+that finalization paths remain a subset of the state file, reject
 `IMPLEMENTATION` and `FINAL_REVIEW`, and reject an active `MERGED` state. A
 merged docs-only state is closed with `active=false`.
 
