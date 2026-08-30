@@ -11,7 +11,7 @@
   },
   "work_branch": "codex/m6-v2-gate-draft",
   "pr": {
-    "number": null
+    "number": 38
   },
   "gate_docs": [
     "docs/architecture/m6-0-controlled-pilot-rollout-readiness.md",
@@ -41,5 +41,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Complete M6.0 Gate review with exact-head evidence; no implementation authorization"
+  "next_allowed_action": "Verify PR #38 exact-head CI and complete M6.0 docs-only final review; no implementation authorization"
 }
