@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "docs-only-gate-finalization",
-  "phase": "GATE_DRAFT",
+  "phase": "GATE_REVIEW",
   "base": {
     "branch": "main",
     "sha": "b4b74f4b4dd0ca46ee19d187c49d3f95de3eae42"
@@ -40,5 +40,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Architecture / Acceptance review for the process-hardening Gate"
+  "next_allowed_action": "Independent Gate Review decision for the process-hardening Gate"
 }
