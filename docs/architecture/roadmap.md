@@ -96,18 +96,22 @@ preserving backend authority, exact Scenario policy and organization
 isolation:
 
 ```text
-M5.1  plan-first planning surface
-M5.2  plan-first creation wizard and retry checkpoint
-M5.3  Case team and collaboration administration
-M5.4  minimal pilot administration and credential recovery
+M5.1  Review Catalog and Scenario Readiness
+M5.2  Plan-first Planning Surface
+M5.3  Case Team Planning
+M5.4  Minimal Pilot Administration
 ```
 
-M5.5 then hardened the integrated pilot evidence. Its real PostgreSQL/API/
-React proof covers clean bootstrap and exact publication, both
-`process_review@1` and `compliance_review@1`, plan-first recovery, team safety,
-organization isolation and administrator credential reset. M5.5 is complete
-as a controlled-pilot evidence slice; it does not claim production deployment,
-binary Evidence storage, recurring scheduling or export.
+M5.1 established the exact catalog/publication readiness; M5.2 delivered the
+plan-first planning surface and creation checkpoint; M5.3 delivered Case team
+planning and collaboration administration; and M5.4 delivered minimal pilot
+administration and credential recovery. M5.5 then hardened the integrated
+pilot evidence. Its real PostgreSQL/API/React proof covers clean bootstrap and
+exact publication, both `process_review@1` and `compliance_review@1`, plan-first
+recovery, team safety, organization isolation and administrator credential
+reset. M5.5 is complete as a controlled-pilot evidence slice; it does not
+claim production deployment, binary Evidence storage, recurring scheduling or
+export.
 
 ## Next — M6 Controlled Pilot Rollout Readiness v2
 
@@ -115,26 +119,30 @@ M6.0 freezes the bounded rollout plan through a separate docs-only
 Architecture / Acceptance Gate. The fixed order and dependencies are:
 
 ```text
-M6.1  no-traffic private infrastructure + backup/restore
+M6.1  no-traffic private infrastructure + joint backup/restore
   -> M6.2  Plan/Case idempotency + unknown-result recovery
   -> M6.3  Evidence binary upload + authorized download
   -> M6.4  daily 09:00 Asia/Shanghai one-shot reminder
   -> M6.5  authorized snapshot CSV/XLSX export (max 10,000 rows)
-  -> M6 Final Readiness
+  -> M6 Pre-rollout Readiness
+  -> explicit user authorization for bounded rollout
   -> bounded controlled rollout
   -> five-day soak
-  -> Final Review
+  -> M6 Program Final Review
 ```
 
 M6.1 is a no-traffic infrastructure Gate with PostgreSQL, private
-S3-compatible storage, fixed image digest, configuration/secret references
-and RPO/RTO evidence; it does not add Evidence application APIs. M6.2 owns
-only the bounded Plan/Case create convergence contract. M6.3 owns the server-
-controlled binary/hash/download boundary and keeps pilot Evidence immutable
-and non-deletable by end users. M6.4 reuses the scheduler-neutral one-shot
-sweep and occurrence-key deduplication without claiming infrastructure
-exactly-once delivery. M6.5 produces an authorization-checked, bounded
-snapshot rather than a new reporting model.
+S3-compatible storage, fixed image digest, configuration/secret references,
+a jointly verifiable recovery-set manifest and RPO/RTO evidence; it does not
+add Evidence application APIs. M6.2 owns only the bounded Plan/Case create
+convergence contract. M6.3 owns the server-controlled binary/hash/download
+boundary and keeps pilot Evidence immutable and non-deletable by end users.
+M6.4 reuses the scheduler-neutral one-shot sweep; the scheduler adapter owns
+the daily clock and occurrence key, while exact Scenario recipient semantics
+and zero Review Activity remain unchanged. It makes no infrastructure
+exactly-once claim. M6.5 produces an authorization-checked, all-or-nothing
+snapshot rather than a new reporting model; more than 10,000 authorized rows
+must fail as one request and require narrower filters.
 
 The pilot envelope is one organization, two departments, 10–20 users and
 10–30 Cases, accessed only through an approved private network with

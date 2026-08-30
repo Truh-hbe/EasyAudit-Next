@@ -50,10 +50,12 @@ reopens it:
 - HTTPS uses a certificate chain trusted by the organization; and
 - the service is not opened to the public Internet.
 
-The pilot is not a production launch. It must have an explicit operator,
-rollback boundary and evidence retention decision in the later Final
-Readiness Gate. No M6 slice may infer public access, unrestricted tenancy,
-automatic retention deletion or an external sharing capability.
+The pilot is not a production launch. The Pre-rollout Readiness review must
+record an explicit operator, rollback boundary, monitoring plan, stop
+conditions and a retention decision before any rollout authorization. That
+retention decision is a pilot policy record; it does not authorize automatic
+retention deletion. No M6 slice may infer public access, unrestricted
+tenancy, automatic retention deletion or an external sharing capability.
 
 ## Ordered M6 v2 slices
 
@@ -74,7 +76,14 @@ RTO <= 4 hours
 
 M6.1 does not add Evidence upload/download APIs, change authorization or
 expose the service to real pilot traffic. Secrets must remain outside Git and
-outside Review Bundle contents.
+outside Review Bundle contents. Its recovery evidence must use one jointly
+verifiable recovery set, not unrelated database and object-store restores.
+The set must have a manifest linking the PostgreSQL backup identity and point
+in time, object-store snapshot/version or object manifest, application image
+digest, configuration revision, secret-reference identifiers (never secret
+values), restore order and compatibility checks. M6.1 may use a controlled
+infrastructure fixture to validate object recovery; M6.3 must separately
+prove application-level database/object compensation with real Evidence.
 
 ### M6.2 — Plan/Case creation idempotency and unknown-result recovery
 
@@ -101,11 +110,16 @@ external sharing are separate future decisions and are not included in M6.3.
 
 ### M6.4 — Daily 09:00 Asia/Shanghai in-app reminder
 
-Reuse the existing scheduler-neutral one-shot sweep. The scheduler only
-triggers a one-shot invocation; business logic derives the local date and
-uses an occurrence key to deduplicate repeated invocations. The design must
-not claim infrastructure-level “exactly once” delivery. Closed, inactive or
-otherwise ineligible targets must not receive a reminder.
+Reuse the existing scheduler-neutral one-shot sweep. The scheduler adapter or
+one-shot entrypoint owns the `09:00 Asia/Shanghai` cadence, an explicit clock
+input and the local-date occurrence key; the existing sweep/evaluator remains
+scheduler-neutral. The recipient is selected by the exact-version Scenario's
+collaboration-recipient resolver, not inferred from a permission set. A
+repeated occurrence creates no duplicate Notification and automatic reminders
+always create zero Review Activity; Notification delivery rows are the
+reminder history. The design must not claim infrastructure-level “exactly
+once” delivery. Closed, inactive or otherwise ineligible targets must not
+receive a reminder.
 
 ### M6.5 — Authorized snapshot CSV/XLSX export
 
@@ -118,14 +132,18 @@ The export is a snapshot, not a live query stream, and does not authorize
 cross-organization export, arbitrary background jobs or a new reporting
 model.
 
-### M6 Final Readiness — controlled rollout and soak
+### M6 Pre-rollout Readiness, rollout and Program Final Review
 
-After M6.1–M6.5 have independently passed their Gates, a Final Readiness Gate
-must combine the fixed image digest, two Evidence-capable Scenario journeys,
-recovery rehearsal, authorized export, rollback evidence and a five-day
-controlled-pilot soak. Only that Gate may authorize the bounded pilot rollout.
-It must define the operator, approved access path, monitoring evidence,
-rollback trigger and stop conditions before real pilot traffic begins.
+After M6.1–M6.5 have independently passed their Gates, a Pre-rollout
+Readiness review must verify the fixed image digest, private access/TLS,
+joint recovery evidence, Evidence preflight, authorized export, operator,
+monitoring, rollback trigger, stop conditions and the pilot retention
+decision. It must not include or imply real pilot traffic. A user must then
+explicitly authorize the bounded controlled rollout. Only after that
+authorization may the five-day soak run; the soak, five actual reminder
+schedule points and runtime events belong to the subsequent M6 Program Final
+Review. This ordering prevents a readiness Gate from depending on traffic it
+is supposed to authorize.
 
 ## Cross-slice invariants
 
