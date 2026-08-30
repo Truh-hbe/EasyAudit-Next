@@ -498,6 +498,350 @@ def test_load_state_rejects_unknown_phase(tmp_path: Path) -> None:
         gate._load_state(state_path)
 
 
+def test_load_state_rejects_unknown_candidate_kind(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "phase": "GATE_DRAFT",
+                "candidate_kind": "not-a-kind",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(gate.GateError, match="unsupported candidate kind"):
+        gate._load_state(state_path)
+
+
+def _docs_only_state(
+    phase: str = "GATE_REVIEW",
+    docs_review_head: str | None = "candidate-sha",
+    fixed_head: str | None = None,
+    allowed_paths: list[str] | None = None,
+    finalization_allowed_paths: list[str] | None = None,
+    work_branch: str | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "active": True,
+        "project": "EasyAudit-Next",
+        "milestone": "PROCESS",
+        "slice": "docs-only-gate-finalization",
+        "phase": phase,
+        "candidate_kind": "docs-only",
+        "scope": {
+            "allowed_paths": allowed_paths
+            or [gate.DOCS_ONLY_STATE_PATH, "docs/**"],
+            "forbidden_paths": [],
+        },
+        "gate_docs": [],
+        "fixed_head": fixed_head,
+        "docs_review_head": docs_review_head,
+        "finalization_allowed_paths": finalization_allowed_paths
+        or [gate.DOCS_ONLY_STATE_PATH],
+        "work_branch": work_branch,
+    }
+
+
+def _create_docs_only_topology(
+    repo: Path,
+    *,
+    extra_control_paths: tuple[str, ...] = (),
+) -> tuple[Path, str, str, str]:
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.name", "Gate Test")
+    _run_git(repo, "config", "user.email", "gate@example.com")
+    state_path = repo / gate.DOCS_ONLY_STATE_PATH
+    state_path.parent.mkdir()
+    state_path.write_text(
+        json.dumps(_docs_only_state(phase="GATE_DRAFT", docs_review_head=None))
+        + "\n",
+        encoding="utf-8",
+    )
+    _run_git(repo, "add", ".")
+    base_sha = _commit_git(repo, "base")
+
+    document_path = repo / "docs" / "architecture" / "candidate.md"
+    document_path.parent.mkdir(parents=True)
+    document_path.write_text("# Candidate\n", encoding="utf-8")
+    _run_git(repo, "add", "docs/architecture/candidate.md")
+    candidate_sha = _commit_git(repo, "document candidate")
+
+    control_state = _docs_only_state(
+        phase="GATE_REVIEW",
+        docs_review_head=candidate_sha,
+    )
+    state_path.write_text(json.dumps(control_state) + "\n", encoding="utf-8")
+    for path in extra_control_paths:
+        extra_path = repo / path
+        extra_path.parent.mkdir(parents=True, exist_ok=True)
+        extra_path.write_text("outside docs-only process scope\n", encoding="utf-8")
+    _run_git(repo, "add", ".")
+    control_sha = _commit_git(repo, "state-only control" if not extra_control_paths else "control")
+    return repo, base_sha, candidate_sha, control_sha
+
+
+def test_docs_only_gate_review_accepts_document_candidate_and_state_control(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha, candidate_sha, control_sha = _create_docs_only_topology(
+        tmp_path / "repo"
+    )
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    state = _docs_only_state(docs_review_head=candidate_sha)
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(state, evidence_now)
+
+    assert result["pass"] is True
+    assert result["candidate_kind"] == "docs-only"
+    assert result["docs_review_head_resolved"] == candidate_sha
+    assert result["docs_review_head_ancestor"] is True
+    assert result["candidate_head"] == candidate_sha
+    assert result["control_head"] == control_sha
+    assert result["finalization_changed_files"] == [gate.DOCS_ONLY_STATE_PATH]
+    assert result["finalization_outside_allowed"] == []
+
+
+@pytest.mark.parametrize(
+    ("docs_review_head", "expected_fragment"),
+    [
+        (None, "requires a non-empty docs_review_head"),
+        ("not-a-commit", "does not resolve to a commit"),
+    ],
+)
+def test_docs_only_gate_review_rejects_missing_or_malformed_review_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    docs_review_head: str | None,
+    expected_fragment: str,
+) -> None:
+    repo, base_sha, candidate_sha, _ = _create_docs_only_topology(tmp_path / "repo")
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    state = _docs_only_state(docs_review_head=docs_review_head)
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(state, evidence_now)
+
+    assert result["pass"] is False
+    assert any(expected_fragment in item for item in result["violations"])
+    assert candidate_sha != docs_review_head
+
+
+def test_docs_only_gate_review_rejects_non_ancestor_review_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha, candidate_sha, _ = _create_docs_only_topology(tmp_path / "repo")
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    monkeypatch.setattr(gate, "_git_is_ancestor", lambda ancestor, descendant: False)
+    state = _docs_only_state(docs_review_head=candidate_sha)
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(state, evidence_now)
+
+    assert result["pass"] is False
+    assert result["docs_review_head_exists"] is True
+    assert result["docs_review_head_ancestor"] is False
+    assert any("is not an ancestor" in item for item in result["violations"])
+
+
+def test_docs_only_rejects_changes_after_review_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha, candidate_sha, _ = _create_docs_only_topology(
+        tmp_path / "repo", extra_control_paths=("src/domain.py",)
+    )
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    state = _docs_only_state(docs_review_head=candidate_sha)
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(state, evidence_now)
+
+    assert result["pass"] is False
+    assert result["finalization_outside_allowed"] == ["src/domain.py"]
+    assert any("docs-only process allowlist rejects" in item for item in result["violations"])
+    assert any("non-finalization files changed" in item for item in result["violations"])
+
+
+@pytest.mark.parametrize("path", ["pyproject.toml", ".github/actions/example/action.yml"])
+def test_docs_only_allowed_paths_cannot_expand_process_allowlist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    repo, base_sha, candidate_sha, _ = _create_docs_only_topology(tmp_path / "repo")
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    state = _docs_only_state(
+        docs_review_head=candidate_sha,
+        allowed_paths=[gate.DOCS_ONLY_STATE_PATH, "docs/**", path],
+    )
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(state, evidence_now)
+
+    assert result["pass"] is False
+    assert any("expand the process-owned allowlist" in item for item in result["violations"])
+
+
+def test_docs_only_finalization_paths_cannot_expand_state_only_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha, candidate_sha, _ = _create_docs_only_topology(tmp_path / "repo")
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    state = _docs_only_state(
+        docs_review_head=candidate_sha,
+        finalization_allowed_paths=[gate.DOCS_ONLY_STATE_PATH, "docs/**"],
+    )
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(state, evidence_now)
+
+    assert result["pass"] is False
+    assert any(
+        "finalization_allowed_paths must contain only" in item
+        for item in result["violations"]
+    )
+
+
+def test_docs_only_rejects_fixed_head_and_executable_lifecycle_phases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+    for phase, fixed_head in [
+        ("GATE_DRAFT", "executable-sha"),
+        ("IMPLEMENTATION", None),
+        ("FINAL_REVIEW", None),
+        ("MERGED", None),
+    ]:
+        state = _docs_only_state(
+            phase=phase,
+            docs_review_head=None if phase == "GATE_DRAFT" else "review-sha",
+            fixed_head=fixed_head,
+        )
+        result = gate._evaluate_scope(state, evidence(()))
+
+        assert result["pass"] is False
+        if fixed_head:
+            assert any("must keep fixed_head empty" in item for item in result["violations"])
+        else:
+            assert any("not valid in phase" in item for item in result["violations"])
+
+
+def test_docs_only_gate_draft_rejects_review_head() -> None:
+    state = _docs_only_state(phase="GATE_DRAFT", docs_review_head="premature-sha")
+
+    result = gate._evaluate_scope(state, evidence(()))
+
+    assert result["pass"] is False
+    assert "docs-only GATE_DRAFT must not set docs_review_head" in result["violations"]
+
+
+def test_docs_only_merge_authorized_accepts_reviewed_document_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha, candidate_sha, control_sha = _create_docs_only_topology(
+        tmp_path / "repo"
+    )
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    state = _docs_only_state(
+        phase="MERGE_AUTHORIZED",
+        docs_review_head=candidate_sha,
+    )
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(state, evidence_now)
+
+    assert result["pass"] is True
+    assert result["candidate_head"] == candidate_sha
+    assert result["control_head"] == control_sha
+
+
+def test_docs_only_uses_actual_pr_head_under_synthetic_merge_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha, candidate_sha, control_sha = _create_docs_only_topology(
+        tmp_path / "repo"
+    )
+    current_branch = _run_git(repo, "branch", "--show-current")
+    _run_git(repo, "branch", "side", base_sha)
+    _run_git(repo, "checkout", "-q", "-b", "pr", control_sha)
+    _run_git(repo, "checkout", "-q", "side")
+    side_path = repo / "side.txt"
+    side_path.write_text("synthetic merge-only file\n", encoding="utf-8")
+    _run_git(repo, "add", "side.txt")
+    _commit_git(repo, "side change")
+    _run_git(repo, "checkout", "-q", "pr")
+    _run_git(repo, "merge", "--no-ff", "side", "-m", "synthetic merge")
+
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(
+        gate,
+        "_github_pr_context",
+        lambda: {"pr_head_sha": control_sha, "pr_head_ref": "pr"},
+    )
+    state = _docs_only_state(
+        docs_review_head=candidate_sha,
+        work_branch="pr",
+    )
+    evidence_now = gate._collect_git_evidence(base_sha)
+
+    result = gate._evaluate_scope(
+        state,
+        evidence_now,
+        {"pr_head_sha": control_sha, "pr_head_ref": "pr"},
+    )
+
+    assert current_branch != "pr"
+    assert "side.txt" in evidence_now.changed_files
+    assert result["control_changed_files"] == [
+        gate.DOCS_ONLY_STATE_PATH,
+        "docs/architecture/candidate.md",
+    ]
+    assert result["pass"] is True
+    assert result["candidate_head"] == candidate_sha
+    assert result["control_head"] == control_sha
+
+
+def test_docs_only_bundle_uses_review_head_for_candidate_and_control_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha, candidate_sha, control_sha = _create_docs_only_topology(
+        tmp_path / "repo"
+    )
+    monkeypatch.setattr(gate, "ROOT", repo)
+    monkeypatch.setattr(gate, "_github_pr_context", lambda: {})
+    state = _docs_only_state(docs_review_head=candidate_sha)
+    state_path = repo / gate.DOCS_ONLY_STATE_PATH
+    evidence_now = gate._collect_git_evidence(base_sha)
+    bundle_dir = repo / ".easyaudit-review"
+
+    gate._write_bundle(bundle_dir, state, evidence_now, state_path)
+    proof = json.loads((bundle_dir / "gate-proof.json").read_text(encoding="utf-8"))
+
+    assert proof["candidate_kind"] == "docs-only"
+    assert proof["evidence_refs"]["candidate"] == {
+        "base": base_sha,
+        "head": candidate_sha,
+    }
+    assert proof["evidence_refs"]["control"] == {
+        "base": candidate_sha,
+        "head": control_sha,
+    }
+    assert gate._validate_bundle(
+        bundle_dir, state, state_path, evidence_now, proof
+    ) == []
+
+
 def test_proof_marks_github_actions_as_final_ci_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

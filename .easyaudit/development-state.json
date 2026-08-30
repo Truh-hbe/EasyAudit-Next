@@ -1,47 +1,44 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
-  "milestone": "M5",
-  "slice": "M5.5-controlled-pilot-hardening",
-  "phase": "MERGED",
+  "milestone": "PROCESS",
+  "slice": "docs-only-gate-finalization",
+  "phase": "FINAL_REVIEW",
   "base": {
     "branch": "main",
-    "sha": "210a26999ec2adfd0400f7e0c243061cc20d2f3d"
+    "sha": "b4b74f4b4dd0ca46ee19d187c49d3f95de3eae42"
   },
-  "work_branch": null,
-  "pr": {
-    "number": 35
-  },
+  "work_branch": "codex/process-docs-only-gate-draft",
+  "pr": null,
   "gate_docs": [
-    "docs/architecture/m5-5-controlled-pilot-hardening.md",
-    "docs/architecture/m5-5-acceptance.md"
+    "docs/architecture/process-docs-only-finalization.md",
+    "docs/architecture/process-docs-only-acceptance.md"
   ],
+  "candidate_kind": "executable",
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/m5-5-controlled-pilot-hardening.md",
-      "docs/architecture/m5-5-acceptance.md",
-      "tests/api/test_m5_5_*.py",
-      "tests/integration/test_m5_5_*.py",
-      "web/package.json",
-      "web/tests/browser/real-m5-5.spec.ts",
-      "web/tests/browser/seed_m5_5_real_acceptance.py"
+      "docs/architecture/process-docs-only-finalization.md",
+      "docs/architecture/process-docs-only-acceptance.md",
+      "docs/architecture/agent-development-workflow.md",
+      "scripts/easyaudit_gate.py",
+      "tests/tooling/test_easyaudit_gate.py"
     ],
     "forbidden_paths": [
       "src/**",
       "alembic/**",
       ".github/workflows/**",
       "openapi/**",
-      "scripts/**",
-      "web/src/**",
-      "web/package-lock.json",
-      "tests/unit/**"
+      "web/**",
+      "Dockerfile*",
+      "compose*",
+      "deploy/**"
     ]
   },
-  "fixed_head": "71c32e47f6508839dd04e9a4982b8a2928ae3c3a",
+  "fixed_head": "bf2b7c24acd6cdb173f18a6caa1ee600e62c6821",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Create and review a new Gate before further implementation"
+  "next_allowed_action": "Run Final Architecture / Implementation Review for fixed executable candidate bf2b7c24acd6cdb173f18a6caa1ee600e62c6821; require exact-head GitHub Actions before merge authorization"
 }

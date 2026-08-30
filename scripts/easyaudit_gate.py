@@ -12,7 +12,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATE = ROOT / ".easyaudit" / "development-state.json"
@@ -34,6 +34,8 @@ VALID_PHASES = {
     "MERGE_AUTHORIZED",
     "MERGED",
 }
+VALID_CANDIDATE_KINDS = {"executable", "docs-only"}
+DOCS_ONLY_STATE_PATH = ".easyaudit/development-state.json"
 
 
 class GateError(RuntimeError):
@@ -99,11 +101,17 @@ def _load_state(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise GateError(f"invalid JSON state file: {path}: {exc}") from exc
 
+    if not isinstance(data, dict):
+        raise GateError("development-state must contain a JSON object")
+    data = cast(dict[str, Any], data)
     if data.get("schema_version") != 1:
         raise GateError("development-state schema_version must be 1")
     phase = data.get("phase")
     if phase not in VALID_PHASES:
         raise GateError(f"unsupported development phase: {phase!r}")
+    candidate_kind = data.get("candidate_kind", "executable")
+    if candidate_kind not in VALID_CANDIDATE_KINDS:
+        raise GateError(f"unsupported candidate kind: {candidate_kind!r}")
     return data
 
 
@@ -179,6 +187,20 @@ def _matches(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+def _docs_only_path_allowed(path: str) -> bool:
+    return path == DOCS_ONLY_STATE_PATH or path.startswith("docs/")
+
+
+def _docs_only_scope_pattern_allowed(pattern: str) -> bool:
+    if pattern == DOCS_ONLY_STATE_PATH:
+        return True
+    if not pattern.startswith("docs/"):
+        return False
+    if pattern.startswith("/") or "\\" in pattern:
+        return False
+    return ".." not in pattern.split("/")
+
+
 def _evaluate_scope(
     state: dict[str, Any],
     evidence: GitEvidence,
@@ -189,10 +211,30 @@ def _evaluate_scope(
     allowed = [str(item) for item in scope.get("allowed_paths") or []]
     forbidden = [str(item) for item in scope.get("forbidden_paths") or []]
 
-    forbidden_hits = [path for path in evidence.changed_files if _matches(path, forbidden)]
+    candidate_kind = str(state.get("candidate_kind") or "executable")
+    phase = state.get("phase")
+    control_head = str(github_context.get("pr_head_sha") or evidence.head_sha)
+    control_changed_files = list(evidence.changed_files)
+    control_changed_files_error: str | None = None
+    if (
+        candidate_kind == "docs-only"
+        and github_context.get("pr_head_sha")
+        and github_context.get("pr_head_sha") != evidence.head_sha
+    ):
+        try:
+            control_text = _git(
+                "diff", "--name-only", f"{evidence.base_ref}...{control_head}"
+            )
+            control_changed_files = [
+                line for line in control_text.splitlines() if line
+            ]
+        except GateError as exc:
+            control_changed_files_error = str(exc)
+
+    forbidden_hits = [path for path in control_changed_files if _matches(path, forbidden)]
     outside_allowed = [
         path
-        for path in evidence.changed_files
+        for path in control_changed_files
         if allowed and not _matches(path, allowed)
     ]
 
@@ -203,12 +245,15 @@ def _evaluate_scope(
     candidate_heads = {evidence.head_sha, github_context.get("pr_head_sha")}
     fixed_head_matches = fixed_head in (None, "") or fixed_head in candidate_heads
 
-    phase = state.get("phase")
-    control_head = str(github_context.get("pr_head_sha") or evidence.head_sha)
     candidate_head = control_head
     fixed_head_exists = False
     fixed_head_ancestor = False
     fixed_head_resolved: str | None = None
+    docs_review_head = state.get("docs_review_head")
+    docs_review_head_matches = True
+    docs_review_head_exists = False
+    docs_review_head_ancestor = False
+    docs_review_head_resolved: str | None = None
     finalization_allowed = [
         str(item)
         for item in state.get("finalization_allowed_paths")
@@ -216,8 +261,84 @@ def _evaluate_scope(
     ]
     finalization_changed_files: list[str] = []
     finalization_outside_allowed: list[str] = []
+    docs_only_scope_violations: list[str] = []
 
-    if phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"}:
+    if candidate_kind == "docs-only":
+        if fixed_head not in (None, ""):
+            fixed_head_matches = False
+
+        invalid_scope_patterns = [
+            pattern
+            for pattern in allowed
+            if not _docs_only_scope_pattern_allowed(pattern)
+        ]
+        if invalid_scope_patterns:
+            docs_only_scope_violations.append(
+                "docs-only allowed_paths expand the process-owned allowlist: "
+                + ", ".join(invalid_scope_patterns)
+            )
+        invalid_finalization_patterns = [
+            pattern
+            for pattern in finalization_allowed
+            if pattern != DOCS_ONLY_STATE_PATH
+        ]
+        if invalid_finalization_patterns:
+            docs_only_scope_violations.append(
+                "docs-only finalization_allowed_paths must contain only "
+                f"{DOCS_ONLY_STATE_PATH}: "
+                + ", ".join(invalid_finalization_patterns)
+            )
+        process_outside_allowed = [
+            path for path in control_changed_files if not _docs_only_path_allowed(path)
+        ]
+        if process_outside_allowed:
+            docs_only_scope_violations.append(
+                "docs-only process allowlist rejects changed paths: "
+                + ", ".join(process_outside_allowed)
+            )
+
+        if phase == "GATE_DRAFT":
+            docs_review_head_matches = docs_review_head in (None, "")
+        elif phase in {"GATE_REVIEW", "MERGE_AUTHORIZED"}:
+            if not docs_review_head:
+                docs_review_head_matches = False
+            else:
+                try:
+                    docs_review_head_resolved = _git(
+                        "rev-parse", "--verify", f"{docs_review_head}^{{commit}}"
+                    )
+                except GateError:
+                    docs_review_head_resolved = None
+                docs_review_head_exists = docs_review_head_resolved is not None
+                if docs_review_head_exists:
+                    docs_review_head_ancestor = _git_is_ancestor(
+                        docs_review_head_resolved, control_head
+                    )
+                    if docs_review_head_ancestor:
+                        finalization_text = _git(
+                            "diff",
+                            "--name-only",
+                            f"{docs_review_head_resolved}..{control_head}",
+                        )
+                        finalization_changed_files = [
+                            line for line in finalization_text.splitlines() if line
+                        ]
+                        finalization_outside_allowed = [
+                            path
+                            for path in finalization_changed_files
+                            if not _matches(path, finalization_allowed)
+                        ]
+                docs_review_head_matches = (
+                    docs_review_head_exists
+                    and docs_review_head_ancestor
+                    and not finalization_outside_allowed
+                )
+            candidate_head = docs_review_head_resolved or control_head
+        else:
+            docs_review_head_matches = False
+            candidate_head = docs_review_head_resolved or control_head
+
+    if candidate_kind != "docs-only" and phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"}:
         if not fixed_head:
             fixed_head_matches = False
         else:
@@ -260,13 +381,51 @@ def _evaluate_scope(
     )
 
     violations: list[str] = []
+    if control_changed_files_error:
+        violations.append(
+            "could not determine actual PR-head changes: " + control_changed_files_error
+        )
     if forbidden_hits:
         violations.append(f"forbidden paths changed: {', '.join(forbidden_hits)}")
     if outside_allowed:
         violations.append(f"paths outside allowed scope: {', '.join(outside_allowed)}")
     if missing_gate_docs:
         violations.append(f"missing Gate documents: {', '.join(missing_gate_docs)}")
-    if not fixed_head_matches:
+    if candidate_kind == "docs-only":
+        violations.extend(docs_only_scope_violations)
+        if not fixed_head_matches:
+            violations.append(
+                "docs-only candidates must keep fixed_head empty; "
+                f"found {fixed_head!r}"
+            )
+        if not docs_review_head_matches:
+            if phase == "GATE_DRAFT":
+                violations.append("docs-only GATE_DRAFT must not set docs_review_head")
+            elif phase in {"GATE_REVIEW", "MERGE_AUTHORIZED"}:
+                if not docs_review_head:
+                    violations.append(
+                        f"{phase} requires a non-empty docs_review_head"
+                    )
+                elif not docs_review_head_exists:
+                    violations.append(
+                        "docs_review_head does not resolve to a commit: "
+                        + str(docs_review_head)
+                    )
+                elif not docs_review_head_ancestor:
+                    violations.append(
+                        f"docs_review_head {docs_review_head} is not an ancestor of "
+                        f"control HEAD {control_head}"
+                    )
+                if finalization_outside_allowed:
+                    violations.append(
+                        "non-finalization files changed after docs_review_head: "
+                        + ", ".join(finalization_outside_allowed)
+                    )
+            else:
+                violations.append(
+                    f"docs-only candidate_kind is not valid in phase {phase}"
+                )
+    elif not fixed_head_matches:
         if phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"}:
             if not fixed_head:
                 violations.append(
@@ -297,16 +456,24 @@ def _evaluate_scope(
         )
 
     return {
+        "candidate_kind": candidate_kind,
         "allowed_paths": allowed,
         "forbidden_paths": forbidden,
         "forbidden_hits": forbidden_hits,
         "outside_allowed": outside_allowed,
+        "control_changed_files": control_changed_files,
+        "docs_only_scope_violations": docs_only_scope_violations,
         "missing_gate_docs": missing_gate_docs,
         "fixed_head_matches": fixed_head_matches,
         "fixed_head": fixed_head,
         "fixed_head_resolved": fixed_head_resolved,
         "fixed_head_exists": fixed_head_exists,
         "fixed_head_ancestor": fixed_head_ancestor,
+        "docs_review_head": docs_review_head,
+        "docs_review_head_resolved": docs_review_head_resolved,
+        "docs_review_head_exists": docs_review_head_exists,
+        "docs_review_head_ancestor": docs_review_head_ancestor,
+        "docs_review_head_matches": docs_review_head_matches,
         "candidate_head": candidate_head,
         "control_head": control_head,
         "finalization_allowed_paths": finalization_allowed,
@@ -339,6 +506,7 @@ def _proof(
         "milestone": state.get("milestone"),
         "slice": state.get("slice"),
         "phase": state.get("phase"),
+        "candidate_kind": state.get("candidate_kind", "executable"),
         "next_allowed_action": state.get("next_allowed_action"),
         "state_fingerprint": _state_fingerprint(
             _bundle_path(state_path or DEFAULT_STATE)
@@ -367,7 +535,8 @@ def _proof(
                 "head": scope_result.get("candidate_head", evidence.head_sha),
             },
             "control": {
-                "base": scope_result.get("fixed_head_resolved"),
+                "base": scope_result.get("fixed_head_resolved")
+                or scope_result.get("docs_review_head_resolved"),
                 "head": scope_result.get("control_head", evidence.head_sha),
             },
             "working_tree": {"base": evidence.head_sha, "head": "WORKTREE"},
@@ -416,12 +585,14 @@ def _bundle_artifacts(
     candidate_diff = _git(
         "diff", "--no-ext-diff", "--no-color", f"{evidence.base_ref}...{candidate_head}"
     )
-    fixed_head = scope.get("fixed_head_resolved")
+    control_base = scope.get("fixed_head_resolved") or scope.get(
+        "docs_review_head_resolved"
+    )
     control_head = str(scope.get("control_head") or evidence.head_sha)
     control_diff = ""
-    if fixed_head:
+    if control_base:
         control_diff = _git(
-            "diff", "--no-ext-diff", "--no-color", f"{fixed_head}..{control_head}"
+            "diff", "--no-ext-diff", "--no-color", f"{control_base}..{control_head}"
         )
     return {
         "changed-files.txt": "".join(f"{path}\n" for path in evidence.changed_files),
@@ -481,7 +652,7 @@ def _validate_bundle(
     bundle_scope = bundle_proof.get("scope") or {}
     current_scope = current_proof["scope"]
     if bundle_scope.get("candidate_head") != current_scope.get("candidate_head"):
-        violations.append("Review Bundle does not match the fixed candidate head")
+        violations.append("Review Bundle does not match the reviewed candidate head")
     if bundle_scope.get("control_head") != current_scope.get("control_head"):
         violations.append("Review Bundle does not match the control HEAD")
     if not bundle_scope.get("pass"):
