@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.0-controlled-pilot-rollout-readiness-v2",
-  "phase": "GATE_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "e643a3f43032908d8a0c59d2f6819ae42d38504a"
@@ -41,5 +41,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Verify PR #38 exact-head CI and complete M6.0 docs-only final review; no implementation authorization"
+  "next_allowed_action": "Merge PR #38 with expected-head protection; do not delete the source branch; then close state as MERGED"
 }
