@@ -1,31 +1,29 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
-  "milestone": "PROCESS",
-  "slice": "docs-only-gate-finalization",
-  "phase": "MERGED",
+  "milestone": "M6",
+  "slice": "M6.0-controlled-pilot-rollout-readiness-v2",
+  "phase": "GATE_DRAFT",
   "base": {
     "branch": "main",
-    "sha": "ac8767b872f607fdd140908f0b7daf3231748d7e"
+    "sha": "e643a3f43032908d8a0c59d2f6819ae42d38504a"
   },
-  "work_branch": null,
+  "work_branch": "codex/m6-v2-gate-draft",
   "pr": {
-    "number": 36
+    "number": null
   },
   "gate_docs": [
-    "docs/architecture/process-docs-only-finalization.md",
-    "docs/architecture/process-docs-only-acceptance.md"
+    "docs/architecture/m6-0-controlled-pilot-rollout-readiness.md",
+    "docs/architecture/m6-0-acceptance.md"
   ],
-  "candidate_kind": "executable",
+  "candidate_kind": "docs-only",
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/process-docs-only-finalization.md",
-      "docs/architecture/process-docs-only-acceptance.md",
-      "docs/architecture/agent-development-workflow.md",
-      "scripts/easyaudit_gate.py",
-      "tests/tooling/test_easyaudit_gate.py"
+      "docs/architecture/roadmap.md",
+      "docs/architecture/m6-0-controlled-pilot-rollout-readiness.md",
+      "docs/architecture/m6-0-acceptance.md"
     ],
     "forbidden_paths": [
       "src/**",
@@ -38,9 +36,10 @@
       "deploy/**"
     ]
   },
-  "fixed_head": "bf2b7c24acd6cdb173f18a6caa1ee600e62c6821",
+  "fixed_head": null,
+  "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Create and review a new Gate before further implementation"
+  "next_allowed_action": "Architecture / Acceptance review for M6.0 docs-only Gate"
 }
