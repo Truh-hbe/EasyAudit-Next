@@ -21,6 +21,12 @@ GATE_DRAFT -> GATE_REVIEW -> IMPLEMENTATION -> FINAL_REVIEW
              -> MERGE_AUTHORIZED -> MERGED
 ```
 
+For this candidate, a passing `GATE_DRAFT` review authorizes only the
+transition `GATE_DRAFT -> GATE_REVIEW`. A separate passing `GATE_REVIEW`
+re-review is required before the outer state may transition
+`GATE_REVIEW -> IMPLEMENTATION`. During `GATE_REVIEW`, deployment, image
+publication, secret access, restore rehearsal and traffic remain forbidden.
+
 While the state is `GATE_DRAFT`, Codex may change only the Gate documents,
 state routing and roadmap correction described by the current scope. It must
 not create deployment resources, build or publish images, read secrets,
@@ -63,8 +69,10 @@ approved private/VPN network
   static React    /api/v1/*
                      |
                   FastAPI
-                 /       \
-          PostgreSQL 17   private S3-compatible storage
+                     |
+               PostgreSQL 17
+
+  controlled recovery utility ──> private S3-compatible storage
 ```
 
 The gateway is the only component permitted to bind a host port, and that
@@ -78,6 +86,11 @@ requests through the same HTTPS origin. The Vite development server and
 chain must be trusted by the organization from the approved network, and a
 negative public-exposure check is required before the environment can be
 called private.
+
+The M6.1 application runtime has no S3 configuration and no object-store
+access. Only the controlled recovery utility may use the storage client for
+the infrastructure fixture. M6.3 owns the later application-level object
+connection and Evidence consistency contract.
 
 The existing `compose.yaml` is a development-only fixture: it publishes
 internal ports and contains default credentials. It is not the M6.1 pilot
@@ -112,9 +125,11 @@ Docker build context before runtime files can exist.
 
 The recovery unit is one quiesced, jointly verifiable cut rather than an
 unrelated PostgreSQL backup plus an independently selected object snapshot.
-The immutable manifest must link:
+The immutable recovery-set manifest may contain only facts known at cut time
+and must link:
 
-1. `recovery_set_id`, cut start/end timestamps and the recovery trigger time;
+1. `recovery_set_id`, cut start/end timestamps, an immutable manifest hash and
+   detached signature/key reference;
 2. PostgreSQL backup identity, backup completion time, PostgreSQL major
    version and the expected Alembic head;
 3. an object-store snapshot/version or a content-root manifest with fixture
@@ -122,8 +137,8 @@ The immutable manifest must link:
    storage keys;
 4. every deployed image digest in the release set;
 5. configuration revision and opaque secret-reference identifiers/versions;
-6. restore order, compatibility checks and the clean target identity; and
-7. manifest hash, signer/key-reference identifier and evidence timestamps.
+6. restore order and compatibility checks; and
+7. non-secret evidence timestamps needed to verify the cut.
 
 The backup must be outside the primary service volumes and in a separately
 recoverable failure domain. A backup on the same host or volume is a No-Go.
@@ -132,6 +147,17 @@ release/configuration identity can be validated against one explicit point in
 time. The fixture is written directly through the controlled storage client;
 it must not call an Evidence API, create Evidence metadata or claim
 application-level database/object consistency.
+
+The recovery-set manifest is immutable after the cut. A separate immutable
+recovery-attempt proof is created for each rehearsal. It references
+`recovery_set_id` and the manifest hash, then records the opaque clean-target
+identifier, `recovery_triggered_at`, `restoration_started_at`,
+`restored_ready_at`, layered check results and rollback results. Post-cut
+facts are never written back into the recovery-set manifest. Approved clean
+host/container runtime and private-network prerequisites must be disclosed in
+the proof; they are prerequisites of the rehearsal, not time silently
+subtracted from its RTO. `restoration_started_at` remains a diagnostic
+segment timestamp.
 
 ## Restore, rollback and stop conditions
 
@@ -147,11 +173,14 @@ Restore rehearsal follows the manifest order into a distinct clean target:
 7. compare pre-cut and restored database facts, Scenario publications,
    Activity counts/integrity, fixture object count and content hashes.
 
-Rollback returns the disposable deployment to the last known-good immutable
-release/configuration set. It must not mutate the source recovery set, rewrite
-an image tag, delete evidence or infer that a failed restore is safe. The
-operator records the rollback trigger, target release-set identifier and
-whether the failed environment was isolated before any retry.
+The rollback rehearsal is explicit and controlled: prepare a known-good
+release/configuration set A, deploy candidate set B, inject a non-secret
+controlled failure into B, and stop at the declared failure condition. Roll
+back to immutable set A without restoring the database or mutating the source
+recovery set; then rerun every layered readiness check and verify that the
+database and object fixture remain unchanged. The recovery-attempt proof
+records the rollback trigger, stop condition, target release-set identifier,
+failed-target isolation and all post-rollback checks before any retry.
 
 Immediate No-Go conditions include public exposure, a non-trusted or
 self-signed pilot certificate, any published internal port, a mutable image
@@ -188,7 +217,7 @@ Gate before continuing.
 
 ## Gate exit criteria
 
-The M6.1 Gate can enter Implementation only when:
+The current `GATE_DRAFT` can pass only when:
 
 - the architecture and acceptance documents freeze the topology, trust
   boundary, immutable release set, secret/config references, failure domain,
@@ -196,8 +225,13 @@ The M6.1 Gate can enter Implementation only when:
 - the prospective allowlist is narrow and machine-readable in the state file;
 - static checks, `git diff --check`, the active Gate check and a clean Review
   Bundle pass; and
-- ChatGPT independently reviews the current candidate and authorizes the
-  outer transition.
+- ChatGPT independently reviews the current candidate and authorizes only
+  `GATE_DRAFT -> GATE_REVIEW`.
+
+The later `GATE_REVIEW` can authorize `GATE_REVIEW -> IMPLEMENTATION` only
+after its separate re-review passes. No deployment resources, image
+publication, secret access, restore rehearsal or traffic may occur while that
+re-review is pending.
 
 Implementation Review must then prove the acceptance matrix in
 `m6-1-acceptance.md`. A local pass or a roadmap entry never authorizes real

@@ -37,7 +37,6 @@
     "forbidden_paths": [
       "src/**",
       "alembic/**",
-      ".github/workflows/**",
       "openapi/**",
       "web/**",
       "compose.yaml",
@@ -50,5 +49,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Run Gate checks and request independent Architecture / Acceptance Review"
+  "next_allowed_action": "Revise Gate documents and request independent Gate Draft Review"
 }

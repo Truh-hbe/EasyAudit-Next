@@ -19,9 +19,11 @@ The M6.1 candidate is acceptable for independent Gate Review only when:
 6. no deployment resource, image, secret, traffic, restore rehearsal,
    migration, product source or business behavior is changed.
 
-Gate Review may advance the outer phase to `IMPLEMENTATION` only after
-ChatGPT's independent Architecture / Acceptance Review passes. The Gate
-Review does not authorize real traffic.
+This Gate Draft review may authorize only `GATE_DRAFT -> GATE_REVIEW`.
+`GATE_REVIEW` requires a separate re-review; only its passing result may
+authorize `GATE_REVIEW -> IMPLEMENTATION`. While that re-review is pending,
+deployment, image publication, secret access, restore rehearsal and traffic
+remain forbidden. Neither Gate review authorizes real traffic.
 
 ## 2. Topology and trust-boundary acceptance
 
@@ -56,11 +58,15 @@ The release manifest must identify the complete deployed artifact set by OCI
 digest, configuration revision and opaque secret references. A tag may be
 used to build an image but is not a release identity.
 
-One recovery-set manifest must jointly link the quiesced PostgreSQL backup,
-object snapshot/version or logical content-root manifest, release digests,
-configuration revision, secret-reference versions, compatibility checks,
-restore order and hashes. Separate, independently selected database and
-object restores do not satisfy acceptance.
+One immutable recovery-set manifest must jointly link only cut-time facts:
+the quiesced PostgreSQL backup, object snapshot/version or logical
+content-root manifest, release digests, configuration revision,
+secret-reference versions, compatibility checks, restore order and manifest
+hash/signature. Separate, independently selected database and object restores
+do not satisfy acceptance. A separate immutable recovery-attempt proof must
+reference that set and its manifest hash, and record the post-cut target,
+timings, readiness checks and rollback results; those facts must not be added
+to the recovery-set manifest.
 
 ## 4. Fresh deployment and layered readiness
 
@@ -93,9 +99,14 @@ The infrastructure fixture must be written directly through the storage
 client. It must not create or change Evidence metadata, call an Evidence
 upload/download API or imply M6.3 application-level consistency.
 
-Rollback must target an immutable known-good release/configuration set,
-record the trigger and isolate the failed target. It must not rewrite tags,
-mutate the source recovery set or claim success after a partial restore.
+Rollback must target an immutable known-good release/configuration set A. The
+rehearsal must deploy candidate B, inject a non-secret controlled failure,
+stop at the declared condition, roll back to A without restoring the
+database, rerun all layered readiness checks and verify the database and
+object fixture are unchanged. The recovery-attempt proof records the trigger,
+stop condition, failed-target isolation, target set and complete
+post-rollback checks. It must not rewrite tags, mutate the source recovery set
+or claim success after a partial restore.
 
 ## 6. Timing definitions and objectives
 
@@ -109,12 +120,16 @@ restoration_started_at     = time restore actions begin on the clean target
 restored_ready_at           = time all layered readiness checks pass
 
 observed RPO = recovery_triggered_at - recovery_set_cut_completed
-observed RTO = restored_ready_at - restoration_started_at
+observed RTO = restored_ready_at - recovery_triggered_at
 ```
 
 Go requires `observed RPO <= 24 hours` and `observed RTO <= 4 hours` for the
-same recovery set. The evidence must not substitute backup age for a joint
-cut, or container start time for restored readiness.
+same recovery set. `restoration_started_at` is retained for diagnostic
+segment timing only. Approved clean host/container runtime and private
+network availability are explicit rehearsal prerequisites and must be
+disclosed; they must not be silently removed from the measured RTO. The
+evidence must not substitute backup age for a joint cut, or container start
+time for restored readiness.
 
 ## 7. Sanitized evidence contract
 
@@ -135,17 +150,65 @@ Sanitized evidence may contain only:
 
 ```json
 {
-  "recovery_set_id": "opaque-id",
-  "release_digests": {"api": "sha256:...", "web_gateway": "sha256:..."},
-  "config_revision": "opaque-revision",
-  "secret_refs": [{"id": "opaque-id", "version": "opaque-version"}],
-  "postgres_backup": {"id": "opaque-id", "completed_at": "timestamp"},
-  "object_root": {"id": "opaque-id", "count": 0, "content_root": "sha256:..."},
-  "schema": {"postgres_major": 17, "alembic_head": "opaque-revision"},
-  "restore_order": ["postgres", "object_fixture", "application", "gateway"],
-  "observed_rpo_seconds": 0,
-  "observed_rto_seconds": 0,
-  "checks": {"private_tls": true, "public_exposure": false}
+  "recovery_set": {
+    "recovery_set_id": "opaque-id",
+    "cut_started_at": "timestamp",
+    "recovery_set_cut_completed": "timestamp",
+    "release_digests": {"api": "sha256:...", "web_gateway": "sha256:..."},
+    "config_revision": "opaque-revision",
+    "secret_refs": [{"id": "opaque-id", "version": "opaque-version"}],
+    "postgres_backup": {"id": "opaque-id", "completed_at": "timestamp"},
+    "object_root": {"id": "opaque-id", "count": 0, "content_root": "sha256:..."},
+    "schema": {"postgres_major": 17, "alembic_head": "opaque-revision"},
+    "restore_order": ["postgres", "object_fixture", "application", "gateway"],
+    "manifest_sha256": "sha256:...",
+    "signer_key_ref": "opaque-id"
+  },
+  "recovery_attempt": {
+    "recovery_set_id": "opaque-id",
+    "manifest_sha256": "sha256:...",
+    "target_opaque_id": "opaque-id",
+    "recovery_triggered_at": "timestamp",
+    "restoration_started_at": "timestamp",
+    "restored_ready_at": "timestamp",
+    "observed_rpo_seconds": 0,
+    "observed_rto_seconds": 0,
+    "clock_source": "opaque-reference",
+    "checks": {
+      "layered_readiness": true,
+      "private_tls": {
+        "certificate_fingerprint": "sha256:...",
+        "issuer_trust_store_ref": "opaque-id",
+        "hostname_verified": true,
+        "validity_checked": true,
+        "probe_at": "timestamp"
+      },
+      "exposure_probes": [
+        {
+          "vantage_class": "approved-private",
+          "target_fingerprint": "sha256:...",
+          "probe_at": "timestamp",
+          "result": "reachable",
+          "failure_reason_class": null
+        },
+        {
+          "vantage_class": "public-negative",
+          "target_fingerprint": "sha256:...",
+          "probe_at": "timestamp",
+          "result": "not-reachable",
+          "failure_reason_class": "no-route"
+        }
+      ],
+      "rollback": {
+        "known_good_release_set_id": "opaque-id",
+        "failure_injected": "controlled-non-secret",
+        "stop_condition": "opaque-class",
+        "database_restored_during_rollback": false,
+        "layered_readiness_after_rollback": true,
+        "fixture_unchanged": true
+      }
+    }
+  }
 }
 ```
 
@@ -175,7 +238,9 @@ rollback conditions are all green.
 
 ## 9. Next transitions
 
-After Gate Review passes, update the state scope only as approved and enter
+After the current Gate Draft review passes, update the state only to
+`GATE_REVIEW`; this does not authorize implementation. After the separate
+Gate Review re-review passes, update the approved scope and enter
 `IMPLEMENTATION`. Before Implementation Review, run the focused tests and
 generate a current Review Bundle. Before Final Review, run:
 
