@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "docs-only-gate-finalization",
-  "phase": "GATE_REVIEW",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "b4b74f4b4dd0ca46ee19d187c49d3f95de3eae42"
@@ -21,7 +21,9 @@
       ".easyaudit/development-state.json",
       "docs/architecture/process-docs-only-finalization.md",
       "docs/architecture/process-docs-only-acceptance.md",
-      "docs/architecture/agent-development-workflow.md"
+      "docs/architecture/agent-development-workflow.md",
+      "scripts/easyaudit_gate.py",
+      "tests/tooling/test_easyaudit_gate.py"
     ],
     "forbidden_paths": [
       "src/**",
@@ -40,5 +42,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Independent Gate Review decision for the process-hardening Gate"
+  "next_allowed_action": "Implement docs-only validator rules and focused tooling tests, then request Implementation Review"
 }
