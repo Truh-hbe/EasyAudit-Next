@@ -1,29 +1,38 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
   "milestone": "M6",
-  "slice": "M6.0-controlled-pilot-rollout-readiness-v2",
-  "phase": "MERGED",
+  "slice": "M6.1-recovery-ready-infrastructure",
+  "phase": "GATE_DRAFT",
   "base": {
     "branch": "main",
-    "sha": "0d2a0408e0a80202c746ab92a8d8497babcff8cf"
+    "sha": "43fdf9d9a98c3e01d4f2fd50d795567c2fe9a62c"
   },
-  "work_branch": null,
+  "work_branch": "codex/m6-1-recovery-ready-infrastructure",
   "pr": {
-    "number": 38
+    "number": null
   },
   "gate_docs": [
-    "docs/architecture/m6-0-controlled-pilot-rollout-readiness.md",
-    "docs/architecture/m6-0-acceptance.md"
+    "docs/architecture/m6-1-recovery-ready-infrastructure.md",
+    "docs/architecture/m6-1-acceptance.md"
   ],
-  "candidate_kind": "docs-only",
+  "candidate_kind": "executable",
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
       "docs/architecture/roadmap.md",
-      "docs/architecture/m6-0-controlled-pilot-rollout-readiness.md",
-      "docs/architecture/m6-0-acceptance.md"
+      "docs/architecture/m6-1-recovery-ready-infrastructure.md",
+      "docs/architecture/m6-1-acceptance.md",
+      "docs/operations/m6-1-recovery-runbook.md",
+      ".gitignore",
+      ".dockerignore",
+      "Dockerfile",
+      "deploy/m6-1/**",
+      "scripts/m6_1_recovery.py",
+      "tests/infrastructure/test_m6_1_*.py",
+      "tests/tooling/test_m6_1_*.py",
+      ".github/workflows/m6-1-recovery.yml"
     ],
     "forbidden_paths": [
       "src/**",
@@ -31,15 +40,15 @@
       ".github/workflows/**",
       "openapi/**",
       "web/**",
-      "Dockerfile*",
-      "compose*",
-      "deploy/**"
+      "compose.yaml",
+      "tests/api/**",
+      "tests/browser/**"
     ]
   },
-  "fixed_head": "47967a55c392ba74614c8cf12e2a60a500955046",
-  "docs_review_head": "ea912a5c00dc386a79b7813feb637be3aace7769",
+  "fixed_head": null,
+  "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Create and review a new Gate before further implementation"
+  "next_allowed_action": "Run Gate checks and request independent Architecture / Acceptance Review"
 }

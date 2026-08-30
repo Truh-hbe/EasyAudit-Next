@@ -6,8 +6,14 @@ process Gate finalization PRs.
 Current baseline:
 
 ```text
-main@e643a3f43032908d8a0c59d2f6819ae42d38504a
+main@43fdf9d9a98c3e01d4f2fd50d795567c2fe9a62c
 ```
+
+The baseline is the post-M6.0 main tree. M6.0 controlled-pilot rollout
+readiness v2 is complete: its docs-only Gate was reviewed, merged and closed;
+the state/rebaseline closure is also merged. M6.1 is now at its own
+Architecture / Acceptance Gate Draft on this exact baseline. A roadmap entry
+does not authorize implementation, deployment, secret access or traffic.
 
 ## Completed — M0 Bootstrap
 
