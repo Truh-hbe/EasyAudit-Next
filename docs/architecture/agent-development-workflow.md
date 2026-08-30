@@ -88,6 +88,31 @@ allows the state transition to be recorded without requiring a commit to know
 its own future SHA. Any source, test, CI or configuration change after
 `fixed_head` fails the Gate and starts a new implementation review.
 
+### Candidate kinds and docs-only finalization
+
+The process may explicitly distinguish `candidate_kind: executable` from
+`candidate_kind: docs-only`. An executable candidate keeps the `fixed_head`
+contract above. A docs-only candidate has no executable fixed head and instead
+uses `docs_review_head` after its document candidate has been reviewed.
+
+The docs-only exception is process-owned and must not be created merely by
+adding executable paths to a milestone's `allowed_paths`. The validator
+implementation must reject source, scripts, tests, CI, OpenAPI, migrations,
+frontend, container and deployment paths for a docs-only candidate, reject
+`IMPLEMENTATION` and `FINAL_REVIEW`, and reject an active `MERGED` state. A
+merged docs-only state is closed with `active=false`.
+
+The docs-only lifecycle is therefore:
+
+```text
+GATE_DRAFT -> GATE_REVIEW -> MERGE_AUTHORIZED -> MERGED (then active=false)
+```
+
+Only the separately reviewed process-hardening implementation may add these
+validator rules and their tests. Until that implementation Gate passes, a
+process-hardening branch remains an ordinary executable candidate and must
+follow the full outer lifecycle.
+
 ## 3. Gate check
 
 Run:
