@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.0-controlled-pilot-rollout-readiness-v2",
-  "phase": "GATE_DRAFT",
+  "phase": "GATE_REVIEW",
   "base": {
     "branch": "main",
     "sha": "e643a3f43032908d8a0c59d2f6819ae42d38504a"
@@ -37,9 +37,9 @@
     ]
   },
   "fixed_head": null,
-  "docs_review_head": null,
+  "docs_review_head": "ea912a5c00dc386a79b7813feb637be3aace7769",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Architecture / Acceptance review for M6.0 docs-only Gate"
+  "next_allowed_action": "Complete M6.0 Gate review with exact-head evidence; no implementation authorization"
 }
