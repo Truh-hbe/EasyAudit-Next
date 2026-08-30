@@ -1,16 +1,18 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "docs-only-gate-finalization",
-  "phase": "FINAL_REVIEW",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
-    "sha": "b4b74f4b4dd0ca46ee19d187c49d3f95de3eae42"
+    "sha": "ac8767b872f607fdd140908f0b7daf3231748d7e"
   },
-  "work_branch": "codex/process-docs-only-gate-draft",
-  "pr": null,
+  "work_branch": null,
+  "pr": {
+    "number": 36
+  },
   "gate_docs": [
     "docs/architecture/process-docs-only-finalization.md",
     "docs/architecture/process-docs-only-acceptance.md"
@@ -40,5 +42,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Run Final Architecture / Implementation Review for fixed executable candidate bf2b7c24acd6cdb173f18a6caa1ee600e62c6821; require exact-head GitHub Actions before merge authorization"
+  "next_allowed_action": "Create and review a new Gate before further implementation"
 }
