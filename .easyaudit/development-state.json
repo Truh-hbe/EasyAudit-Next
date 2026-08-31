@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.1a-recovery-contract-tooling",
-  "phase": "MERGE_AUTHORIZED",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
     "sha": "85aaf364469e57b72a9c340f24d76292054ba5d5"
@@ -46,5 +46,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge PR #40 only; no M6.1b deployment, secret access, network qualification, restore rehearsal or traffic"
+  "next_allowed_action": "M6.1a is merged; M6.1b requires its own reviewed Gate and explicit operator authorization before any real environment operation"
 }
