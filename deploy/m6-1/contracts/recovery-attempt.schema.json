@@ -77,10 +77,10 @@
             ]
           },
           "then": {
-            "not": {
-              "required": [
-                "failure_reason_class"
-              ]
+            "properties": {
+              "failure_reason_class": {
+                "type": "null"
+              }
             }
           }
         }

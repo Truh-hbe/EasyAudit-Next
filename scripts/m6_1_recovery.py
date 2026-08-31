@@ -573,7 +573,7 @@ def _expected_schema(kind: str, model_type: type[ContractModel]) -> dict[str, An
                     "properties": {"result": {"const": "reachable"}},
                     "required": ["result"],
                 },
-                "then": {"not": {"required": ["failure_reason_class"]}},
+                "then": {"properties": {"failure_reason_class": {"type": "null"}}},
             },
         ]
         probes = definitions["RecoveryChecks"]["properties"]["exposure_probes"]

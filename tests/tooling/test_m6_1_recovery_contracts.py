@@ -128,6 +128,7 @@ def _rehash_recovery_set(recovery_set: dict, attempt: dict) -> None:
 
 def test_valid_linked_documents_and_deterministic_hash() -> None:
     release, recovery_set, attempt = _documents()
+    attempt["checks"]["exposure_probes"][0]["failure_reason_class"] = None
     assert recovery.validate_documents_from_dicts(release, recovery_set, attempt)
     assert recovery.canonical_hash(recovery.ReleaseManifest.model_validate(release)) == release[
         "manifest_sha256"
@@ -193,6 +194,22 @@ def test_no_go_mutations_fail(document: str, path: tuple[str, ...], value: objec
         attempt = mutated
     with pytest.raises(ValueError):
         recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+
+def test_exposure_failure_reason_nullability() -> None:
+    release, recovery_set, attempt = _documents()
+    attempt["checks"]["exposure_probes"][0]["failure_reason_class"] = None
+    assert recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    reachable_reason = copy.deepcopy(attempt)
+    reachable_reason["checks"]["exposure_probes"][0]["failure_reason_class"] = "unexpected-reason"
+    with pytest.raises(ValueError):
+        recovery.validate_documents_from_dicts(release, recovery_set, reachable_reason)
+
+    public_reason = copy.deepcopy(attempt)
+    public_reason["checks"]["exposure_probes"][1]["failure_reason_class"] = None
+    with pytest.raises(ValueError):
+        recovery.validate_documents_from_dicts(release, recovery_set, public_reason)
 
 
 def test_attempt_timestamps_are_authoritative() -> None:
@@ -444,6 +461,9 @@ def test_schema_sync_and_ignore_boundaries() -> None:
     checks = attempt_schema["$defs"]["RecoveryChecks"]
     assert checks["properties"]["layered_readiness"]["const"] is True
     assert checks["properties"]["exposure_probes"]["allOf"]
+    reachable_rule = attempt_schema["$defs"]["ExposureProbe"]["allOf"][3]
+    assert reachable_rule["then"]["properties"]["failure_reason_class"] == {"type": "null"}
+    assert "required" not in reachable_rule["then"]
     assert attempt_schema["$defs"]["TLSProof"]["properties"]["hostname_verified"]["const"] is True
     rollback = attempt_schema["$defs"]["RollbackProof"]["properties"]
     assert rollback["database_restored_during_rollback"]["const"] is False
