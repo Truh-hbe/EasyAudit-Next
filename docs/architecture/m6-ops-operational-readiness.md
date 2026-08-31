@@ -74,8 +74,8 @@ The current baseline intentionally retains several pilot-era simplifications:
 
 - `/health` is a static process response and does not prove database/schema
   readiness;
-- the SQLAlchemy Engine uses `pool_pre_ping=True` but has no explicit pool or
-  PostgreSQL statement/lock/idle-transaction budget;
+- the SQLAlchemy Engine uses `pool_pre_ping=True` but has no explicit pool,
+  connection-establishment, statement, lock or idle-transaction budget;
 - every authenticated request reaches the Session touch path;
 - `auth_sessions.last_seen_at` can be updated on every successful touch;
 - the login path performs expensive Argon2 verification and persists
@@ -121,7 +121,57 @@ Production changes under `src/easyaudit_next/review_core/**` or
 `src/easyaudit_next/scenarios/**` are forbidden for this slice unless the Gate
 is explicitly reopened.
 
-## 1.2 No database migration
+## 1.2 Operational concerns remain outside business/application policy
+
+Operational concerns introduced by M6-Ops belong to API, middleware,
+`operations/` or infrastructure adapters.
+
+The following dependency direction is mandatory:
+
+```text
+HTTP request
+  -> API / operational admission adapter
+  -> operational decision
+  -> admitted request
+  -> existing Platform application service
+```
+
+and never:
+
+```text
+Platform application/domain
+  -> HTTP request knowledge
+  -> rate limiter
+  -> metrics implementation
+  -> source-IP/trusted-proxy policy
+```
+
+In particular, the login limiter is not authentication business policy.
+`AuthenticationService.login()` remains responsible for the existing
+credential lookup, dummy/real Argon2 verification, Session creation and
+PlatformAudit behavior after admission. It must not import or call the limiter,
+metrics registry, FastAPI/Starlette request objects, client address parsing or
+request-source context.
+
+`platform/application/authentication.py` may change only where M6-Ops narrows
+the existing Session-touch write behavior; it must not become the owner of
+login rate-limit policy.
+
+Architecture enforcement must preserve at least:
+
+```text
+review_core/domain      -> never operations
+scenarios               -> never operations
+platform/domain         -> never operations
+platform/application    -> never operations rate-limit/metrics/HTTP-source concern
+operations              -> never Review Core/Scenario business truth
+```
+
+A narrow pure login-normalization helper may be shared by authentication and
+admission only if it is infrastructure-free, deterministic, database-free and
+does not invert those dependencies.
+
+## 1.3 No database migration
 
 M6-Ops requires no schema change.
 
@@ -140,7 +190,7 @@ Scenario migrations
 If implementation discovers that a migration is required, stop implementation
 and reopen this Gate.
 
-## 1.3 Audit facts and operational telemetry remain separate
+## 1.4 Audit facts and operational telemetry remain separate
 
 `PlatformAuditEvent` remains append-only security/administrative audit history.
 Structured logs and metrics are operational telemetry.
@@ -151,7 +201,7 @@ limiter before credential verification must not create one PlatformAudit row
 per rejected request merely for telemetry. It is represented by operational
 log/metric evidence instead.
 
-## 1.4 No infrastructure expansion without evidence
+## 1.5 No infrastructure expansion without evidence
 
 M6-Ops does not require:
 
@@ -229,6 +279,7 @@ through Alembic APIs. Do not hard-code one revision string or use an ordinal
 Readiness must fail closed for:
 
 ```text
+DB connection establishment timeout
 DB unavailable
 pool checkout unavailable
 database behind code
@@ -264,8 +315,7 @@ Header:
 X-Request-ID
 ```
 
-A caller-provided value may be preserved only when it satisfies a strict
-bounded format such as:
+A caller-provided value may be preserved only when it satisfies:
 
 ```text
 ^[A-Za-z0-9._:-]{1,64}$
@@ -284,7 +334,7 @@ name, login name, password, password hash, raw token, Cookie or arbitrary
 business payload. Observability context must never become an authorization
 source.
 
-# 4. Structured logging
+# 4. Structured logging and production log-sink safety
 
 Production request logs must be machine-parseable JSON.
 
@@ -317,7 +367,9 @@ sentinel such as `__unmatched__`.
 
 Latency must use a monotonic clock.
 
-Production request telemetry must never log:
+## 4.1 Forbidden production log material
+
+No production application-process log sink may contain:
 
 ```text
 password/current_password/new_password/temporary password
@@ -328,17 +380,46 @@ Authorization bearer value
 private key or secret value
 DATABASE_URL with credentials
 request body or response body
+multipart body or raw uploaded bytes
 raw Evidence content
 raw query string by default
 ```
 
-Unexpected failures may record a bounded `error_class`. The authoritative
-request record must not blindly serialize `str(exception)`, `repr(exception)`
-or arbitrary traceback values.
+Unexpected failures may record a bounded `error_class`. Production request
+handling must not blindly serialize `str(exception)`, `repr(exception)`, raw
+exception messages or arbitrary traceback values into any stdout/stderr/logging
+sink.
 
-The qualified runtime should avoid a second unstructured Uvicorn access log
-when it would duplicate requests or expose raw paths/query data. The custom
-structured request record is authoritative.
+A controlled unhandled exception whose message contains a secret sentinel must
+therefore result only in sanitized operational error metadata, not the sentinel
+itself.
+
+## 4.2 Uvicorn/FastAPI/root logger contract
+
+The qualified production runtime must not retain a second unsafe Uvicorn access
+log or framework/root error path that bypasses the M6-Ops redaction contract.
+
+Exactly one of the following is acceptable:
+
+```text
+A. disable the default Uvicorn access log for the qualified runtime
+   and use the authoritative structured request logger;
+
+or
+
+B. replace/reconfigure the Uvicorn access logger so its emitted fields satisfy
+   the same bounded route-template/no-query/no-secret contract.
+```
+
+A default unstructured access log that prints raw request targets is forbidden.
+
+Framework/root/Uvicorn error logging must likewise be configured so an
+unhandled request exception cannot leak arbitrary exception message text or
+secret-bearing traceback values to process stdout/stderr. Sanitized exception
+class/request-id evidence is sufficient for this controlled-pilot slice.
+
+The secret-negative acceptance captures the actual qualified application
+process logging sink, not only the custom JSON logger.
 
 # 5. Operational metrics
 
@@ -349,7 +430,7 @@ operational surface, preferably:
 GET /metrics
 ```
 
-It is an operational endpoint, not a Product API, should be excluded from the
+It is an operational endpoint, not a Product API, must be excluded from the
 Product OpenAPI contract, and remains inside the approved private operational
 boundary.
 
@@ -391,6 +472,7 @@ configured pool size
 checked-out connections
 overflow
 pool checkout timeout count
+connection establishment failure/timeout
 statement timeout
 lock timeout
 deadlock
@@ -412,20 +494,22 @@ make resource limits explicit.
 Controlled-pilot defaults:
 
 ```text
-pool_size                           = 5
-max_overflow                        = 0
-pool_timeout                        = 5 seconds
-statement_timeout                   = 15 seconds
-lock_timeout                        = 3 seconds
+pool_size                            = 5
+max_overflow                         = 0
+pool_timeout                         = 5 seconds
+connect_timeout                      = 5 seconds
+statement_timeout                    = 15 seconds
+lock_timeout                         = 3 seconds
 idle_in_transaction_session_timeout = 60 seconds
-pool_pre_ping                       = true
+pool_pre_ping                        = true
 ```
 
-Suggested validated settings bounds:
+Validated settings bounds:
 
 ```text
 database_pool_size:                    1..20, default 5
 database_pool_timeout_seconds:         1..30, default 5
+database_connect_timeout_seconds:      1..30, default 5
 database_statement_timeout_ms:      1000..120000, default 15000
 database_lock_timeout_ms:             100..30000, default 3000
 database_idle_transaction_timeout_ms: 5000..300000, default 60000
@@ -435,10 +519,33 @@ database_idle_transaction_timeout_ms: 5000..300000, default 60000
 the connection budget. Configuration must reject non-positive budgets and
 `lock_timeout >= statement_timeout`.
 
-Every application connection must receive the PostgreSQL session timeout
-settings centrally through Engine/connection configuration before ordinary
-business statements execute. Individual repositories must not be responsible
-for remembering `SET` statements.
+## 6.1 Connection establishment budget
+
+`connect_timeout` means the psycopg/PostgreSQL connection-establishment budget,
+not SQLAlchemy pool checkout time. It must be applied centrally to every new
+application DBAPI connection through the Engine/driver connection parameters.
+
+A pool checkout timeout does not substitute for connection-establishment
+budget. A network black-hole/handshake stall must not be allowed to hang
+readiness or an ordinary new application connection indefinitely.
+
+If the DATABASE_URL itself contains a conflicting driver timeout, application
+configuration must have one documented precedence rule and tests must prove the
+reviewed effective value; silent ambiguity is forbidden.
+
+## 6.2 PostgreSQL session budgets
+
+Every application connection must receive:
+
+```text
+statement_timeout
+lock_timeout
+idle_in_transaction_session_timeout
+```
+
+centrally through Engine/connection configuration before ordinary business
+statements execute. Individual repositories must not be responsible for
+remembering `SET` statements.
 
 The qualified deployment must keep:
 
@@ -456,34 +563,119 @@ persists audit facts. Admission protection must execute before credential
 lookup, Argon2/dummy Argon2 verification and PlatformAudit insertion for a
 throttled request.
 
+The limiter is an API/operations admission adapter. It is not owned by
+`AuthenticationService` and must not be imported by Platform domain/application
+code.
+
+Required flow:
+
+```text
+HTTP login request
+  -> parse bounded submitted login + trusted source context
+  -> normalize submitted login using shared pure normalization
+  -> operational admission decision
+     -> denied: 429 + operational telemetry only
+     -> admitted: AuthenticationService.login(...)
+```
+
 Rate limiting must not depend on whether the submitted login exists. Known and
 unknown users follow the same admission algorithm.
 
 A bounded process-local token-bucket implementation is sufficient for the
 single/fixed pilot API topology; no Redis or persistence model is required.
 
+## 7.1 Normalized submitted-login identity
+
+The limiter must fingerprint the same normalized submitted-login form used by
+authentication before credential lookup:
+
+```text
+strip surrounding whitespace
++
+case-fold/lowercase according to the existing login contract
+```
+
+The exact normalization must live in one deterministic database-free pure
+function reused by both admission and authentication so aliases such as:
+
+```text
+alice
+Alice
+ALICE
+" alice "
+```
+
+cannot create separate limiter identities while authenticating as the same
+login.
+
+The normalized/raw login value must not appear in metrics or ordinary limiter
+telemetry. Per-key state uses an opaque one-way fingerprint scoped to the
+running service configuration.
+
+## 7.2 Reviewed trusted source identity
+
+The `source` portion of the per-key budget must come from one reviewed trusted
+source policy.
+
+For the controlled private deployment:
+
+- directly connected client address may be used when FastAPI is directly
+  authoritative for the client connection; or
+- when a trusted reverse proxy is deployed, forwarded client identity may be
+  accepted only from explicitly trusted proxy peer(s) and through the exact
+  configured forwarding-header contract.
+
+Arbitrary caller-supplied `X-Forwarded-For`, `Forwarded` or similar headers from
+an untrusted peer must never manufacture a new limiter source identity.
+
+The source fingerprint is opaque in limiter state/telemetry. Raw client
+addresses are not metric labels.
+
+## 7.3 Two-budget atomic admission
+
 The pilot limiter has two independent budgets:
 
 ```text
 global verification bucket
 +
-per submitted-login/source bucket
+per normalized-login/source bucket
 ```
 
-Recommended initial values:
+Initial reviewed values:
 
 ```text
 global: capacity 20, refill 1 token/second
 per login/source: capacity 5, refill 1 token/12 seconds
 ```
 
-Each admitted attempt consumes capacity regardless of eventual success or
-failure.
+One attempt is admitted only when both budgets permit the same operation.
+Admission/consumption is one thread-safe logical transaction:
 
-Per-key state must use an opaque fingerprint rather than exposing raw login
-names in logs/metrics. State must be thread-safe, monotonic-clock based,
-bounded in entry count and TTL/LRU evicted. Random usernames must not create an
-unbounded dictionary.
+```text
+both permit
+  -> consume one token from both
+  -> admit
+
+either denies
+  -> consume from neither
+  -> deny
+```
+
+Partial consumption is forbidden. In particular, repeated traffic against an
+already denied per-key bucket must not drain the global bucket and create a
+cheap global denial of service.
+
+Each admitted attempt consumes capacity regardless of eventual authentication
+success or failure.
+
+The final-token decision across concurrent request threads must be atomic: the
+implementation must not over-admit either the global or per-key budget.
+
+## 7.4 Bounded state and response
+
+Per-key state must be thread-safe, monotonic-clock based, bounded in entry count
+and TTL/LRU evicted. Random usernames/sources must not create an unbounded
+dictionary.
 
 The limiter must never call `sleep()` to implement backoff.
 
@@ -499,12 +691,14 @@ The response is generic and reveals no account existence.
 A throttled request must perform:
 
 ```text
+zero AuthenticationService.login calls
 zero password verification
+zero credential repository lookup
 zero AuthSession creation
 zero PlatformAuditEvent creation
 ```
 
-and increment only operational throttling telemetry.
+and increment only bounded operational throttling telemetry.
 
 Process-local rate limiting qualifies only the bounded reviewed API topology.
 If later deployment adds independently reachable replicas/processes, aggregate
@@ -534,8 +728,8 @@ now - persisted last_seen_at > 10 minutes
 Exactly ten minutes is not stale.
 
 Because authentication already loaded the authoritative Session row, the
-service should first use that value as a fast path. Inside the interval, no
-UPDATE statement is issued.
+service first uses that value as a fast path. Inside the interval, no UPDATE
+statement is issued.
 
 Once the coarse value is stale, the repository must execute one atomic
 conditional update equivalent to:
@@ -595,6 +789,19 @@ Admin
 A route render failure should preserve the authenticated Product Shell where
 possible: header/navigation remain usable and another route can be reached.
 Navigating away or explicitly retrying must reset the failed route boundary.
+
+## 9.3 Async API failure is not an ErrorBoundary substitute
+
+React ErrorBoundaries contain render/lifecycle failures; they do not replace
+normal async request-state handling.
+
+Representative data-loading pages must therefore explicitly leave loading
+state and render a generic recoverable error state after the shared API client
+exhausts its permitted timeout/retry path. The Product Shell must remain usable,
+and the user must be able to retry manually or navigate elsewhere.
+
+M6-Ops requires one representative real browser/component proof for this
+contract; it does not require duplicating the same test across every page.
 
 # 10. API client timeout
 
@@ -719,9 +926,12 @@ src/easyaudit_next/operations/
   request_context.py
   logging.py
   metrics.py
+  login_admission.py
 ```
 
-and a narrow login admission component under Platform application code.
+or an equivalent API-layer admission adapter under `src/easyaudit_next/api/`.
+The login limiter itself must not live under `platform/application/` or
+`platform/domain/`.
 
 Expected existing production files that may require modification include:
 
@@ -731,12 +941,13 @@ src/easyaudit_next/api/router.py
 src/easyaudit_next/api/dependencies.py
 src/easyaudit_next/infrastructure/database.py
 src/easyaudit_next/platform/settings.py
-src/easyaudit_next/platform/application/authentication.py
+src/easyaudit_next/platform/application/authentication.py  # Session touch only
 src/easyaudit_next/platform/persistence/repositories.py
 web/src/main.tsx
 web/src/app/shell/ProductShell.tsx
 web/src/app/errors/**
 web/src/api/client.ts
+representative page error-state code where needed
 pyproject.toml
 uv.lock
 Dockerfile
@@ -750,8 +961,7 @@ This list is a Gate proposal, not permission for unrelated edits.
 Operational infrastructure may depend on Settings, SQLAlchemy Engine,
 FastAPI/ASGI, logging and the metrics library. It must not depend on Review
 Core domain models, Scenario implementations, Workbench/Management business
-queries, Notification business semantics or reminder recipient policy. Review
-Core must never import the operational layer.
+queries, Notification business semantics or reminder recipient policy.
 
 # 14. CI/runtime cutover
 
@@ -767,7 +977,9 @@ to:
 migrate DB -> start backend -> poll /health/ready -> run browser acceptance
 ```
 
-This proves a static process response is not mistaken for rollout readiness.
+The qualified runtime configuration used by CI/container acceptance must also
+exercise the actual production logging contract, including the Uvicorn/root
+logger configuration that prevents an unsafe second sink.
 
 # 15. Explicit non-goals
 
@@ -810,6 +1022,7 @@ browser foundation acceptance
 real PostgreSQL + FastAPI + React browser acceptance
 Python lock freshness check
 Docker build from committed lock
+qualified-process log-sink secret-negative test
 current Review Bundle
 exact-head GitHub Actions success
 ```
