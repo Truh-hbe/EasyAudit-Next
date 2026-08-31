@@ -45,12 +45,18 @@ def _documents() -> tuple[dict, dict, dict]:
         "service_identities": release["service_identities"],
         "config_revision": "config-1",
         "secret_refs": [{"id": "db-secret", "version": "v1"}],
+        "detached_signature_ref": "signature-1",
         "postgres_backup": {
             "id": "pg-backup-1",
             "completed_at": "2026-08-31T00:04:00Z",
             "failure_domain_ref": "backup-domain",
         },
-        "object_root": {"id": "object-root-1", "count": 2, "content_root": _digest("c")},
+        "object_root": {
+            "id": "object-root-1",
+            "count": 2,
+            "content_root": _digest("c"),
+            "captured_at": "2026-08-31T00:03:00Z",
+        },
         "schema": {"postgres_major": 17, "alembic_head": "alembic-1"},
         "restore_order": ["postgres", "object_fixture", "application", "gateway"],
         "manifest_sha256": _digest("0"),
@@ -64,6 +70,7 @@ def _documents() -> tuple[dict, dict, dict]:
         "recovery_set_id": "recovery-1",
         "manifest_sha256": recovery_set["manifest_sha256"],
         "target_opaque_id": "target-1",
+        "target_fingerprint": _digest("e"),
         "clean_target_ref": "target-1",
         "runtime_prerequisite_ref": "runtime-1",
         "private_network_prerequisite_ref": "private-network-1",
@@ -77,6 +84,7 @@ def _documents() -> tuple[dict, dict, dict]:
             "layered_readiness": True,
             "private_tls": {
                 "certificate_fingerprint": _digest("d"),
+                "target_fingerprint": _digest("e"),
                 "issuer_trust_store_ref": "trust-store-1",
                 "hostname_verified": True,
                 "validity_checked": True,
@@ -133,6 +141,89 @@ def test_valid_linked_documents_and_deterministic_hash() -> None:
     assert recovery.canonical_hash(recovery.ReleaseManifest.model_validate(release)) == release[
         "manifest_sha256"
     ]
+
+
+def test_joint_cut_includes_object_root_capture() -> None:
+    release, recovery_set, attempt = _documents()
+    recovery_set["object_root"]["captured_at"] = "2026-08-30T23:59:59Z"
+    _rehash_recovery_set(recovery_set, attempt)
+    with pytest.raises(ValueError):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    release, recovery_set, attempt = _documents()
+    recovery_set["object_root"]["captured_at"] = "2026-08-31T00:05:00.000001Z"
+    _rehash_recovery_set(recovery_set, attempt)
+    with pytest.raises(ValueError):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    for captured_at in ("2026-08-31T00:00:00Z", "2026-08-31T00:05:00Z"):
+        release, recovery_set, attempt = _documents()
+        recovery_set["object_root"]["captured_at"] = captured_at
+        _rehash_recovery_set(recovery_set, attempt)
+        assert recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+
+def test_readiness_evidence_uses_attempt_target_and_restore_window() -> None:
+    release, recovery_set, attempt = _documents()
+    attempt["target_fingerprint"] = _digest("f")
+    with pytest.raises(ValueError, match="target mismatch"):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    release, recovery_set, attempt = _documents()
+    attempt["checks"]["private_tls"]["target_fingerprint"] = _digest("f")
+    with pytest.raises(ValueError, match="target mismatch"):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    release, recovery_set, attempt = _documents()
+    attempt["checks"]["exposure_probes"][0]["probe_at"] = "2026-08-31T01:05:59Z"
+    with pytest.raises(ValueError, match="restoration window"):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    release, recovery_set, attempt = _documents()
+    for evidence in [attempt["checks"]["private_tls"], *attempt["checks"]["exposure_probes"]]:
+        evidence["probe_at"] = attempt["restoration_started_at"]
+    assert recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    release, recovery_set, attempt = _documents()
+    for evidence in [attempt["checks"]["private_tls"], *attempt["checks"]["exposure_probes"]]:
+        evidence["probe_at"] = attempt["restored_ready_at"]
+    assert recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+
+def test_release_component_digests_must_be_distinct_after_rehashing() -> None:
+    release, recovery_set, attempt = _documents()
+    release["release_digests"]["web_gateway"] = release["release_digests"]["api"]
+    release["manifest_sha256"] = recovery.canonical_hash(release)
+    recovery_set["release_digests"] = copy.deepcopy(release["release_digests"])
+    recovery_set["manifest_sha256"] = recovery.canonical_hash(recovery_set)
+    attempt["manifest_sha256"] = recovery_set["manifest_sha256"]
+    with pytest.raises(ValueError):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+
+def test_timestamps_require_string_representation() -> None:
+    for value in (1_756_549_200, "1756549200"):
+        release, recovery_set, attempt = _documents()
+        release["created_at"] = value
+        with pytest.raises(ValueError, match="invalid document"):
+            recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    release, recovery_set, attempt = _documents()
+    recovery_set["object_root"]["captured_at"] = 1_756_549_200
+    with pytest.raises(ValueError, match="invalid document"):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+    release, recovery_set, attempt = _documents()
+    attempt["checks"]["private_tls"]["probe_at"] = "1756549200"
+    with pytest.raises(ValueError, match="invalid document"):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
+
+
+def test_detached_signature_reference_is_required() -> None:
+    release, recovery_set, attempt = _documents()
+    recovery_set.pop("detached_signature_ref")
+    with pytest.raises(ValueError, match="invalid document"):
+        recovery.validate_documents_from_dicts(release, recovery_set, attempt)
 
 
 def test_timestamp_representation_changes_manifest_hash() -> None:

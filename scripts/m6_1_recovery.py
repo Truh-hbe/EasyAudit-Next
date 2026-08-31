@@ -22,6 +22,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StrictBool,
@@ -37,7 +38,22 @@ SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 OPAQUE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 OpaqueId = Annotated[StrictStr, Field(min_length=1, max_length=128, pattern=OPAQUE_ID_RE.pattern)]
 Digest = Annotated[StrictStr, Field(pattern=SHA256_RE.pattern)]
-Timestamp = datetime
+
+
+def _timestamp_string(value: object) -> object:
+    if not isinstance(value, str):
+        raise ValueError("timestamp must be an ISO 8601 string")
+    try:
+        # Validate the lexical representation before Pydantic's datetime
+        # parser can coerce numeric strings into Unix timestamps.  The
+        # field-level validator below still enforces an explicit offset/Z.
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("timestamp must be an ISO 8601 string") from None
+    return value
+
+
+Timestamp = Annotated[datetime, BeforeValidator(_timestamp_string)]
 REQUIRED_RESTORE_ORDER = ("postgres", "object_fixture", "application", "gateway")
 SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
@@ -64,6 +80,11 @@ def _require_unique_secret_refs(refs: list[SecretRef]) -> None:
     keys = [(ref.id, ref.version) for ref in refs]
     if len(keys) != len(set(keys)) or len({key[0] for key in keys}) != len(keys):
         raise ValueError("secret references must be unique")
+
+
+def _require_distinct_release_digests(release_digests: dict[str, Digest]) -> None:
+    if release_digests["api"] == release_digests["web_gateway"]:
+        raise ValueError("api and web-gateway release digests must differ")
 
 
 class SchemaCompatibility(ContractModel):
@@ -99,10 +120,14 @@ class ObjectRoot(ContractModel):
     id: OpaqueId
     count: Annotated[StrictInt, Field(ge=0)]
     content_root: Digest
+    captured_at: Timestamp
+
+    _captured_at_aware = field_validator("captured_at")(_aware)
 
 
 class TLSProof(ContractModel):
     certificate_fingerprint: Digest
+    target_fingerprint: Digest
     issuer_trust_store_ref: OpaqueId
     hostname_verified: StrictBool
     validity_checked: StrictBool
@@ -201,6 +226,7 @@ class ReleaseManifest(ContractModel):
         required = {"api", "web_gateway"}
         if not required.issubset(self.release_digests):
             raise ValueError("api and web_gateway image digests are required")
+        _require_distinct_release_digests(self.release_digests)
         if set(self.service_identities) != {"postgres", "object_storage"}:
             raise ValueError("postgres and object-storage identities are required")
         _require_unique_secret_refs(self.secret_refs)
@@ -227,6 +253,7 @@ class RecoverySet(ContractModel):
     )
     manifest_sha256: Digest
     signer_key_ref: OpaqueId
+    detached_signature_ref: OpaqueId
     primary_failure_domain_ref: OpaqueId
 
     _cut_started_aware = field_validator("cut_started_at")(_aware)
@@ -242,11 +269,18 @@ class RecoverySet(ContractModel):
             <= self.recovery_set_cut_completed
         ):
             raise ValueError("database backup must complete within the joint cut")
+        if not (
+            self.cut_started_at
+            <= self.object_root.captured_at
+            <= self.recovery_set_cut_completed
+        ):
+            raise ValueError("object root capture must occur within the joint cut")
         if self.postgres_backup.failure_domain_ref == self.primary_failure_domain_ref:
             raise ValueError("backup must use a separate failure domain")
         required = {"api", "web_gateway"}
         if not required.issubset(self.release_digests):
             raise ValueError("recovery set must include complete release digests")
+        _require_distinct_release_digests(self.release_digests)
         if set(self.service_identities) != {"postgres", "object_storage"}:
             raise ValueError("recovery set must include postgres and object-storage identities")
         if len(set(self.restore_order)) != len(self.restore_order):
@@ -263,6 +297,7 @@ class RecoveryAttempt(ContractModel):
     recovery_set_id: OpaqueId
     manifest_sha256: Digest
     target_opaque_id: OpaqueId
+    target_fingerprint: Digest
     clean_target_ref: OpaqueId
     runtime_prerequisite_ref: OpaqueId
     private_network_prerequisite_ref: OpaqueId
@@ -470,18 +505,22 @@ def _validate_linked(
         raise ValueError("recovery-attempt: observed RTO exceeds 4 hours")
     if attempt.checks.rollback.known_good_release_set_id != recovery_set.release_set_id:
         raise ValueError("recovery-attempt: rollback baseline does not match release set")
-    fingerprints = {probe.target_fingerprint for probe in attempt.checks.exposure_probes}
-    if len(fingerprints) != 1:
-        raise ValueError("recovery-attempt: exposure probes must identify one target")
+    evidence_fingerprints = {
+        attempt.target_fingerprint,
+        attempt.checks.private_tls.target_fingerprint,
+        *(probe.target_fingerprint for probe in attempt.checks.exposure_probes),
+    }
+    if evidence_fingerprints != {attempt.target_fingerprint}:
+        raise ValueError("recovery-attempt: readiness evidence target mismatch")
     evidence_timestamps = [
         attempt.checks.private_tls.probe_at,
         *(probe.probe_at for probe in attempt.checks.exposure_probes),
     ]
     if any(
-        timestamp < attempt.recovery_triggered_at or timestamp > attempt.restored_ready_at
+        timestamp < attempt.restoration_started_at or timestamp > attempt.restored_ready_at
         for timestamp in evidence_timestamps
     ):
-        raise ValueError("recovery-attempt: probe evidence is outside the attempt window")
+        raise ValueError("recovery-attempt: probe evidence is outside the restoration window")
     if attempt.clean_target_ref != attempt.target_opaque_id:
         raise ValueError("recovery-attempt: clean target reference mismatch")
     # Keep the raw parse intentionally used: this guards against callers that

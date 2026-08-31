@@ -47,6 +47,11 @@
     "ObjectRoot": {
       "additionalProperties": false,
       "properties": {
+        "captured_at": {
+          "format": "date-time",
+          "title": "Captured At",
+          "type": "string"
+        },
         "content_root": {
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Content Root",
@@ -68,7 +73,8 @@
       "required": [
         "id",
         "count",
-        "content_root"
+        "content_root",
+        "captured_at"
       ],
       "title": "ObjectRoot",
       "type": "object"
@@ -167,6 +173,13 @@
     "cut_started_at": {
       "format": "date-time",
       "title": "Cut Started At",
+      "type": "string"
+    },
+    "detached_signature_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Detached Signature Ref",
       "type": "string"
     },
     "manifest_sha256": {
@@ -316,6 +329,7 @@
     "restore_order",
     "manifest_sha256",
     "signer_key_ref",
+    "detached_signature_ref",
     "primary_failure_domain_ref"
   ],
   "title": "RecoverySet",
@@ -323,6 +337,7 @@
   "x-model-fields": [
     "config_revision",
     "cut_started_at",
+    "detached_signature_ref",
     "manifest_sha256",
     "object_root",
     "postgres_backup",

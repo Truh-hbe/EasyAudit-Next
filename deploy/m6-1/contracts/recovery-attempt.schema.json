@@ -287,6 +287,11 @@
           "title": "Probe At",
           "type": "string"
         },
+        "target_fingerprint": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Target Fingerprint",
+          "type": "string"
+        },
         "validity_checked": {
           "const": true,
           "title": "Validity Checked",
@@ -295,6 +300,7 @@
       },
       "required": [
         "certificate_fingerprint",
+        "target_fingerprint",
         "issuer_trust_store_ref",
         "hostname_verified",
         "validity_checked",
@@ -390,6 +396,11 @@
       "title": "Schema Version",
       "type": "string"
     },
+    "target_fingerprint": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Target Fingerprint",
+      "type": "string"
+    },
     "target_opaque_id": {
       "maxLength": 128,
       "minLength": 1,
@@ -404,6 +415,7 @@
     "recovery_set_id",
     "manifest_sha256",
     "target_opaque_id",
+    "target_fingerprint",
     "clean_target_ref",
     "runtime_prerequisite_ref",
     "private_network_prerequisite_ref",
@@ -432,6 +444,7 @@
     "restored_ready_at",
     "runtime_prerequisite_ref",
     "schema_version",
+    "target_fingerprint",
     "target_opaque_id"
   ]
 }

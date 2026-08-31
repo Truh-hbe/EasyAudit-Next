@@ -61,12 +61,17 @@ used to build an image but is not a release identity.
 One immutable recovery-set manifest must jointly link only cut-time facts:
 the quiesced PostgreSQL backup, object snapshot/version or logical
 content-root manifest, release digests, configuration revision,
-secret-reference versions, compatibility checks, restore order and manifest
-hash/signature. Separate, independently selected database and object restores
-do not satisfy acceptance. A separate immutable recovery-attempt proof must
-reference that set and its manifest hash, and record the post-cut target,
-timings, readiness checks and rollback results; those facts must not be added
-to the recovery-set manifest.
+secret-reference versions, compatibility checks, restore order,
+detached-signature reference and manifest hash/signature. Both the database
+backup completion and object-root capture
+must lie within the inclusive joint-cut interval; separate, independently
+selected database and object restores do not satisfy acceptance. A separate
+immutable recovery-attempt proof must reference that set and its manifest hash,
+record an attempt-level target fingerprint, and record the post-cut target,
+timings, readiness checks and rollback results. TLS and exposure probes must
+repeat the same target fingerprint and be measured only from restoration start
+through restored readiness; those facts must not be added to the recovery-set
+manifest.
 
 ## 4. Fresh deployment and layered readiness
 
@@ -110,7 +115,8 @@ or claim success after a partial restore.
 
 ## 6. Timing definitions and objectives
 
-All timestamps are ISO 8601 with an explicit offset or UTC `Z`, and the
+All timestamp fields are submitted as ISO 8601/RFC 3339 strings with an
+explicit offset or UTC `Z` (numeric Unix values are not accepted), and the
 evidence records the clock source and observed monotonic durations. Define:
 
 ```text
@@ -125,7 +131,9 @@ observed RTO = restored_ready_at - recovery_triggered_at
 
 Go requires `observed RPO <= 24 hours` and `observed RTO <= 4 hours` for the
 same recovery set. `restoration_started_at` is retained for diagnostic
-segment timing only. Approved clean host/container runtime and private
+segment timing only; readiness probe timestamps must be within the inclusive
+`restoration_started_at` → `restored_ready_at` window. Approved clean
+host/container runtime and private
 network availability are explicit rehearsal prerequisites and must be
 disclosed; they must not be silently removed from the measured RTO. The
 evidence must not substitute backup age for a joint cut, or container start
@@ -158,16 +166,18 @@ Sanitized evidence may contain only:
     "config_revision": "opaque-revision",
     "secret_refs": [{"id": "opaque-id", "version": "opaque-version"}],
     "postgres_backup": {"id": "opaque-id", "completed_at": "timestamp"},
-    "object_root": {"id": "opaque-id", "count": 0, "content_root": "sha256:..."},
+    "object_root": {"id": "opaque-id", "count": 0, "content_root": "sha256:...", "captured_at": "timestamp"},
     "schema": {"postgres_major": 17, "alembic_head": "opaque-revision"},
     "restore_order": ["postgres", "object_fixture", "application", "gateway"],
     "manifest_sha256": "sha256:...",
-    "signer_key_ref": "opaque-id"
+    "signer_key_ref": "opaque-id",
+    "detached_signature_ref": "opaque-id"
   },
   "recovery_attempt": {
     "recovery_set_id": "opaque-id",
     "manifest_sha256": "sha256:...",
     "target_opaque_id": "opaque-id",
+    "target_fingerprint": "sha256:...",
     "recovery_triggered_at": "timestamp",
     "restoration_started_at": "timestamp",
     "restored_ready_at": "timestamp",
@@ -178,6 +188,7 @@ Sanitized evidence may contain only:
       "layered_readiness": true,
       "private_tls": {
         "certificate_fingerprint": "sha256:...",
+        "target_fingerprint": "sha256:...",
         "issuer_trust_store_ref": "opaque-id",
         "hostname_verified": true,
         "validity_checked": true,
