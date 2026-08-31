@@ -1,0 +1,28 @@
+name: m6-lock-bootstrap
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+      - name: Resolve reviewed Python dependency set
+        run: uv lock
+      - name: Upload generated lockfile for this implementation run
+        uses: actions/upload-artifact@v4
+        with:
+          name: m6-uv-lock
+          path: uv.lock
+          if-no-files-found: error
