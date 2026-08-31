@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.1-recovery-ready-infrastructure",
-  "phase": "GATE_DRAFT",
+  "phase": "GATE_REVIEW",
   "base": {
     "branch": "main",
     "sha": "43fdf9d9a98c3e01d4f2fd50d795567c2fe9a62c"
@@ -45,9 +45,9 @@
     ]
   },
   "fixed_head": null,
-  "docs_review_head": null,
+  "docs_review_head": "dcf4361dcd2a3114349508e00023d10133aa98a0",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Revise Gate documents and request independent Gate Draft Review"
+  "next_allowed_action": "Complete M6.1 Gate review with exact-head evidence; no implementation authorization"
 }
