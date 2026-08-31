@@ -1,45 +1,50 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
   "milestone": "M6",
-  "slice": "M6-ops-operational-readiness",
-  "phase": "MERGED",
+  "slice": "M6.1a-recovery-contract-tooling",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
-    "sha": "9d3daaa941548066b65877a5aa434fcdbb46c745"
+    "sha": "85aaf364469e57b72a9c340f24d76292054ba5d5"
   },
-  "work_branch": "codex/m6-ops-gate-draft",
+  "work_branch": "codex/m6-1-recovery-ready-infrastructure",
   "pr": {
-    "number": 41
+    "number": 40
   },
   "gate_docs": [
-    "docs/architecture/m6-ops-operational-readiness.md",
-    "docs/architecture/m6-ops-acceptance.md"
+    "docs/architecture/m6-1-recovery-ready-infrastructure.md",
+    "docs/architecture/m6-1-acceptance.md"
   ],
-  "candidate_kind": "docs-only",
+  "candidate_kind": "executable",
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/roadmap.md",
-      "docs/architecture/m6-ops-operational-readiness.md",
-      "docs/architecture/m6-ops-acceptance.md"
+      "deploy/m6-1/contracts/**",
+      "scripts/m6_1_recovery.py",
+      "tests/tooling/test_m6_1_recovery_contracts.py",
+      "docs/architecture/m6-1*",
+      "docs/architecture/roadmap.md"
     ],
     "forbidden_paths": [
       "src/**",
       "alembic/**",
-      ".github/workflows/**",
       "openapi/**",
       "web/**",
       "Dockerfile*",
       "compose*",
-      "deploy/**"
+      ".github/workflows/**",
+      "docs/operations/**",
+      "tests/infrastructure/**",
+      ".gitignore",
+      ".dockerignore"
     ]
   },
-  "fixed_head": null,
-  "docs_review_head": "473043f45e90f8eb391013d04fd25dabb659ba1b",
+  "fixed_head": "bd97a9bec769406146de9c7c8e0f48bf85fd602b",
+  "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge PR #41 only; no executable implementation"
+  "next_allowed_action": "Merge PR #40 only; no M6.1b deployment, secret access, network qualification, restore rehearsal or traffic"
 }

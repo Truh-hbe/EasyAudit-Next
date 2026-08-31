@@ -1,0 +1,356 @@
+{
+  "$defs": {
+    "ManagedServiceIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_type": {
+          "const": "managed-version",
+          "title": "Identity Type",
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity_type",
+        "reference"
+      ],
+      "title": "ManagedServiceIdentity",
+      "type": "object"
+    },
+    "OCIServiceIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_type": {
+          "const": "oci-digest",
+          "title": "Identity Type",
+          "type": "string"
+        },
+        "reference": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity_type",
+        "reference"
+      ],
+      "title": "OCIServiceIdentity",
+      "type": "object"
+    },
+    "ObjectRoot": {
+      "additionalProperties": false,
+      "properties": {
+        "captured_at": {
+          "format": "date-time",
+          "title": "Captured At",
+          "type": "string"
+        },
+        "content_root": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Content Root",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "count",
+        "content_root",
+        "captured_at"
+      ],
+      "title": "ObjectRoot",
+      "type": "object"
+    },
+    "PostgresBackup": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "failure_domain_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Failure Domain Ref",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "completed_at",
+        "failure_domain_ref"
+      ],
+      "title": "PostgresBackup",
+      "type": "object"
+    },
+    "SchemaCompatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "alembic_head": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Alembic Head",
+          "type": "string"
+        },
+        "postgres_major": {
+          "const": 17,
+          "title": "Postgres Major",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "postgres_major",
+        "alembic_head"
+      ],
+      "title": "SchemaCompatibility",
+      "type": "object"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "title": "SecretRef",
+      "type": "object"
+    }
+  },
+  "$id": "https://easyaudit.invalid/m6.1/recovery-set.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "config_revision": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Config Revision",
+      "type": "string"
+    },
+    "cut_started_at": {
+      "format": "date-time",
+      "title": "Cut Started At",
+      "type": "string"
+    },
+    "detached_signature_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Detached Signature Ref",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "object_root": {
+      "$ref": "#/$defs/ObjectRoot"
+    },
+    "postgres_backup": {
+      "$ref": "#/$defs/PostgresBackup"
+    },
+    "primary_failure_domain_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Primary Failure Domain Ref",
+      "type": "string"
+    },
+    "recovery_set_cut_completed": {
+      "format": "date-time",
+      "title": "Recovery Set Cut Completed",
+      "type": "string"
+    },
+    "recovery_set_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Recovery Set Id",
+      "type": "string"
+    },
+    "release_digests": {
+      "additionalProperties": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "required": [
+        "api",
+        "web_gateway"
+      ],
+      "title": "Release Digests",
+      "type": "object"
+    },
+    "release_set_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Release Set Id",
+      "type": "string"
+    },
+    "restore_order": {
+      "const": [
+        "postgres",
+        "object_fixture",
+        "application",
+        "gateway"
+      ],
+      "items": {
+        "enum": [
+          "postgres",
+          "object_fixture",
+          "application",
+          "gateway"
+        ]
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema": {
+      "$ref": "#/$defs/SchemaCompatibility"
+    },
+    "schema_version": {
+      "const": "m6.1.recovery-set.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "secret_refs": {
+      "items": {
+        "$ref": "#/$defs/SecretRef"
+      },
+      "minItems": 1,
+      "title": "Secret Refs",
+      "type": "array"
+    },
+    "service_identities": {
+      "additionalProperties": false,
+      "minProperties": 2,
+      "properties": {
+        "object_storage": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/OCIServiceIdentity"
+            },
+            {
+              "$ref": "#/$defs/ManagedServiceIdentity"
+            }
+          ]
+        },
+        "postgres": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/OCIServiceIdentity"
+            },
+            {
+              "$ref": "#/$defs/ManagedServiceIdentity"
+            }
+          ]
+        }
+      },
+      "propertyNames": {
+        "enum": [
+          "postgres",
+          "object_storage"
+        ]
+      },
+      "required": [
+        "postgres",
+        "object_storage"
+      ],
+      "title": "Service Identities",
+      "type": "object"
+    },
+    "signer_key_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Signer Key Ref",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "recovery_set_id",
+    "release_set_id",
+    "cut_started_at",
+    "recovery_set_cut_completed",
+    "release_digests",
+    "service_identities",
+    "config_revision",
+    "secret_refs",
+    "postgres_backup",
+    "object_root",
+    "schema",
+    "restore_order",
+    "manifest_sha256",
+    "signer_key_ref",
+    "detached_signature_ref",
+    "primary_failure_domain_ref"
+  ],
+  "title": "RecoverySet",
+  "type": "object",
+  "x-model-fields": [
+    "config_revision",
+    "cut_started_at",
+    "detached_signature_ref",
+    "manifest_sha256",
+    "object_root",
+    "postgres_backup",
+    "primary_failure_domain_ref",
+    "recovery_set_cut_completed",
+    "recovery_set_id",
+    "release_digests",
+    "release_set_id",
+    "restore_order",
+    "schema",
+    "schema_version",
+    "secret_refs",
+    "service_identities",
+    "signer_key_ref"
+  ]
+}
