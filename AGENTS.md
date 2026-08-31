@@ -1,28 +1,29 @@
 # EasyAudit-Next Agent Development Contract
 
-This repository uses a two-layer development protocol.
+This repository uses a structured development and verification protocol tailored for AI-assisted engineering and local environment validation.
 
-## Roles
+## 1. Roles & Authority
 
-- **ChatGPT** owns architecture reasoning, scope/acceptance review, implementation review, and final release recommendations.
-- **Codex** owns workspace execution: edits, shell commands, local tests, git operations, PR maintenance, recovery, and evidence generation.
-- **GitHub / GitHub Actions** is the canonical source for PR state, commit SHAs, merge state, and final CI evidence.
+- **ChatGPT**:
+  - **Architecture & Design**: Owns domain modeling, ADR decisions, milestone scoping, and Gate/Acceptance specifications.
+  - **Code Generation & Implementation**: Provides reference code implementations, refactoring logic, and bugfix solutions.
+  - **Review & Adjudication**: Conducts architectural reviews, invariant verification, code reviews, and release readiness recommendations.
+- **Local Agent (e.g., Pi / Local Coding Agent Harness)**:
+  - **Workspace & Environment Execution**: Manages the local workspace, environment provisioning (Python 3.12, `uv`, PostgreSQL via Docker Compose, Node.js / Vite).
+  - **Local Build & Test Verification**: Runs database migrations, unit tests, PostgreSQL dual-session concurrency tests, and Playwright browser E2E suites.
+  - **Diagnosis & Evidence Gathering**: Investigates local failures, extracts execution logs, generates machine-readable review bundles (`scripts/easyaudit_gate.py bundle`), and maintains Git branches/PRs.
+- **GitHub & GitHub Actions**:
+  - The canonical source of truth for PR state, commit SHAs, merge protection, and exact-head CI evidence.
+- **Human Maintainer / User**:
+  - Holds ultimate authority over milestone planning, Gate approvals, PR merges, and production deployments.
 
-Codex with ChatGPT (C2C) is only the read-only transport/review bridge between ChatGPT and the local workspace. It does not replace repository gates or GitHub evidence.
+Local execution and test logs serve as supporting evidence for review; they never bypass repository Gates, GitHub Actions exact-head CI, or human merge authorization.
 
-## EasyAudit overrides of upstream C2C defaults
+---
 
-The user has explicitly approved these repository-specific overrides for EasyAudit-Next:
+## 2. Outer Milestone State Machine
 
-1. **Conversation lifecycle:** use one C2C ChatGPT conversation per milestone slice / PR. The upstream preference for one indefinite conversation per workspace does not apply here. A new slice may start a fresh conversation without asking again; reconstruct context from repository state rather than old chat history.
-2. **Tool updates:** do not perform C2C's automatic/daily self-update workflow while working on EasyAudit. Do not silently run an update because `c2c update-check` reports a newer revision. The pinned revision in `.easyaudit/toolchain.json` is authoritative until an explicit tooling upgrade is approved between slices.
-3. **Workflow authority:** upstream C2C `DONE` closes only the inner loop. EasyAudit outer Gate state and merge authorization always take precedence.
-
-If the installed C2C Skill gives a conflicting generic instruction on these three points, follow this project contract.
-
-## Outer EasyAudit state machine
-
-The project phase is authoritative and must be read from `.easyaudit/development-state.json` when `active=true`.
+When a milestone slice is active, the project phase is authoritative and tracked in `.easyaudit/development-state.json`:
 
 ```text
 GATE_DRAFT
@@ -33,72 +34,113 @@ GATE_DRAFT
   -> MERGED
 ```
 
-A C2C `DONE` response means only that the current inner planning/execution/review iteration is complete. It never means that the PR may be merged or that the outer phase may advance.
+- **`GATE_DRAFT`**: Authoring architecture documents, scope definitions, and acceptance criteria.
+- **`GATE_REVIEW`**: ChatGPT and the Maintainer review and approve the Gate document.
+- **`IMPLEMENTATION`**: Code and tests are implemented within `scope.allowed_paths`.
+- **`FINAL_REVIEW`**: Implementation is complete; candidate commit SHA is fixed and submitted for review.
+- **`MERGE_AUTHORIZED`**: All criteria (P0=0, P1=0, CI green on candidate SHA, tests passing) are met, awaiting human merge.
+- **`MERGED`**: Slice merged into `main`; state file rebaselined for the next slice.
 
-## Inner C2C loop
+---
 
-Inside one outer phase, use the normal C2C loop:
+## 3. Standard Development & Verification Loop (M6+)
+
+Within an active development phase or feature slice:
 
 ```text
-INIT -> PLAN -> EXECUTED -> REVIEW -> PLAN | DONE | BLOCKED
+[ 1. GPT: Architecture & Code Implementation ]
+                     │
+                     ▼
+[ 2. Local Agent: Workspace Execution & Local Verification ]
+     - Run migrations (Alembic)
+     - Run local tests (Pytest, Vitest, Playwright)
+     - Validate DB concurrency & race conditions
+                     │
+                     ▼
+[ 3. Local Agent: Generate Review Bundle & Gate Proof ]
+     - python scripts/easyaudit_gate.py bundle
+                     │
+                     ▼
+[ 4. GPT & Maintainer: Review Diff & Verification Evidence ]
+     - If failure / defects found -> GPT refines -> Local Agent re-verifies
+     - If all green & P0/P1 = 0 -> Approve candidate SHA
+                     │
+                     ▼
+[ 5. GitHub CI on Exact Candidate HEAD & Human Merge ]
 ```
 
-ChatGPT must independently read the current workspace, review bundle, git state, and relevant source through the read-only connector. Do not paste source files, diffs, or long logs into control messages.
+---
 
-## Mandatory startup sequence
+## 4. Fast-Track for Integrity Fixes & Hotfixes
 
-Before changing code or docs:
+When addressing standalone integrity defects (e.g., database concurrency race conditions, transaction teardown bugs, security flaws) between major milestones:
+
+1. Create a dedicated branch prefixed with `fix/` or `hotfix/`.
+2. The fix must remain tightly scoped to the defect; it must **never** bundle unrelated feature work or schema redesigns.
+3. Every concurrency or integrity fix must include an explicit test (e.g., dual-session race test with barriers).
+4. The fix requires review sign-off and green CI on the candidate commit SHA before merge.
+
+---
+
+## 5. Mandatory Startup Sequence
+
+Before modifying code or documentation:
 
 1. Read `.easyaudit/development-state.json`.
-2. Read the Gate / Acceptance documents named there.
-3. Verify the current branch and base SHA against the state file.
-4. Verify the installed C2C revision against `.easyaudit/toolchain.json` when C2C is used; report a mismatch rather than silently upgrading it.
-5. Run `python scripts/easyaudit_gate.py check` when the workflow is active.
-6. Do not perform work belonging to a later outer phase.
+2. Read the active Gate / Acceptance documents named in the state file.
+3. Verify the current Git branch and base commit SHA match the state file.
+4. Run gate check:
+   ```bash
+   python scripts/easyaudit_gate.py check
+   # or with uv:
+   uv run python scripts/easyaudit_gate.py check
+   ```
+5. Never perform work belonging to a future outer phase or outside `scope.allowed_paths`.
 
-If the state file is inactive, no milestone Gate is currently machine-enforced; follow the explicit user request and repository architecture documents.
+*If the state file has `"active": false`, no milestone Gate is currently machine-enforced; follow the explicit user request and core architectural ADRs.*
 
-## Scope discipline
+---
 
-When `active=true`, changed files must satisfy `scope.allowed_paths` and must not match `scope.forbidden_paths`.
+## 6. Scope Discipline & Architectural Guards
 
-- A docs-only Architecture Gate must remain docs-only.
-- Product-delivery work must not silently introduce new domain truth, lifecycle, permissions, persistence semantics, authorization semantics, or concurrency models.
-- Any prerequisite outside the current scope must be isolated in a separate PR unless the Gate is explicitly revised and re-reviewed.
+When a milestone slice is active:
+- Changed files must satisfy `scope.allowed_paths` and must not touch `scope.forbidden_paths`.
+- Docs-only Gates must remain strictly docs-only.
+- All code changes must satisfy architectural boundaries enforced by `scripts/check_architecture.py` (e.g., Review Core remains independent of downstream/scenario code; sync DB session boundaries are preserved).
+- Product delivery work must not silently introduce new domain truth, lifecycle states, permissions, or concurrency models without an approved Gate.
 
-## Evidence and review bundles
+---
 
-Before asking ChatGPT for implementation/final review, run:
+## 7. Evidence & Review Bundles
+
+Before requesting final review, the Local Agent generates review artifacts:
 
 ```bash
 python scripts/easyaudit_gate.py bundle
+# or with uv:
+uv run python scripts/easyaudit_gate.py bundle
 ```
 
-This generates `.easyaudit-review/` containing machine-readable evidence and a committed `BASE...HEAD` diff. ChatGPT should read these files through C2C rather than relying on Codex prose summaries.
+This generates `.easyaudit-review/` containing machine-readable evidence (`gate-proof.json`, `candidate.diff`, etc.).
 
-`test_status` / `execution_summary` from C2C are iteration records only. They are not substitutes for GitHub Actions exact-head CI.
+### Evidence Standards by Slice Kind:
+- **Code & Domain Slices**: Unit tests, integration tests (with real PostgreSQL), and browser E2E tests (Playwright) passing locally and in CI.
+- **Infrastructure & Storage Slices (M6+)**: Non-empty joint backup/restore manifest, RPO/RTO timing logs, restored cross-tenant read negative tests, and container non-root / immutable digest verification.
 
-## Final review and merge
+---
 
-A final candidate is not merge-authorized until all required conditions are true:
+## 8. Final Review & Merge Authorization
 
-- architecture/acceptance review passes;
-- open P1 = 0 and open P2 = 0;
-- required PostgreSQL / API / browser acceptance is green;
-- GitHub Actions is green on the reviewed candidate/head tree;
-- the candidate SHA is fixed;
-- the user explicitly authorizes merge.
+A candidate is authorized for merge only when all of the following are satisfied:
+1. **Architecture & Acceptance review passes**: Zero open P0 and zero open P1 defects.
+2. **PostgreSQL & Browser Acceptance is green**: Dual-session race tests and E2E journeys pass.
+3. **GitHub Actions is green on the exact candidate HEAD**: Not just a synthetic merge ref; the candidate commit SHA is fixed.
+4. **Human Maintainer explicitly authorizes the merge**.
 
-When merging, Codex must use expected-head protection where supported and verify the resulting `main`, merge parents/tree, and PR state afterward.
+When merging, expected-head protection must be respected, and post-merge verification of `main` must be performed.
 
-## C2C session policy
+---
 
-Use one ChatGPT C2C conversation per milestone slice / PR, not one indefinitely growing conversation for the whole repository. After merge, start a fresh C2C conversation for the next slice and reconstruct context from repository state, Gate docs, source, and generated evidence.
+## 9. Sensitive Data & Security
 
-## C2C toolchain pin
-
-Do not silently self-update Codex with ChatGPT while an EasyAudit milestone is active. The reviewed/pinned revision is recorded in `.easyaudit/toolchain.json`. Upgrade the bridge only as an explicit tooling change between milestone slices, then update the pin.
-
-## Sensitive data
-
-Respect `.c2cignore`. Never expose production secrets, customer exports, uploaded evidence binaries, private deployment material, or local credentials through the C2C workspace bridge.
+Never commit or expose production secrets, customer data exports, real credentials, or private deployment keys. Local environment configurations must use `.env.example` templates.
