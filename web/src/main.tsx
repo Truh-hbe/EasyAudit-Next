@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
 
 import { SessionProvider } from './app/auth/session'
+import { RootErrorBoundary } from './app/errors/ErrorBoundary'
 import { App } from './App'
 import './styles.css'
 import './final-polish.css'
@@ -15,10 +16,12 @@ if (root === null) {
 
 createRoot(root).render(
   <StrictMode>
-    <BrowserRouter>
-      <SessionProvider>
-        <App />
-      </SessionProvider>
-    </BrowserRouter>
+    <RootErrorBoundary>
+      <BrowserRouter>
+        <SessionProvider>
+          <App />
+        </SessionProvider>
+      </BrowserRouter>
+    </RootErrorBoundary>
   </StrictMode>,
 )

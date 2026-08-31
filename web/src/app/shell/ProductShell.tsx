@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes } from 'react-router'
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router'
 
 import { ActionItemDetailPage } from '../../features/actions/ActionItemDetailPage'
 import { AdminPage } from '../../features/admin/AdminPage'
@@ -13,6 +13,7 @@ import { ReviewPlanCreatePage } from '../../features/reviewPlans/ReviewPlanCreat
 import { WorkbenchPage } from '../../features/workbench/WorkbenchPage'
 import { LogoutButton } from '../auth/LogoutButton'
 import { useSession } from '../auth/session'
+import { RouteErrorBoundary } from '../errors/ErrorBoundary'
 
 const primaryNavigation = [
   { to: '/me/workbench', label: '我的工作' },
@@ -23,9 +24,12 @@ const primaryNavigation = [
 
 export function ProductShell() {
   const { state } = useSession()
+  const location = useLocation()
   if (state.status !== 'authenticated') {
     return null
   }
+
+  const routeResetKey = `${location.pathname}${location.search}`
 
   return (
     <div className="product-shell">
@@ -52,29 +56,28 @@ export function ProductShell() {
       </nav>
 
       <main className="product-content">
-        <Routes>
-          <Route path="/me/workbench" element={<WorkbenchPage />} />
-          <Route path="/review-cases" element={<ReviewCaseCollectionPage />} />
-          <Route path="/review-cases/:caseId" element={<ReviewCaseDetailPage />} />
-          <Route path="/review-plans/new" element={<ReviewPlanCreatePage />} />
-          <Route
-            path="/review-plans/:planId/review-cases/new"
-            element={<ReviewCaseCreatePage />}
-          />
-          <Route path="/findings/:findingId" element={<FindingDetailPage />} />
-          <Route path="/action-items/:actionItemId" element={<ActionItemDetailPage />} />
-          <Route path="/me/notifications" element={<NotificationCenterPage />} />
-          <Route path="/management" element={<ManagementPage />} />
-          <Route
-            path="/management/review-cases/:caseId"
-            element={<ManagementCaseProgressPage />}
-          />
-          <Route
-            path="/admin/*"
-            element={<AdminPage />}
-          />
-          <Route path="*" element={<Navigate replace to="/me/workbench" />} />
-        </Routes>
+        <RouteErrorBoundary resetKey={routeResetKey}>
+          <Routes>
+            <Route path="/me/workbench" element={<WorkbenchPage />} />
+            <Route path="/review-cases" element={<ReviewCaseCollectionPage />} />
+            <Route path="/review-cases/:caseId" element={<ReviewCaseDetailPage />} />
+            <Route path="/review-plans/new" element={<ReviewPlanCreatePage />} />
+            <Route
+              path="/review-plans/:planId/review-cases/new"
+              element={<ReviewCaseCreatePage />}
+            />
+            <Route path="/findings/:findingId" element={<FindingDetailPage />} />
+            <Route path="/action-items/:actionItemId" element={<ActionItemDetailPage />} />
+            <Route path="/me/notifications" element={<NotificationCenterPage />} />
+            <Route path="/management" element={<ManagementPage />} />
+            <Route
+              path="/management/review-cases/:caseId"
+              element={<ManagementCaseProgressPage />}
+            />
+            <Route path="/admin/*" element={<AdminPage />} />
+            <Route path="*" element={<Navigate replace to="/me/workbench" />} />
+          </Routes>
+        </RouteErrorBoundary>
       </main>
     </div>
   )

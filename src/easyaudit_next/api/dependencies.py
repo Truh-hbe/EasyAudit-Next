@@ -4,24 +4,32 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from easyaudit_next.infrastructure.database import create_database_engine, create_session_factory
+from easyaudit_next.operations.logging import bind_authenticated_identity
 from easyaudit_next.platform.application.authentication import (
     AuthenticationService,
     InvalidSessionError,
 )
 from easyaudit_next.platform.domain.models import AuthSession, PlatformRole, User
 from easyaudit_next.platform.persistence.repositories import (
-    SqlAlchemyAuthSessionRepository,
     SqlAlchemyLocalCredentialRepository,
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
+)
+from easyaudit_next.platform.persistence.session_touch_repository import (
+    ThrottledSqlAlchemyAuthSessionRepository,
 )
 from easyaudit_next.platform.settings import get_settings
 
 _engine = create_database_engine()
 _session_factory = create_session_factory(_engine)
+
+
+def get_application_engine() -> Engine:
+    return _engine
 
 
 def get_database_session() -> Iterator[Session]:
@@ -50,7 +58,7 @@ def get_authentication_service(
     settings = get_settings()
     return AuthenticationService(
         SqlAlchemyLocalCredentialRepository(session),
-        SqlAlchemyAuthSessionRepository(session),
+        ThrottledSqlAlchemyAuthSessionRepository(session),
         SqlAlchemyUserRepository(session),
         SqlAlchemyPlatformAuditRepository(session),
         session_ttl=timedelta(seconds=settings.session_ttl_seconds),
@@ -83,6 +91,7 @@ def get_current_identity(
             detail="Authentication required",
         ) from exc
 
+    bind_authenticated_identity(str(user.organization_id), str(user.id))
     try:
         yield CurrentIdentity(auth_session=auth_session, user=user)
     finally:

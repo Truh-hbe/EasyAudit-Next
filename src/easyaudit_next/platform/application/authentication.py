@@ -20,6 +20,8 @@ from easyaudit_next.platform.domain.repositories import (
     PlatformAuditRepository,
     UserRepository,
 )
+from easyaudit_next.platform.login_identity import normalize_login_name
+from easyaudit_next.platform.session_touch import SESSION_TOUCH_INTERVAL
 
 _DEFAULT_PASSWORD_HASH = PasswordHash.recommended()
 _DUMMY_PASSWORD_HASH = _DEFAULT_PASSWORD_HASH.hash("not-a-real-user-password")
@@ -86,7 +88,7 @@ class AuthenticationService:
         now: datetime | None = None,
     ) -> LoginResult:
         current_time = now or datetime.now(UTC)
-        normalized_login = login_name.strip().lower()
+        normalized_login = normalize_login_name(login_name)
         coarse_credential = self._credentials.get_by_login_name(normalized_login)
         coarse_matches = self._password_hash.verify(
             password,
@@ -150,6 +152,10 @@ class AuthenticationService:
 
     def touch(self, auth_session: AuthSession, *, now: datetime | None = None) -> None:
         current_time = now or datetime.now(UTC)
+        # Exactly ten minutes remains inside the no-write window. The repository
+        # repeats the stale predicate in SQL so concurrency cannot bypass this fast path.
+        if current_time <= auth_session.last_seen_at + SESSION_TOUCH_INTERVAL:
+            return
         self._sessions.touch_if_active(
             auth_session.id,
             auth_session.token_hash,
