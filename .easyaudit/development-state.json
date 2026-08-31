@@ -1,50 +1,49 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
-  "milestone": "M6",
-  "slice": "M6.1a-recovery-contract-tooling",
-  "phase": "MERGED",
+  "milestone": "PROCESS",
+  "slice": "process-omp-agent-control-plane-hardening",
+  "phase": "GATE_DRAFT",
   "base": {
     "branch": "main",
-    "sha": "85aaf364469e57b72a9c340f24d76292054ba5d5"
+    "sha": "8f923a64ade514e531c6de94a15029dc9a9ae136"
   },
-  "work_branch": "codex/m6-1-recovery-ready-infrastructure",
+  "work_branch": "codex/process-omp-agent-control-plane-gate",
   "pr": {
-    "number": 40
+    "number": null
   },
   "gate_docs": [
-    "docs/architecture/m6-1-recovery-ready-infrastructure.md",
-    "docs/architecture/m6-1-acceptance.md"
+    "docs/architecture/process-omp-agent-control-plane.md",
+    "docs/architecture/process-omp-agent-control-plane-acceptance.md"
   ],
-  "candidate_kind": "executable",
+  "candidate_kind": "docs-only",
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "deploy/m6-1/contracts/**",
-      "scripts/m6_1_recovery.py",
-      "tests/tooling/test_m6_1_recovery_contracts.py",
-      "docs/architecture/m6-1*",
-      "docs/architecture/roadmap.md"
+      "docs/architecture/roadmap.md",
+      "docs/architecture/process-omp-agent-control-plane.md",
+      "docs/architecture/process-omp-agent-control-plane-acceptance.md"
     ],
     "forbidden_paths": [
+      "AGENTS.md",
+      ".omp/**",
       "src/**",
       "alembic/**",
+      ".github/**",
       "openapi/**",
       "web/**",
+      "scripts/**",
+      "tests/**",
       "Dockerfile*",
       "compose*",
-      ".github/workflows/**",
-      "docs/operations/**",
-      "tests/infrastructure/**",
-      ".gitignore",
-      ".dockerignore"
+      "deploy/**"
     ]
   },
-  "fixed_head": "bd97a9bec769406146de9c7c8e0f48bf85fd602b",
+  "fixed_head": null,
   "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "M6.1a is merged; M6.1b requires its own reviewed Gate and explicit operator authorization before any real environment operation"
+  "next_allowed_action": "Independent OMP Agent Control Plane Architecture/Acceptance Gate Review only; no tooling implementation, product implementation, merge, deployment, secret access or real traffic"
 }
