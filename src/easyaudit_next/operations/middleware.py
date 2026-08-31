@@ -27,9 +27,13 @@ def accepted_request_id(raw_value: str | None) -> str:
 
 
 def _header(scope: Scope, name: bytes) -> str | None:
-    for key, value in scope.get("headers", []):
-        if key.lower() == name:
-            return value.decode("latin-1")
+    headers = scope.get("headers")
+    if isinstance(headers, (list, tuple)):
+        for item in headers:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                key, value = item
+                if isinstance(key, bytes) and key.lower() == name and isinstance(value, bytes):
+                    return str(value.decode("latin-1"))
     return None
 
 
@@ -195,8 +199,10 @@ def _submitted_login(body: bytes) -> str:
         payload = json.loads(body)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return "__invalid_login_payload__"
-    if isinstance(payload, dict) and isinstance(payload.get("login_name"), str):
-        return payload["login_name"]
+    if isinstance(payload, dict):
+        login_name = payload.get("login_name")
+        if isinstance(login_name, str):
+            return str(login_name)
     return "__invalid_login_payload__"
 
 

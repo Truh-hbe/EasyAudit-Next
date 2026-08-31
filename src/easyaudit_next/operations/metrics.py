@@ -57,14 +57,14 @@ class OperationalMetrics:
             "# TYPE easyaudit_database_failures_total counter",
         ]
         with self._lock:
-            for (method, route, status_code), value in sorted(self._http_total.items()):
+            for (method, route, status_code), count in sorted(self._http_total.items()):
                 labels = _labels(method=method, route=route, status_code=status_code)
-                lines.append(f"easyaudit_http_requests_total{{{labels}}} {value}")
-            for key, value in sorted(self._http_duration_sum.items()):
+                lines.append(f"easyaudit_http_requests_total{{{labels}}} {count}")
+            for key, duration_sum in sorted(self._http_duration_sum.items()):
                 method, route, status_code = key
                 labels = _labels(method=method, route=route, status_code=status_code)
                 lines.append(
-                    f"easyaudit_http_request_duration_seconds_sum{{{labels}}} {value:.9f}"
+                    f"easyaudit_http_request_duration_seconds_sum{{{labels}}} {duration_sum:.9f}"
                 )
                 lines.append(
                     "easyaudit_http_request_duration_seconds_count"

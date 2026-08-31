@@ -154,7 +154,10 @@ class AuthenticationService:
         current_time = now or datetime.now(UTC)
         # Exactly ten minutes remains inside the no-write window. The repository
         # repeats the stale predicate in SQL so concurrency cannot bypass this fast path.
-        if current_time <= auth_session.last_seen_at + SESSION_TOUCH_INTERVAL:
+        if (
+            auth_session.last_seen_at is not None
+            and current_time <= auth_session.last_seen_at + SESSION_TOUCH_INTERVAL
+        ):
             return
         self._sessions.touch_if_active(
             auth_session.id,
