@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6-ops-operational-readiness",
-  "phase": "FINAL_REVIEW",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "8f923a64ade514e531c6de94a15029dc9a9ae136"
@@ -45,10 +45,10 @@
       "alembic/versions/**"
     ]
   },
-  "fixed_head": "8c52177b265310c5aba9acb24efe41a7e95b21e2",
+  "fixed_head": null,
   "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Implement and review M6-Ops only; no merge, deployment, secret access, real traffic, recovery rehearsal or later M6 slice"
+  "next_allowed_action": "Repair the failed M6-Ops browser acceptance and re-verify implementation only; no merge, deployment, secret access, real traffic, recovery rehearsal or later M6 slice"
 }
