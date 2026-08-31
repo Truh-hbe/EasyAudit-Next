@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import blake2b
 from math import ceil
 from secrets import token_bytes
 from threading import Lock
 from time import monotonic
-from typing import Callable
 
 from easyaudit_next.platform.login_identity import normalize_login_name
 
@@ -94,8 +94,6 @@ class LoginRateLimiter:
                 self._trim()
                 return AdmissionDecision(True)
 
-            # Refill bookkeeping is not token consumption. Never decrement either
-            # bucket unless both have capacity for the same operation.
             self._global = global_bucket
             if existing is not None:
                 per_bucket.last_used_at = now

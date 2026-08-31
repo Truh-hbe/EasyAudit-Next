@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -12,8 +11,8 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import easyaudit_next.infrastructure.database as database_module
-from easyaudit_next.api.operational import operational_router
 from easyaudit_next.api.dependencies import get_application_engine
+from easyaudit_next.api.operational import operational_router
 from easyaudit_next.operations.logging import SafeJsonFormatter
 from easyaudit_next.operations.middleware import (
     LoginAdmissionMiddleware,
@@ -96,9 +95,8 @@ def test_safe_json_formatter_drops_arbitrary_message_and_exception_text() -> Non
 
 
 def test_login_normalization_is_shared_and_aliases_exhaust_one_bucket() -> None:
-    assert {normalize_login_name(value) for value in ("alice", "Alice", "ALICE", " alice ")} == {
-        "alice"
-    }
+    normalized = {normalize_login_name(value) for value in ("alice", "Alice", "ALICE", " alice ")}
+    assert normalized == {"alice"}
     limiter = LoginRateLimiter(
         global_capacity=20,
         global_refill_per_second=0.001,
@@ -122,9 +120,6 @@ def test_two_budget_denial_consumes_neither_side() -> None:
     )
     assert limiter.admit("first", "peer").allowed
     assert not limiter.admit("second", "peer").allowed
-
-    # A denied global bucket must not consume the second per-key bucket. Refill
-    # only the global token and the second identity must still be admitted.
     now[0] = 1.0
     assert limiter.admit("second", "peer").allowed
 
@@ -205,7 +200,9 @@ def test_login_middleware_ignores_untrusted_forwarding_headers_and_stops_downstr
     assert calls == ["called"]
 
 
-def test_database_engine_configuration_applies_all_reviewed_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_database_engine_configuration_applies_all_reviewed_budgets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
     sentinel = object()
 
@@ -252,7 +249,8 @@ def test_operational_dependency_direction_is_enforced_by_source() -> None:
         for path in area.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
             for token in forbidden_tokens:
-                assert token not in text, f"{path} imports forbidden operational/HTTP concern {token}"
+                message = f"{path} imports forbidden operational/HTTP concern {token}"
+                assert token not in text, message
     for area in (root / "review_core", root / "scenarios"):
         for path in area.rglob("*.py"):
             assert "easyaudit_next.operations" not in path.read_text(encoding="utf-8")

@@ -10,6 +10,11 @@ from typing import Any
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 _organization_id: ContextVar[str | None] = ContextVar("organization_id", default=None)
 _actor_id: ContextVar[str | None] = ContextVar("actor_id", default=None)
+RequestContextTokens = tuple[
+    Token[str | None],
+    Token[str | None],
+    Token[str | None],
+]
 
 
 class SafeJsonFormatter(logging.Formatter):
@@ -53,7 +58,7 @@ def configure_production_logging() -> None:
         logger.propagate = True
 
 
-def begin_request_context(request_id: str) -> tuple[Token[str | None], Token[str | None], Token[str | None]]:
+def begin_request_context(request_id: str) -> RequestContextTokens:
     return (
         _request_id.set(request_id),
         _organization_id.set(None),
@@ -70,9 +75,7 @@ def current_identity_context() -> tuple[str | None, str | None]:
     return _organization_id.get(), _actor_id.get()
 
 
-def reset_request_context(
-    tokens: tuple[Token[str | None], Token[str | None], Token[str | None]]
-) -> None:
+def reset_request_context(tokens: RequestContextTokens) -> None:
     request_token, organization_token, actor_token = tokens
     _actor_id.reset(actor_token)
     _organization_id.reset(organization_token)

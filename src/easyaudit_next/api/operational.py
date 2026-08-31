@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Annotated
 
 from alembic.config import Config
 from alembic.migration import MigrationContext
@@ -6,13 +7,15 @@ from alembic.script import ScriptDirectory
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import SQLAlchemyError, TimeoutError as SQLAlchemyTimeoutError
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from easyaudit_next.api.dependencies import get_application_engine
 from easyaudit_next.operations.metrics import metrics
 
 operational_router = APIRouter()
 _ROOT = Path(__file__).resolve().parents[3]
+ApplicationEngine = Annotated[Engine, Depends(get_application_engine)]
 
 
 @operational_router.get(
@@ -27,9 +30,7 @@ def health_live() -> dict[str, str]:
     "/health/ready",
     include_in_schema=False,
 )
-def health_ready(
-    engine: Engine = Depends(get_application_engine),
-) -> dict[str, str]:
+def health_ready(engine: ApplicationEngine) -> dict[str, str]:
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
@@ -61,9 +62,7 @@ def health_ready(
     include_in_schema=False,
     response_class=PlainTextResponse,
 )
-def operational_metrics(
-    engine: Engine = Depends(get_application_engine),
-) -> PlainTextResponse:
+def operational_metrics(engine: ApplicationEngine) -> PlainTextResponse:
     return PlainTextResponse(
         metrics.render_prometheus(engine),
         media_type="text/plain; version=0.0.4",
