@@ -11,7 +11,7 @@
   },
   "work_branch": "codex/process-omp-agent-control-plane-gate",
   "pr": {
-    "number": null
+    "number": 43
   },
   "gate_docs": [
     "docs/architecture/process-omp-agent-control-plane.md",
