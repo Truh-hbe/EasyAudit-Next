@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.1a-recovery-contract-tooling",
-  "phase": "FINAL_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "85aaf364469e57b72a9c340f24d76292054ba5d5"
@@ -46,5 +46,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Independent FINAL_REVIEW of M6.1a contract/tooling only; no deployment, secret access, network qualification, restore rehearsal, traffic or merge"
+  "next_allowed_action": "Merge PR #40 only; no M6.1b deployment, secret access, network qualification, restore rehearsal or traffic"
 }
