@@ -60,10 +60,11 @@ test('route ErrorBoundary preserves shell and resets after navigation', async ({
 
 test('Workbench exits loading after the single safe GET retry and remains manually recoverable', async ({ page }) => {
   await readySession(page)
+  let shouldFail = true
   let attempts = 0
   await page.route('**/api/v1/me/workbench', async (route) => {
     attempts += 1
-    if (attempts <= 2) {
+    if (shouldFail) {
       await route.fulfill({ status: 503, body: '' })
       return
     }
@@ -76,7 +77,9 @@ test('Workbench exits loading after the single safe GET retry and remains manual
   await expect(page.getByRole('navigation', { name: '主要导航' })).toBeVisible()
   await expect(page.getByText('正在读取服务器 Workbench…')).toHaveCount(0)
 
+  shouldFail = false
+  const attemptsBeforeReload = attempts
   await page.getByRole('button', { name: '重新加载' }).click()
   await expect(page.getByText('暂无我参与的审查。')).toBeVisible()
-  expect(attempts).toBe(3)
+  expect(attempts).toBe(attemptsBeforeReload + 1)
 })
