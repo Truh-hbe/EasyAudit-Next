@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.1a-recovery-contract-tooling",
-  "phase": "IMPLEMENTATION",
+  "phase": "FINAL_REVIEW",
   "base": {
     "branch": "main",
     "sha": "85aaf364469e57b72a9c340f24d76292054ba5d5"
@@ -41,10 +41,10 @@
       ".dockerignore"
     ]
   },
-  "fixed_head": null,
+  "fixed_head": "bd97a9bec769406146de9c7c8e0f48bf85fd602b",
   "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Freeze the aligned M6.1a contract/tooling candidate for FINAL_REVIEW; no deployment, secret access, network qualification, restore rehearsal, traffic or merge"
+  "next_allowed_action": "Independent FINAL_REVIEW of M6.1a contract/tooling only; no deployment, secret access, network qualification, restore rehearsal, traffic or merge"
 }
