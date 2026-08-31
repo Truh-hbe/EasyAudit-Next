@@ -1,265 +1,207 @@
-# M6.1 Recovery-Ready Infrastructure Acceptance
+# M6.1a Recovery Contract / Tooling Acceptance
 
-## 1. Gate and scope acceptance
+## 1. Final scope acceptance
 
-The M6.1 candidate is acceptable for independent Gate Review only when:
-
-1. the candidate base is exactly
-   `main@43fdf9d9a98c3e01d4f2fd50d795567c2fe9a62c`;
-2. the initial candidate changes only the development state, roadmap and the
-   two M6.1 Gate documents;
-3. the state is `active=true`, `milestone=M6`,
-   `slice=M6.1-recovery-ready-infrastructure`,
-   `phase=GATE_DRAFT`, `candidate_kind=executable`, with empty `fixed_head`
-   and `docs_review_head`;
-4. the state records the exact work branch, the two Gate documents and the
-   narrow prospective implementation allowlist;
-5. the Gate check, JSON validation, `git diff --check` and a clean Review
-   Bundle pass; and
-6. no deployment resource, image, secret, traffic, restore rehearsal,
-   migration, product source or business behavior is changed.
-
-This Gate Draft review may authorize only `GATE_DRAFT -> GATE_REVIEW`.
-`GATE_REVIEW` requires a separate re-review; only its passing result may
-authorize `GATE_REVIEW -> IMPLEMENTATION`. While that re-review is pending,
-deployment, image publication, secret access, restore rehearsal and traffic
-remain forbidden. Neither Gate review authorizes real traffic.
-
-## 2. Topology and trust-boundary acceptance
-
-Implementation must provide evidence for a fresh disposable deployment with:
-
-- HTTPS web gateway as the only host-published component;
-- TCP 443 bound only to an explicitly supplied approved private/VPN address;
-- no published API, PostgreSQL, object API or administration-console port;
-- built React product and relative `/api/v1/*` proxy through one origin;
-- organization-trusted certificate chain from the approved network; and
-- a negative public-exposure check that is independent of repository review.
-
-Vite development TLS, `ignoreHTTPSErrors`, a self-signed certificate or a
-successful request from an unapproved public route cannot satisfy this Gate.
-The existing development `compose.yaml` is not an acceptable pilot artifact.
-
-## 3. Release, secret and backup acceptance
-
-Static validators and implementation evidence must reject:
-
-- mutable image tags or a missing API/web-gateway artifact digest;
-- wildcard or public host bindings;
-- published internal service ports;
-- default credentials or secret-looking values;
-- missing secret-reference identifiers or versions;
-- credentials, private keys, raw object keys or secret values in Git, image
-  layers, logs, bundles or sanitized evidence;
-- missing manifest hashes or incompatible PostgreSQL/Alembic versions; and
-- backups stored in the same host/volume failure domain as primary data.
-
-The release manifest must identify the complete deployed artifact set by OCI
-digest, configuration revision and opaque secret references. A tag may be
-used to build an image but is not a release identity.
-
-One immutable recovery-set manifest must jointly link only cut-time facts:
-the quiesced PostgreSQL backup, object snapshot/version or logical
-content-root manifest, release digests, configuration revision,
-secret-reference versions, compatibility checks, restore order,
-detached-signature reference and manifest hash/signature. Both the database
-backup completion and object-root capture
-must lie within the inclusive joint-cut interval; separate, independently
-selected database and object restores do not satisfy acceptance. A separate
-immutable recovery-attempt proof must reference that set and its manifest hash,
-record an attempt-level target fingerprint, and record the post-cut target,
-timings, readiness checks and rollback results. TLS and exposure probes must
-repeat the same target fingerprint and be measured only from restoration start
-through restored readiness; those facts must not be added to the recovery-set
-manifest.
-
-## 4. Fresh deployment and layered readiness
-
-The fresh-deploy test starts from empty disposable volumes and applies the
-existing Alembic chain. It verifies the exact release/configuration manifest
-and then proves readiness in layers:
-
-1. container/process liveness;
-2. PostgreSQL connectivity and expected migration head;
-3. canonical application smoke through the existing supported publication
-   paths, without adding an Evidence API;
-4. gateway/same-origin browser behavior over organization-trusted HTTPS; and
-5. controlled object-fixture access through the storage client.
-
-The existing static `/health` response is useful liveness evidence only. It
-cannot alone prove PostgreSQL, migration, object or same-origin readiness.
-
-## 5. Restore and rollback rehearsal
-
-The restore rehearsal uses a distinct clean target and the exact joint
-recovery set. It records these pre-cut and post-restore facts:
-
-- database facts and migration head;
-- exact `process_review@1` and `compliance_review@1` Scenario publications;
-- Activity counts and integrity checks;
-- object fixture count and content hashes; and
-- absence of unexpected objects or metadata.
-
-The infrastructure fixture must be written directly through the storage
-client. It must not create or change Evidence metadata, call an Evidence
-upload/download API or imply M6.3 application-level consistency.
-
-Rollback must target an immutable known-good release/configuration set A. The
-rehearsal must deploy candidate B, inject a non-secret controlled failure,
-stop at the declared condition, roll back to A without restoring the
-database, rerun all layered readiness checks and verify the database and
-object fixture are unchanged. The recovery-attempt proof records the trigger,
-stop condition, failed-target isolation, target set and complete
-post-rollback checks. It must not rewrite tags, mutate the source recovery set
-or claim success after a partial restore.
-
-## 6. Timing definitions and objectives
-
-All timestamp fields are submitted as ISO 8601/RFC 3339 strings with an
-explicit offset or UTC `Z` (numeric Unix values are not accepted), and the
-evidence records the clock source and observed monotonic durations. Define:
+M6.1a is accepted for Final Review only when the PR is based on:
 
 ```text
-recovery_triggered_at       = time the restore decision is made
-recovery_set_cut_completed  = completion time of the selected joint cut
-restoration_started_at     = time restore actions begin on the clean target
-restored_ready_at           = time all layered readiness checks pass
+main@85aaf364469e57b72a9c340f24d76292054ba5d5
+```
 
+and the final `main...HEAD` changed-file set is contained by:
+
+```text
+.easyaudit/development-state.json
+deploy/m6-1/contracts/**
+scripts/m6_1_recovery.py
+tests/tooling/test_m6_1_recovery_contracts.py
+docs/architecture/m6-1*
+docs/architecture/roadmap.md
+```
+
+No Review Core, API, migration, frontend, Docker/runtime topology, workflow,
+operations-runbook or infrastructure-rehearsal path may be required by this
+slice.
+
+The state must identify `M6.1a-recovery-contract-tooling`, remain active, point
+to PR #40 and the current work branch, and enter `FINAL_REVIEW` only with an
+exact fixed implementation/document candidate plus state-only finalization.
+
+The repository Gate currently names executable source candidates as
+`candidate_kind=executable`; M6.1a uses that repository-supported value.
+
+## 2. Static contract acceptance
+
+The following committed schemas must be present and versioned:
+
+```text
+deploy/m6-1/contracts/release-manifest.schema.json
+deploy/m6-1/contracts/recovery-set.schema.json
+deploy/m6-1/contracts/recovery-attempt.schema.json
+```
+
+`python scripts/m6_1_recovery.py check-schemas` must prove that the committed
+Draft 2020-12 schema files match the runtime Pydantic projection for their
+static/nested constraints.
+
+Acceptance includes rejection of at least:
+
+- mutable/missing release component identity;
+- missing PostgreSQL/object-storage immutable service identity;
+- missing required secret-reference identity/version;
+- malformed or timezone-naive timestamps;
+- unknown document fields;
+- invalid restore-order shape;
+- invalid rollback proof shape; and
+- malformed target/readiness proof fields.
+
+Passing static schema validation does not assert that any referenced runtime,
+network, backup, certificate or restore target exists.
+
+## 3. Canonical hash acceptance
+
+The tooling must recompute the release and recovery-set `manifest_sha256` from
+the submitted duplicate-free JSON object, excluding only the root hash field.
+It must not trust the supplied hash.
+
+Acceptance requires:
+
+- deterministic hashing for identical submitted JSON values;
+- preservation of submitted string spellings when hashing;
+- a lexically different timestamp string producing a different hash when the
+  submitted document is otherwise identical;
+- duplicate JSON keys rejected before hashing;
+- release and recovery-set hash mismatch rejected; and
+- validation/hash commands not mutating the input files.
+
+## 4. Cross-document and time-window acceptance
+
+The validator must fail closed when the linked documents disagree on release
+set, release digests, configuration revision, schema compatibility, service
+identity, secret references, recovery-set ID or recovery-set hash.
+
+The recovery set must enforce one inclusive joint-cut window:
+
+```text
+cut_started_at
+  <= postgres_backup.completed_at
+  <= recovery_set_cut_completed
+
+cut_started_at
+  <= object_root.captured_at
+  <= recovery_set_cut_completed
+```
+
+Both exact boundaries are valid; values outside either side are rejected.
+
+The recovery attempt must enforce one target fingerprint across the attempt,
+TLS proof and all exposure probes. Probe timestamps must be clipped by
+validation to the inclusive evidence window in the sense that evidence outside
+this interval is rejected rather than silently accepted:
+
+```text
+restoration_started_at <= probe_at <= restored_ready_at
+```
+
+M6.1a performs only passive boundary validation. It does not perform the TLS or
+exposure probes that would create such evidence.
+
+## 5. RPO/RTO arithmetic acceptance
+
+The attempt's declared timing is not authoritative. The validator recomputes:
+
+```text
 observed RPO = recovery_triggered_at - recovery_set_cut_completed
 observed RTO = restored_ready_at - recovery_triggered_at
 ```
 
-Go requires `observed RPO <= 24 hours` and `observed RTO <= 4 hours` for the
-same recovery set. `restoration_started_at` is retained for diagnostic
-segment timing only; readiness probe timestamps must be within the inclusive
-`restoration_started_at` → `restored_ready_at` window. Approved clean
-host/container runtime and private
-network availability are explicit rehearsal prerequisites and must be
-disclosed; they must not be silently removed from the measured RTO. The
-evidence must not substitute backup age for a joint cut, or container start
-time for restored readiness.
+The submitted `observed_rpo_seconds` and `observed_rto_seconds` must match the
+recomputed values. Positive fractional seconds are rounded up. Negative timing,
+RPO greater than 24 hours and RTO greater than 4 hours are rejected by the
+contract.
 
-## 7. Sanitized evidence contract
+This is **not** real RPO/RTO measurement. It verifies arithmetic and contract
+boundaries over submitted synthetic/sanitized timestamps only. Real timing
+measurement belongs to M6.1b.
 
-The CI/manual evidence split is explicit:
+## 6. Sanitization and passive-execution acceptance
 
-| Evidence | CI / local validator | Approved private-network manual evidence |
-| --- | --- | --- |
-| JSON/schema, scope, manifest fields and digest format | Required | Supporting copy only |
-| secret/default-credential/raw-key leak scan | Required | Supporting copy only |
-| disposable build and static topology checks | Required | Supporting copy only |
-| PostgreSQL/Alembic compatibility and restore fixture checks | Required where hermetic | Required for target environment |
-| organization-trusted HTTPS/browser behavior | Smoke/contract only | Required |
-| negative public-exposure check | Contract/fixture only | Required |
-| failure-domain and backup-media proof | Structural check only | Required |
-| measured RPO/RTO and rollback rehearsal | Fixture timing only | Required |
+The validator must remain offline and side-effect free. It may read only the
+supplied local JSON/schema files and must not:
 
-Sanitized evidence may contain only:
-
-```json
-{
-  "recovery_set": {
-    "recovery_set_id": "opaque-id",
-    "cut_started_at": "timestamp",
-    "recovery_set_cut_completed": "timestamp",
-    "release_digests": {"api": "sha256:...", "web_gateway": "sha256:..."},
-    "config_revision": "opaque-revision",
-    "secret_refs": [{"id": "opaque-id", "version": "opaque-version"}],
-    "postgres_backup": {"id": "opaque-id", "completed_at": "timestamp"},
-    "object_root": {"id": "opaque-id", "count": 0, "content_root": "sha256:...", "captured_at": "timestamp"},
-    "schema": {"postgres_major": 17, "alembic_head": "opaque-revision"},
-    "restore_order": ["postgres", "object_fixture", "application", "gateway"],
-    "manifest_sha256": "sha256:...",
-    "signer_key_ref": "opaque-id",
-    "detached_signature_ref": "opaque-id"
-  },
-  "recovery_attempt": {
-    "recovery_set_id": "opaque-id",
-    "manifest_sha256": "sha256:...",
-    "target_opaque_id": "opaque-id",
-    "target_fingerprint": "sha256:...",
-    "recovery_triggered_at": "timestamp",
-    "restoration_started_at": "timestamp",
-    "restored_ready_at": "timestamp",
-    "observed_rpo_seconds": 0,
-    "observed_rto_seconds": 0,
-    "clock_source": "opaque-reference",
-    "checks": {
-      "layered_readiness": true,
-      "private_tls": {
-        "certificate_fingerprint": "sha256:...",
-        "target_fingerprint": "sha256:...",
-        "issuer_trust_store_ref": "opaque-id",
-        "hostname_verified": true,
-        "validity_checked": true,
-        "probe_at": "timestamp"
-      },
-      "exposure_probes": [
-        {
-          "vantage_class": "approved-private",
-          "target_fingerprint": "sha256:...",
-          "probe_at": "timestamp",
-          "result": "reachable",
-          "failure_reason_class": null
-        },
-        {
-          "vantage_class": "public-negative",
-          "target_fingerprint": "sha256:...",
-          "probe_at": "timestamp",
-          "result": "not-reachable",
-          "failure_reason_class": "no-route"
-        }
-      ],
-      "rollback": {
-        "known_good_release_set_id": "opaque-id",
-        "failure_injected": "controlled-non-secret",
-        "stop_condition": "opaque-class",
-        "database_restored_during_rollback": false,
-        "layered_readiness_after_rollback": true,
-        "fixture_unchanged": true
-      }
-    }
-  }
-}
+```text
+connect to PostgreSQL
+connect to object storage
+open network connections
+resolve secrets
+sign or verify detached signatures
+build/publish images
+deploy services
+perform backups or restores
+probe TLS/public exposure
+mutate submitted evidence
 ```
 
-The actual evidence must not include credentials, private keys, secret
-values, connection strings, customer exports, raw storage keys, hostnames or
-network details that would expose the private deployment. Opaque identifiers
-must be sufficient for an authorized operator to correlate the underlying
-records outside GitHub and C2C.
+Secret-looking values, private-key material, connection strings and hostile
+unknown fields must be rejected without echoing sensitive field names or
+values in command output.
 
-## 8. No-Go and Implementation Review rules
+## 7. Focused tooling tests
 
-No-Go applies to any public or wildcard binding, untrusted TLS, leaked or
-default credentials, mutable release identity, same-domain backup, stale or
-unlinked recovery set, skipped database/object/browser proof, hidden fixture
-shortcut, failed rollback isolation, unexpected object/metadata mutation or
-scope drift.
+`tests/tooling/test_m6_1_recovery_contracts.py` must cover, at minimum:
 
-Implementation Review requires zero open P1/P2 findings, focused static and
-infrastructure tests, the approved private-network PostgreSQL/API/browser
-evidence, a current Review Bundle and exact-head GitHub Actions evidence.
-Local tests and C2C summaries are supporting evidence only.
+- valid linked contract documents and deterministic canonical hash;
+- joint-cut boundaries for database/object timestamps;
+- target fingerprint and restoration-window enforcement;
+- distinct required release component digests;
+- strict timestamp representation;
+- detached-signature reference presence;
+- CLI validation without input mutation;
+- fail-closed No-Go field mutations;
+- authoritative timing recomputation and fractional limit boundaries;
+- duplicate JSON-key rejection with leak-safe diagnostics;
+- cross-document identity/restore-order invariants;
+- sensitive/unknown input rejection;
+- committed schema parity; and
+- timezone-aware timestamps.
 
-M6.1 does not pass merely because the service starts. It passes only when a
-fresh no-traffic deployment and a distinct-target restore are both tied to
-one immutable recovery set and the measured RPO/RTO, private access and
-rollback conditions are all green.
+The test suite must not require `.gitignore`, `.dockerignore`, Docker/runtime
+artifacts, private-network fixtures or real restore infrastructure; those are
+outside the M6.1a allowlist.
 
-## 9. Next transitions
+## 8. M6.1b authorization boundary
 
-After the current Gate Draft review passes, update the state only to
-`GATE_REVIEW`; this does not authorize implementation. After the separate
-Gate Review re-review passes, update the approved scope and enter
-`IMPLEMENTATION`. Before Implementation Review, run the focused tests and
-generate a current Review Bundle. Before Final Review, run:
+The following are **M6.1b** acceptance evidence and cannot be claimed by
+M6.1a:
 
-```bash
-python scripts/easyaudit_gate.py bundle
-python scripts/easyaudit_gate.py check --require-clean --require-bundle
+```text
+organization-trusted private HTTPS
+approved private/VPN reachability
+negative public-exposure proof
+real backup failure-domain separation
+real PostgreSQL/object recovery cut
+real clean-target restore
+real layered application/browser readiness
+real rollback rehearsal
+measured RPO/RTO
 ```
 
-`FINAL_REVIEW` and `MERGE_AUTHORIZED` require a fixed exact implementation
-head, green exact-head GitHub Actions and an explicit user authorization to
-merge. M6.1 readiness never authorizes rollout traffic by itself.
+M6.1b requires its own reviewed Gate and an operator-approved target. No
+private-network access, secret resolution, backup/restore action, deployment,
+TLS/public probe or rehearsal may begin merely because M6.1a is green. The
+operator/human maintainer must explicitly authorize those operations.
+
+## 9. Final Review evidence
+
+Before merge authorization, M6.1a Final Review requires:
+
+1. zero open P0/P1 findings;
+2. clean scope proof against the strict M6.1a allowlist;
+3. the focused tooling tests passing;
+4. a current Review Bundle generated from the exact fixed candidate/control
+   relationship; and
+5. GitHub Actions green on the exact PR head required by repository policy.
+
+A Final Review pass authorizes only the normal next governance transition. It
+does not authorize M6.1b operations, pilot traffic, rollout or merge without
+explicit maintainer authorization.

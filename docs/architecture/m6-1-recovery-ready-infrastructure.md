@@ -1,238 +1,207 @@
-# M6.1 Recovery-Ready Infrastructure Gate
+# M6.1a Recovery Contract / Tooling Validation
 
-## Gate status and authorization boundary
+## Status and purpose
 
-This document is the M6.1 Architecture Gate Draft for the EasyAudit-Next
-controlled-pilot rollout plan. It defines the smallest executable slice for a
-no-traffic private deployment, a jointly verifiable recovery set and a
-controlled recovery fixture. It does not authorize implementation until an
-independent Architecture / Acceptance Review passes.
-
-The candidate is based exactly on:
+M6.1a is the offline recovery-contract and tooling slice for EasyAudit-Next.
+It is intentionally narrower than the original M6.1 recovery-ready
+infrastructure Gate. The branch has been rebased/aligned onto:
 
 ```text
-main@43fdf9d9a98c3e01d4f2fd50d795567c2fe9a62c
+main@85aaf364469e57b72a9c340f24d76292054ba5d5
 ```
 
-The outer lifecycle is:
+The implementation in this slice is passive. It defines versioned recovery
+JSON Schemas, a standalone validator and tooling tests that can validate
+synthetic or sanitized documents without contacting EasyAudit, PostgreSQL,
+object storage, a private network, a TLS endpoint or a secret provider.
+
+M6.1a does not modify Review Core, Scenario policy, product APIs, migrations,
+frontend behavior or runtime deployment topology.
+
+## Fixed M6.1a boundary
+
+M6.1a owns only:
 
 ```text
-GATE_DRAFT -> GATE_REVIEW -> IMPLEMENTATION -> FINAL_REVIEW
-             -> MERGE_AUTHORIZED -> MERGED
+release identity contract
+joint recovery-set contract
+recovery-attempt evidence contract
+static JSON Schema parity
+canonical SHA-256 recomputation
+cross-document linkage checks
+joint-cut and restoration-window bounds
+authoritative RPO/RTO arithmetic checks
+sensitive-value rejection
+passive CLI validation
+focused tooling tests
 ```
 
-For this candidate, a passing `GATE_DRAFT` review authorizes only the
-transition `GATE_DRAFT -> GATE_REVIEW`. A separate passing `GATE_REVIEW`
-re-review is required before the outer state may transition
-`GATE_REVIEW -> IMPLEMENTATION`. During `GATE_REVIEW`, deployment, image
-publication, secret access, restore rehearsal and traffic remain forbidden.
-
-While the state is `GATE_DRAFT`, Codex may change only the Gate documents,
-state routing and roadmap correction described by the current scope. It must
-not create deployment resources, build or publish images, read secrets,
-rehearse a restore, expose traffic or modify product behavior.
-
-## Objective and fixed boundary
-
-M6.1 makes the pilot substrate recoverable before any real pilot traffic is
-allowed. It proves a fresh, private deployment and a restore/rollback path for
-the infrastructure required by the existing product:
-
-- an organization-trusted HTTPS gateway serving the built React product;
-- the existing FastAPI application;
-- PostgreSQL 17; and
-- private S3-compatible object storage.
-
-The slice is infrastructure readiness, not an Evidence lifecycle. It must not
-add or change Evidence upload/download APIs, authorization, database/object
-compensation semantics, migrations, Scenario policy, Review Core behavior or
-business tests. M6.3 retains ownership of application-controlled Evidence
-binary storage and the corresponding database/object consistency contract.
-
-The pilot envelope remains one organization, two departments, 10–20 users and
-10–30 Cases. M6.1 uses disposable empty volumes and no pilot traffic; test
-fixtures are synthetic and must not contain customer exports or production
-secrets.
-
-## Private deployment topology
-
-The implementation must use a provider-neutral topology with one externally
-reachable component:
+The committed contract files live under:
 
 ```text
-approved private/VPN network
-          |
-       TCP 443
-          |
-  HTTPS web gateway
-      /          \
-  static React    /api/v1/*
-                     |
-                  FastAPI
-                     |
-               PostgreSQL 17
-
-  controlled recovery utility ──> private S3-compatible storage
+deploy/m6-1/contracts/**
 ```
 
-The gateway is the only component permitted to bind a host port, and that
-port must be an explicitly supplied approved private/VPN address. API,
-PostgreSQL, object API and any administration console have no published host
-ports. Container-to-container traffic uses the private deployment network.
+The passive implementation is:
 
-The gateway serves the built React product and proxies relative `/api/v1/*`
-requests through the same HTTPS origin. The Vite development server and
-`basicSsl` certificate are not pilot deployment mechanisms. The certificate
-chain must be trusted by the organization from the approved network, and a
-negative public-exposure check is required before the environment can be
-called private.
+```text
+scripts/m6_1_recovery.py
+```
 
-The M6.1 application runtime has no S3 configuration and no object-store
-access. Only the controlled recovery utility may use the storage client for
-the infrastructure fixture. M6.3 owns the later application-level object
-connection and Evidence consistency contract.
+and its focused tests are:
 
-The existing `compose.yaml` is a development-only fixture: it publishes
-internal ports and contains default credentials. It is not the M6.1 pilot
-deployment artifact and must not be widened into one.
+```text
+tests/tooling/test_m6_1_recovery_contracts.py
+```
 
-## Immutable release and configuration identity
+No other infrastructure implementation is part of this slice.
 
-Every deployed application or service image is identified by an immutable
-OCI digest. The release set must include the API image and the web/gateway
-artifact that serves the React build; an API-only digest is not a complete
-product identity. Mutable tags may be used only as a build input and must not
-appear as deployment identity.
+## Contract model
 
-The release manifest records:
+M6.1a keeps three immutable document roles separate.
 
-- release-set identifier and creation time;
-- API, web/gateway and PostgreSQL/object-storage image digests, when the
-  service is image-backed;
-- application and infrastructure configuration revision;
-- schema and Alembic head compatibility;
-- opaque secret-reference identifiers and versions; and
-- SHA-256 hashes for the manifest and any non-secret release metadata.
+### Release manifest
 
-Runtime certificates, database/object credentials and private configuration
-remain outside Git, image layers, logs, Review Bundles and C2C messages. The
-manifest contains only opaque reference identifiers and versions, never secret
-values, private keys, connection strings, raw access tokens or raw object
-keys. `deploy/private/` and any secret material must be excluded from Git and
-Docker build context before runtime files can exist.
+The release manifest identifies a release set with immutable component/service
+identity, configuration revision, expected PostgreSQL/Alembic compatibility,
+opaque versioned secret references and a canonical manifest hash. API and
+web/gateway digests are required and must be distinct. Service identity must
+cover PostgreSQL and object storage using immutable OCI digests or immutable
+managed-service references.
 
-## Joint recovery set
+The validator never treats mutable tags or secret values as acceptable release
+identity.
 
-The recovery unit is one quiesced, jointly verifiable cut rather than an
-unrelated PostgreSQL backup plus an independently selected object snapshot.
-The immutable recovery-set manifest may contain only facts known at cut time
-and must link:
+### Recovery set
 
-1. `recovery_set_id`, cut start/end timestamps, an immutable manifest hash and
-   detached signature/key reference;
-2. PostgreSQL backup identity, backup completion time, PostgreSQL major
-   version and the expected Alembic head;
-3. an object-store snapshot/version or a content-root manifest with fixture
-   object count and content hashes, using logical identifiers rather than raw
-   storage keys;
-4. every deployed image digest in the release set;
-5. configuration revision and opaque secret-reference identifiers/versions;
-6. restore order and compatibility checks; and
-7. non-secret evidence timestamps needed to verify the cut.
+The recovery set contains cut-time facts only. It links the release identity to
+one joint recovery cut and records:
 
-The backup must be outside the primary service volumes and in a separately
-recoverable failure domain. A backup on the same host or volume is a No-Go.
-The recovery cut is quiesced so the database facts, object fixture and
-release/configuration identity can be validated against one explicit point in
-time. The fixture is written directly through the controlled storage client;
-it must not call an Evidence API, create Evidence metadata or claim
-application-level database/object consistency.
+- `cut_started_at` and `recovery_set_cut_completed`;
+- PostgreSQL backup identity/completion and separate failure-domain reference;
+- object content-root identity/count/hash and `captured_at`;
+- the same release/configuration/schema/service/secret-reference identity;
+- the fixed restore-order contract;
+- `manifest_sha256`, signer-key reference and detached-signature reference.
 
-The recovery-set manifest is immutable after the cut. A separate immutable
-recovery-attempt proof is created for each rehearsal. It references
-`recovery_set_id` and the manifest hash, then records the opaque clean-target
-identifier, `recovery_triggered_at`, `restoration_started_at`,
-`restored_ready_at`, layered check results and rollback results. Post-cut
-facts are never written back into the recovery-set manifest. Approved clean
-host/container runtime and private-network prerequisites must be disclosed in
-the proof; they are prerequisites of the rehearsal, not time silently
-subtracted from its RTO. `restoration_started_at` remains a diagnostic
-segment timestamp.
+Both PostgreSQL backup completion and object-root capture must fall inside the
+inclusive joint-cut window. An independently selected object snapshot outside
+that cut is rejected by the contract.
 
-## Restore, rollback and stop conditions
+M6.1a records only an opaque `detached_signature_ref`; it does not create,
+retrieve or cryptographically verify the detached signature artifact.
 
-Restore rehearsal follows the manifest order into a distinct clean target:
+### Recovery attempt
 
-1. provision empty disposable database, object and application volumes;
-2. validate image digests, configuration revision, secret-reference
-   availability and PostgreSQL/Alembic compatibility;
-3. restore PostgreSQL and verify the expected migration head;
-4. restore the object fixture or content-root manifest;
-5. start the gateway and application with no public binding;
-6. prove layered readiness and same-origin private HTTPS behavior; and
-7. compare pre-cut and restored database facts, Scenario publications,
-   Activity counts/integrity, fixture object count and content hashes.
+The attempt document is a proof shape for post-cut facts. It references the
+exact recovery-set ID/hash and records an opaque target, one target
+fingerprint, declared timing fields, readiness evidence, exposure evidence and
+rollback facts.
 
-The rollback rehearsal is explicit and controlled: prepare a known-good
-release/configuration set A, deploy candidate set B, inject a non-secret
-controlled failure into B, and stop at the declared failure condition. Roll
-back to immutable set A without restoring the database or mutating the source
-recovery set; then rerun every layered readiness check and verify that the
-database and object fixture remain unchanged. The recovery-attempt proof
-records the rollback trigger, stop condition, target release-set identifier,
-failed-target isolation and all post-rollback checks before any retry.
+The validator requires the TLS proof and all exposure probes to repeat the
+attempt target fingerprint. Probe timestamps must fall inside the inclusive
+`restoration_started_at` through `restored_ready_at` window.
 
-Immediate No-Go conditions include public exposure, a non-trusted or
-self-signed pilot certificate, any published internal port, a mutable image
-identity, missing or leaked secret references, a same-failure-domain backup,
-an unlinked database/object cut, an unclean restore target, an incompatible
-schema/image pair, skipped PostgreSQL or browser proof, hidden fixture
-shortcuts, or any application-layer Evidence/API change.
+These fields are contract inputs only in M6.1a. Their presence and internal
+consistency do not prove that a real network, certificate, restore or rollback
+was executed.
 
-## Prospective implementation allowlist
+## Canonical hashing and passive validation
 
-After Gate Review passes, implementation is limited to:
+`manifest_sha256` is recomputed from the submitted duplicate-free JSON object
+encoded as UTF-8 JSON with sorted keys and compact separators, excluding only
+the root document's own hash field. Submitted string spellings are preserved;
+lexically different timestamp representations therefore produce different
+hashes even when they describe the same instant.
+
+The validator never trusts a submitted root hash. It recomputes and compares
+it. Duplicate JSON keys are rejected before hashing.
+
+Time fields must be RFC 3339 / ISO-8601 strings with an explicit UTC offset or
+`Z`. Numeric Unix timestamps and naive timestamps are rejected.
+
+The validator also recomputes:
+
+```text
+RPO = recovery_triggered_at - recovery_set_cut_completed
+RTO = restored_ready_at - recovery_triggered_at
+```
+
+Positive fractional durations are rounded up to whole seconds so a limit
+exceeded by microseconds cannot pass due to truncation. M6.1a checks the
+arithmetic and declared objective boundaries only; it does not measure a real
+environment.
+
+## Schema parity
+
+`check-schemas` compares the committed Draft 2020-12 JSON Schemas with the
+runtime Pydantic schema projection, including nested structural constraints.
+Cross-document equality, hash recomputation and time arithmetic remain runtime
+validator checks because they cannot be fully expressed as isolated document
+schemas.
+
+## Safety properties
+
+The validator imports no EasyAudit product module, database driver, object
+storage SDK, network client, deployment command or secret resolver. Validation
+must not mutate input files.
+
+Unknown fields and secret-looking values are rejected without echoing hostile
+field names or values. GitHub/C2C evidence must contain only synthetic or
+sanitized opaque references; no credentials, private keys, raw storage keys,
+hostnames exposing private topology, customer exports or production data are
+required by this slice.
+
+## M6.1b boundary — explicitly not claimed here
+
+Real infrastructure qualification belongs to **M6.1b** and requires explicit
+operator authorization before any action that can touch a real environment.
+M6.1a therefore does not claim or authorize:
+
+```text
+real private/VPN network access
+organization-trusted TLS validation
+negative public-exposure probing
+real PostgreSQL backup or restore
+real object-store snapshot or restore
+real failure-domain qualification
+clean-target deployment or restore rehearsal
+real rollback rehearsal
+measured environment RPO/RTO
+secret resolution
+image publication or deployment
+pilot traffic
+```
+
+M6.1b may consume the contracts frozen by M6.1a, but it must have its own
+reviewed Gate, operator-approved target, sanitized evidence plan and explicit
+human authorization. A passing M6.1a CI run is necessary tooling evidence, not
+disaster-recovery qualification.
+
+M6-RC remains responsible for final joint recovery qualification of the actual
+rollout release after later M6 application/schema/Evidence changes.
+
+## Machine scope
+
+The active M6.1a allowlist is strictly:
 
 ```text
 .easyaudit/development-state.json
-docs/architecture/roadmap.md
-docs/architecture/m6-1-recovery-ready-infrastructure.md
-docs/architecture/m6-1-acceptance.md
-docs/operations/m6-1-recovery-runbook.md
-.gitignore
-.dockerignore
-Dockerfile
-deploy/m6-1/**
+deploy/m6-1/contracts/**
 scripts/m6_1_recovery.py
-tests/infrastructure/test_m6_1_*.py
-tests/tooling/test_m6_1_*.py
-.github/workflows/m6-1-recovery.yml
+tests/tooling/test_m6_1_recovery_contracts.py
+docs/architecture/m6-1*
+docs/architecture/roadmap.md
 ```
 
-The development `compose.yaml`, `src/**`, `alembic/**`, `openapi/**`,
-`web/**`, existing API/browser business tests and unrelated deployment
-resources remain outside scope. If the implementation needs application or
-configuration source changes outside this allowlist, stop and revise this
-Gate before continuing.
+In particular, runtime deployment files, Docker ignore policy, workflow files,
+operations runbooks, product source, migrations, browser/API tests and
+infrastructure-rehearsal tests are outside M6.1a.
 
-## Gate exit criteria
+## Final Review entry
 
-The current `GATE_DRAFT` can pass only when:
-
-- the architecture and acceptance documents freeze the topology, trust
-  boundary, immutable release set, secret/config references, failure domain,
-  recovery ordering, rollback and exclusions;
-- the prospective allowlist is narrow and machine-readable in the state file;
-- static checks, `git diff --check`, the active Gate check and a clean Review
-  Bundle pass; and
-- ChatGPT independently reviews the current candidate and authorizes only
-  `GATE_DRAFT -> GATE_REVIEW`.
-
-The later `GATE_REVIEW` can authorize `GATE_REVIEW -> IMPLEMENTATION` only
-after its separate re-review passes. No deployment resources, image
-publication, secret access, restore rehearsal or traffic may occur while that
-re-review is pending.
-
-Implementation Review must then prove the acceptance matrix in
-`m6-1-acceptance.md`. A local pass or a roadmap entry never authorizes real
-traffic or a merge.
+M6.1a may enter `FINAL_REVIEW` only after the aligned implementation/doc
+candidate is fixed to an exact commit and any later control commit changes only
+`.easyaudit/development-state.json`. Final Review evaluates the passive
+contracts/tooling and exact-head CI; it does not authorize M6.1b operations or
+merge without the normal independent review and explicit maintainer decision.
