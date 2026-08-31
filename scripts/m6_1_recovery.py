@@ -269,8 +269,8 @@ class RecoveryAttempt(ContractModel):
     recovery_triggered_at: Timestamp
     restoration_started_at: Timestamp
     restored_ready_at: Timestamp
-    observed_rpo_seconds: Annotated[StrictInt, Field(ge=0)]
-    observed_rto_seconds: Annotated[StrictInt, Field(ge=0)]
+    observed_rpo_seconds: Annotated[StrictInt, Field(ge=0, le=86_400)]
+    observed_rto_seconds: Annotated[StrictInt, Field(ge=0, le=14_400)]
     clock_source: OpaqueId
     checks: RecoveryChecks
 
@@ -343,7 +343,7 @@ def _scan_for_leaks(value: Any, path: tuple[str, ...] = ()) -> list[str]:
             if (
                 any(word in lowered for word in FORBIDDEN_FIELD_WORDS)
                 and key_text not in ALLOWED_SECRET_FIELDS
-            ):
+            ) or any(pattern.search(key_text) for pattern in SECRET_PATTERNS):
                 findings.append("forbidden-sensitive-field")
             findings.extend(_scan_for_leaks(child, (*path, key_text)))
     elif isinstance(value, list):
@@ -392,12 +392,8 @@ def _load[T: ContractModel](path: Path, kind: str, model_type: type[T]) -> tuple
         raise ValueError(f"{kind}: forbidden sensitive material at {leaks[0]}")
     try:
         return model_type.model_validate(raw), raw
-    except ValidationError as exc:
-        first = exc.errors()[0]
-        location = ".".join(str(part) for part in first.get("loc", ())) or "document"
-        raise ValueError(
-            f"{kind}: invalid field {location} ({first.get('type', 'validation')})"
-        ) from None
+    except ValidationError:
+        raise ValueError(f"{kind}: invalid document") from None
 
 
 def validate_documents(
@@ -424,12 +420,8 @@ def validate_documents_from_dicts(
         release = ReleaseManifest.model_validate(release_raw)
         recovery_set = RecoverySet.model_validate(recovery_set_raw)
         attempt = RecoveryAttempt.model_validate(attempt_raw)
-    except ValidationError as exc:
-        first = exc.errors()[0]
-        location = ".".join(str(part) for part in first.get("loc", ())) or "document"
-        raise ValueError(
-            f"document: invalid field {location} ({first.get('type', 'validation')})"
-        ) from None
+    except ValidationError:
+        raise ValueError("document: invalid document") from None
     return _validate_linked(release, recovery_set, attempt, release_raw, recovery_set_raw)
 
 
@@ -537,6 +529,72 @@ def _expected_schema(kind: str, model_type: type[ContractModel]) -> dict[str, An
                 "enum": list(REQUIRED_RESTORE_ORDER),
             },
         }
+    if kind == "recovery-attempt":
+        schema["properties"]["observed_rpo_seconds"]["maximum"] = 86_400
+        schema["properties"]["observed_rto_seconds"]["maximum"] = 14_400
+        definitions = schema["$defs"]
+        definitions["TLSProof"]["properties"]["hostname_verified"]["const"] = True
+        definitions["TLSProof"]["properties"]["validity_checked"]["const"] = True
+        rollback = definitions["RollbackProof"]["properties"]
+        rollback["database_restored_during_rollback"]["const"] = False
+        rollback["layered_readiness_after_rollback"]["const"] = True
+        rollback["fixture_unchanged"]["const"] = True
+        rollback["failed_target_isolated"]["const"] = True
+        definitions["RecoveryChecks"]["properties"]["layered_readiness"]["const"] = True
+
+        exposure = definitions["ExposureProbe"]
+        exposure["allOf"] = [
+            {
+                "if": {
+                    "properties": {"vantage_class": {"const": "approved-private"}},
+                    "required": ["vantage_class"],
+                },
+                "then": {"properties": {"result": {"const": "reachable"}}},
+            },
+            {
+                "if": {
+                    "properties": {"vantage_class": {"const": "public-negative"}},
+                    "required": ["vantage_class"],
+                },
+                "then": {"properties": {"result": {"const": "not-reachable"}}},
+            },
+            {
+                "if": {
+                    "properties": {"result": {"const": "not-reachable"}},
+                    "required": ["result"],
+                },
+                "then": {
+                    "required": ["failure_reason_class"],
+                    "properties": {"failure_reason_class": {"not": {"type": "null"}}},
+                },
+            },
+            {
+                "if": {
+                    "properties": {"result": {"const": "reachable"}},
+                    "required": ["result"],
+                },
+                "then": {"not": {"required": ["failure_reason_class"]}},
+            },
+        ]
+        probes = definitions["RecoveryChecks"]["properties"]["exposure_probes"]
+        probes["allOf"] = [
+            {
+                "contains": {
+                    "type": "object",
+                    "properties": {"vantage_class": {"const": "approved-private"}},
+                    "required": ["vantage_class"],
+                },
+                "minContains": 1,
+            },
+            {
+                "contains": {
+                    "type": "object",
+                    "properties": {"vantage_class": {"const": "public-negative"}},
+                    "required": ["vantage_class"],
+                },
+                "minContains": 1,
+            },
+        ]
     return schema
 
 

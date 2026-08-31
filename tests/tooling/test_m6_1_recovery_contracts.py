@@ -343,7 +343,7 @@ def test_unknown_post_cut_fields_and_sensitive_values_are_rejected(tmp_path: Pat
         check=False,
     )
     assert result.returncode != 0
-    assert "recovery_triggered_at" in result.stderr
+    assert "invalid document" in result.stderr
 
     recovery_set.pop("recovery_triggered_at")
     recovery_set["connection_string"] = "postgresql://user:password@example.invalid/db"
@@ -391,6 +391,35 @@ def test_unknown_post_cut_fields_and_sensitive_values_are_rejected(tmp_path: Pat
     assert "x_password" not in result.stderr
     assert "super-secret" not in result.stderr
 
+    hostile_documents = [
+        ("AKIA1234567890ABCDEF", "secret-value"),
+        ("-----BEGIN RSA PRIVATE KEY-----", "private-key-value"),
+        ("hostile_dynamic_key", "dynamic-value"),
+    ]
+    for hostile_key, hostile_value in hostile_documents:
+        release, recovery_set, attempt = _documents()
+        release[hostile_key] = hostile_value
+        paths = _write_documents(tmp_path, (release, recovery_set, attempt))
+        result = subprocess.run(
+            [
+                str(PYTHON),
+                str(ROOT / "scripts/m6_1_recovery.py"),
+                "validate",
+                "--release",
+                str(paths[0]),
+                "--recovery-set",
+                str(paths[1]),
+                "--attempt",
+                str(paths[2]),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0
+        assert hostile_key not in result.stdout + result.stderr
+        assert hostile_value not in result.stdout + result.stderr
+
 
 def test_schema_sync_and_ignore_boundaries() -> None:
     recovery.check_schemas(ROOT / "deploy/m6-1/contracts")
@@ -407,6 +436,18 @@ def test_schema_sync_and_ignore_boundaries() -> None:
         "postgres",
         "object_storage",
     ]
+    attempt_schema = json.loads(
+        (ROOT / "deploy/m6-1/contracts/recovery-attempt.schema.json").read_text(encoding="utf-8")
+    )
+    assert attempt_schema["properties"]["observed_rpo_seconds"]["maximum"] == 86_400
+    assert attempt_schema["properties"]["observed_rto_seconds"]["maximum"] == 14_400
+    checks = attempt_schema["$defs"]["RecoveryChecks"]
+    assert checks["properties"]["layered_readiness"]["const"] is True
+    assert checks["properties"]["exposure_probes"]["allOf"]
+    assert attempt_schema["$defs"]["TLSProof"]["properties"]["hostname_verified"]["const"] is True
+    rollback = attempt_schema["$defs"]["RollbackProof"]["properties"]
+    assert rollback["database_restored_during_rollback"]["const"] is False
+    assert rollback["failed_target_isolated"]["const"] is True
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
     for text in (gitignore, dockerignore):

@@ -2,6 +2,89 @@
   "$defs": {
     "ExposureProbe": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "vantage_class": {
+                "const": "approved-private"
+              }
+            },
+            "required": [
+              "vantage_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "const": "reachable"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "vantage_class": {
+                "const": "public-negative"
+              }
+            },
+            "required": [
+              "vantage_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "const": "not-reachable"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "const": "not-reachable"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          "then": {
+            "properties": {
+              "failure_reason_class": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "failure_reason_class"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "const": "reachable"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "failure_reason_class"
+              ]
+            }
+          }
+        }
+      ],
       "properties": {
         "failure_reason_class": {
           "anyOf": [
@@ -58,6 +141,36 @@
       "additionalProperties": false,
       "properties": {
         "exposure_probes": {
+          "allOf": [
+            {
+              "contains": {
+                "properties": {
+                  "vantage_class": {
+                    "const": "approved-private"
+                  }
+                },
+                "required": [
+                  "vantage_class"
+                ],
+                "type": "object"
+              },
+              "minContains": 1
+            },
+            {
+              "contains": {
+                "properties": {
+                  "vantage_class": {
+                    "const": "public-negative"
+                  }
+                },
+                "required": [
+                  "vantage_class"
+                ],
+                "type": "object"
+              },
+              "minContains": 1
+            }
+          ],
           "items": {
             "$ref": "#/$defs/ExposureProbe"
           },
@@ -66,6 +179,7 @@
           "type": "array"
         },
         "layered_readiness": {
+          "const": true,
           "title": "Layered Readiness",
           "type": "boolean"
         },
@@ -96,10 +210,12 @@
           "type": "string"
         },
         "database_restored_during_rollback": {
+          "const": false,
           "title": "Database Restored During Rollback",
           "type": "boolean"
         },
         "failed_target_isolated": {
+          "const": true,
           "title": "Failed Target Isolated",
           "type": "boolean"
         },
@@ -109,6 +225,7 @@
           "type": "string"
         },
         "fixture_unchanged": {
+          "const": true,
           "title": "Fixture Unchanged",
           "type": "boolean"
         },
@@ -120,6 +237,7 @@
           "type": "string"
         },
         "layered_readiness_after_rollback": {
+          "const": true,
           "title": "Layered Readiness After Rollback",
           "type": "boolean"
         },
@@ -153,6 +271,7 @@
           "type": "string"
         },
         "hostname_verified": {
+          "const": true,
           "title": "Hostname Verified",
           "type": "boolean"
         },
@@ -169,6 +288,7 @@
           "type": "string"
         },
         "validity_checked": {
+          "const": true,
           "title": "Validity Checked",
           "type": "boolean"
         }
@@ -211,11 +331,13 @@
       "type": "string"
     },
     "observed_rpo_seconds": {
+      "maximum": 86400,
       "minimum": 0,
       "title": "Observed Rpo Seconds",
       "type": "integer"
     },
     "observed_rto_seconds": {
+      "maximum": 14400,
       "minimum": 0,
       "title": "Observed Rto Seconds",
       "type": "integer"
