@@ -36,7 +36,7 @@
       "deploy/**"
     ]
   },
-  "fixed_head": "473043f45e90f8eb391013d04fd25dabb659ba1b",
+  "fixed_head": null,
   "docs_review_head": "473043f45e90f8eb391013d04fd25dabb659ba1b",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
