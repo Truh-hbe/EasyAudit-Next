@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6.1-recovery-ready-infrastructure",
-  "phase": "GATE_REVIEW",
+  "phase": "IMPLEMENTATION",
   "base": {
     "branch": "main",
     "sha": "43fdf9d9a98c3e01d4f2fd50d795567c2fe9a62c"
@@ -49,5 +49,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Complete M6.1 Gate review with exact-head evidence; no implementation authorization"
+  "next_allowed_action": "Implement M6.1 recovery-ready infrastructure within the reviewed allowlist; no deployment, secret access, restore rehearsal, traffic or merge"
 }
