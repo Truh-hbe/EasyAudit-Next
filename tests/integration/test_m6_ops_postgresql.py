@@ -58,7 +58,11 @@ def test_pool_timeout_has_no_overflow(postgres_url: str) -> None:
 
 def test_statement_timeout_cancels_real_postgresql_work(postgres_url: str) -> None:
     engine = create_database_engine(
-        Settings(database_url=postgres_url, database_statement_timeout_ms=1_000)
+        Settings(
+            database_url=postgres_url,
+            database_statement_timeout_ms=1_000,
+            database_lock_timeout_ms=500,
+        )
     )
     try:
         with engine.connect() as connection:

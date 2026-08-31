@@ -51,7 +51,7 @@ test('route ErrorBoundary preserves shell and resets after navigation', async ({
   await expect(page.getByRole('heading', { name: '当前页面暂时不可用' })).toBeVisible()
   const navigation = page.getByRole('navigation', { name: '主要导航' })
   await expect(navigation).toBeVisible()
-  await expect(page.getByText('EasyAudit Next')).toBeVisible()
+  await expect(page.getByRole('banner').getByText('EasyAudit Next')).toBeVisible()
 
   await navigation.getByRole('link', { name: '审查活动' }).click()
   await expect(page.getByRole('heading', { name: '审查活动' })).toBeVisible()
