@@ -1,28 +1,315 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ExposureProbe": {
+      "additionalProperties": false,
+      "properties": {
+        "failure_reason_class": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Reason Class"
+        },
+        "probe_at": {
+          "format": "date-time",
+          "title": "Probe At",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "reachable",
+            "not-reachable"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "target_fingerprint": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Target Fingerprint",
+          "type": "string"
+        },
+        "vantage_class": {
+          "enum": [
+            "approved-private",
+            "public-negative"
+          ],
+          "title": "Vantage Class",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vantage_class",
+        "target_fingerprint",
+        "probe_at",
+        "result"
+      ],
+      "title": "ExposureProbe",
+      "type": "object"
+    },
+    "RecoveryChecks": {
+      "additionalProperties": false,
+      "properties": {
+        "exposure_probes": {
+          "items": {
+            "$ref": "#/$defs/ExposureProbe"
+          },
+          "minItems": 2,
+          "title": "Exposure Probes",
+          "type": "array"
+        },
+        "layered_readiness": {
+          "title": "Layered Readiness",
+          "type": "boolean"
+        },
+        "private_tls": {
+          "$ref": "#/$defs/TLSProof"
+        },
+        "rollback": {
+          "$ref": "#/$defs/RollbackProof"
+        }
+      },
+      "required": [
+        "layered_readiness",
+        "private_tls",
+        "exposure_probes",
+        "rollback"
+      ],
+      "title": "RecoveryChecks",
+      "type": "object"
+    },
+    "RollbackProof": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_release_set_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Candidate Release Set Id",
+          "type": "string"
+        },
+        "database_restored_during_rollback": {
+          "title": "Database Restored During Rollback",
+          "type": "boolean"
+        },
+        "failed_target_isolated": {
+          "title": "Failed Target Isolated",
+          "type": "boolean"
+        },
+        "failure_injected": {
+          "const": "controlled-non-secret",
+          "title": "Failure Injected",
+          "type": "string"
+        },
+        "fixture_unchanged": {
+          "title": "Fixture Unchanged",
+          "type": "boolean"
+        },
+        "known_good_release_set_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Known Good Release Set Id",
+          "type": "string"
+        },
+        "layered_readiness_after_rollback": {
+          "title": "Layered Readiness After Rollback",
+          "type": "boolean"
+        },
+        "stop_condition": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Stop Condition",
+          "type": "string"
+        }
+      },
+      "required": [
+        "known_good_release_set_id",
+        "candidate_release_set_id",
+        "failure_injected",
+        "stop_condition",
+        "database_restored_during_rollback",
+        "layered_readiness_after_rollback",
+        "fixture_unchanged",
+        "failed_target_isolated"
+      ],
+      "title": "RollbackProof",
+      "type": "object"
+    },
+    "TLSProof": {
+      "additionalProperties": false,
+      "properties": {
+        "certificate_fingerprint": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Certificate Fingerprint",
+          "type": "string"
+        },
+        "hostname_verified": {
+          "title": "Hostname Verified",
+          "type": "boolean"
+        },
+        "issuer_trust_store_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Issuer Trust Store Ref",
+          "type": "string"
+        },
+        "probe_at": {
+          "format": "date-time",
+          "title": "Probe At",
+          "type": "string"
+        },
+        "validity_checked": {
+          "title": "Validity Checked",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "certificate_fingerprint",
+        "issuer_trust_store_ref",
+        "hostname_verified",
+        "validity_checked",
+        "probe_at"
+      ],
+      "title": "TLSProof",
+      "type": "object"
+    }
+  },
   "$id": "https://easyaudit.invalid/m6.1/recovery-attempt.schema.json",
-  "title": "M6.1 Recovery Attempt",
-  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "x-model-fields": ["checks", "clock_source", "manifest_sha256", "observed_rpo_seconds", "observed_rto_seconds", "recovery_attempt_id", "recovery_set_id", "recovery_triggered_at", "restoration_started_at", "restored_ready_at", "schema_version", "target_opaque_id"],
-  "required": ["checks", "clock_source", "manifest_sha256", "observed_rpo_seconds", "observed_rto_seconds", "recovery_attempt_id", "recovery_set_id", "recovery_triggered_at", "restoration_started_at", "restored_ready_at", "schema_version", "target_opaque_id"],
   "properties": {
-    "schema_version": {"const": "m6.1.recovery-attempt.v1"},
-    "recovery_attempt_id": {"type": "string"},
-    "recovery_set_id": {"type": "string"},
-    "manifest_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "target_opaque_id": {"type": "string"},
-    "recovery_triggered_at": {"type": "string", "format": "date-time"},
-    "restoration_started_at": {"type": "string", "format": "date-time"},
-    "restored_ready_at": {"type": "string", "format": "date-time"},
-    "observed_rpo_seconds": {"type": "integer", "minimum": 0},
-    "observed_rto_seconds": {"type": "integer", "minimum": 0},
-    "clock_source": {"type": "string"},
-    "checks": {"type": "object", "additionalProperties": false, "required": ["layered_readiness", "private_tls", "exposure_probes", "rollback"], "properties": {
-      "layered_readiness": {"const": true},
-      "private_tls": {"type": "object", "additionalProperties": false, "required": ["certificate_fingerprint", "issuer_trust_store_ref", "hostname_verified", "validity_checked", "probe_at"], "properties": {"certificate_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "issuer_trust_store_ref": {"type": "string"}, "hostname_verified": {"const": true}, "validity_checked": {"const": true}, "probe_at": {"type": "string", "format": "date-time"}}},
-      "exposure_probes": {"type": "array", "minItems": 2, "items": {"type": "object", "additionalProperties": false, "required": ["vantage_class", "target_fingerprint", "probe_at", "result"], "properties": {"vantage_class": {"enum": ["approved-private", "public-negative"]}, "target_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "probe_at": {"type": "string", "format": "date-time"}, "result": {"enum": ["reachable", "not-reachable"]}, "failure_reason_class": {"type": ["string", "null"]}}}},
-      "rollback": {"type": "object", "additionalProperties": false, "required": ["known_good_release_set_id", "failure_injected", "stop_condition", "database_restored_during_rollback", "layered_readiness_after_rollback", "fixture_unchanged"], "properties": {"known_good_release_set_id": {"type": "string"}, "failure_injected": {"const": "controlled-non-secret"}, "stop_condition": {"type": "string"}, "database_restored_during_rollback": {"const": false}, "layered_readiness_after_rollback": {"const": true}, "fixture_unchanged": {"const": true}}}
-    }}
-  }
+    "checks": {
+      "$ref": "#/$defs/RecoveryChecks"
+    },
+    "clean_target_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Clean Target Ref",
+      "type": "string"
+    },
+    "clock_source": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Clock Source",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "observed_rpo_seconds": {
+      "minimum": 0,
+      "title": "Observed Rpo Seconds",
+      "type": "integer"
+    },
+    "observed_rto_seconds": {
+      "minimum": 0,
+      "title": "Observed Rto Seconds",
+      "type": "integer"
+    },
+    "private_network_prerequisite_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Private Network Prerequisite Ref",
+      "type": "string"
+    },
+    "recovery_attempt_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Recovery Attempt Id",
+      "type": "string"
+    },
+    "recovery_set_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Recovery Set Id",
+      "type": "string"
+    },
+    "recovery_triggered_at": {
+      "format": "date-time",
+      "title": "Recovery Triggered At",
+      "type": "string"
+    },
+    "restoration_started_at": {
+      "format": "date-time",
+      "title": "Restoration Started At",
+      "type": "string"
+    },
+    "restored_ready_at": {
+      "format": "date-time",
+      "title": "Restored Ready At",
+      "type": "string"
+    },
+    "runtime_prerequisite_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Runtime Prerequisite Ref",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "m6.1.recovery-attempt.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target_opaque_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Target Opaque Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "recovery_attempt_id",
+    "recovery_set_id",
+    "manifest_sha256",
+    "target_opaque_id",
+    "clean_target_ref",
+    "runtime_prerequisite_ref",
+    "private_network_prerequisite_ref",
+    "recovery_triggered_at",
+    "restoration_started_at",
+    "restored_ready_at",
+    "observed_rpo_seconds",
+    "observed_rto_seconds",
+    "clock_source",
+    "checks"
+  ],
+  "title": "RecoveryAttempt",
+  "type": "object",
+  "x-model-fields": [
+    "checks",
+    "clean_target_ref",
+    "clock_source",
+    "manifest_sha256",
+    "observed_rpo_seconds",
+    "observed_rto_seconds",
+    "private_network_prerequisite_ref",
+    "recovery_attempt_id",
+    "recovery_set_id",
+    "recovery_triggered_at",
+    "restoration_started_at",
+    "restored_ready_at",
+    "runtime_prerequisite_ref",
+    "schema_version",
+    "target_opaque_id"
+  ]
 }

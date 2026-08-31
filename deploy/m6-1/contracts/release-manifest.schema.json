@@ -1,20 +1,224 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ManagedServiceIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_type": {
+          "const": "managed-version",
+          "title": "Identity Type",
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity_type",
+        "reference"
+      ],
+      "title": "ManagedServiceIdentity",
+      "type": "object"
+    },
+    "OCIServiceIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_type": {
+          "const": "oci-digest",
+          "title": "Identity Type",
+          "type": "string"
+        },
+        "reference": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity_type",
+        "reference"
+      ],
+      "title": "OCIServiceIdentity",
+      "type": "object"
+    },
+    "SchemaCompatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "alembic_head": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Alembic Head",
+          "type": "string"
+        },
+        "postgres_major": {
+          "const": 17,
+          "title": "Postgres Major",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "postgres_major",
+        "alembic_head"
+      ],
+      "title": "SchemaCompatibility",
+      "type": "object"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "title": "SecretRef",
+      "type": "object"
+    }
+  },
   "$id": "https://easyaudit.invalid/m6.1/release-manifest.schema.json",
-  "title": "M6.1 Release Manifest",
-  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "x-model-fields": ["config_revision", "created_at", "manifest_sha256", "release_digests", "release_set_id", "schema", "schema_version", "secret_refs", "signer_key_ref"],
-  "required": ["config_revision", "created_at", "manifest_sha256", "release_digests", "release_set_id", "schema", "schema_version", "secret_refs", "signer_key_ref"],
   "properties": {
-    "schema_version": {"const": "m6.1.release-manifest.v1"},
-    "release_set_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
-    "created_at": {"type": "string", "format": "date-time"},
-    "release_digests": {"type": "object", "minProperties": 2, "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
-    "config_revision": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
-    "schema": {"type": "object", "additionalProperties": false, "required": ["postgres_major", "alembic_head"], "properties": {"postgres_major": {"const": 17}, "alembic_head": {"type": "string"}}},
-    "secret_refs": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["id", "version"], "properties": {"id": {"type": "string"}, "version": {"type": "string"}}}},
-    "manifest_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "signer_key_ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"}
-  }
+    "config_revision": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Config Revision",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "release_digests": {
+      "additionalProperties": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "required": [
+        "api",
+        "web_gateway"
+      ],
+      "title": "Release Digests",
+      "type": "object"
+    },
+    "release_set_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Release Set Id",
+      "type": "string"
+    },
+    "schema": {
+      "$ref": "#/$defs/SchemaCompatibility"
+    },
+    "schema_version": {
+      "const": "m6.1.release-manifest.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "secret_refs": {
+      "items": {
+        "$ref": "#/$defs/SecretRef"
+      },
+      "minItems": 1,
+      "title": "Secret Refs",
+      "type": "array"
+    },
+    "service_identities": {
+      "additionalProperties": false,
+      "minProperties": 2,
+      "properties": {
+        "object_storage": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/OCIServiceIdentity"
+            },
+            {
+              "$ref": "#/$defs/ManagedServiceIdentity"
+            }
+          ]
+        },
+        "postgres": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/OCIServiceIdentity"
+            },
+            {
+              "$ref": "#/$defs/ManagedServiceIdentity"
+            }
+          ]
+        }
+      },
+      "propertyNames": {
+        "enum": [
+          "postgres",
+          "object_storage"
+        ]
+      },
+      "required": [
+        "postgres",
+        "object_storage"
+      ],
+      "title": "Service Identities",
+      "type": "object"
+    },
+    "signer_key_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Signer Key Ref",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "release_set_id",
+    "created_at",
+    "release_digests",
+    "service_identities",
+    "config_revision",
+    "schema",
+    "secret_refs",
+    "manifest_sha256",
+    "signer_key_ref"
+  ],
+  "title": "ReleaseManifest",
+  "type": "object",
+  "x-model-fields": [
+    "config_revision",
+    "created_at",
+    "manifest_sha256",
+    "release_digests",
+    "release_set_id",
+    "schema",
+    "schema_version",
+    "secret_refs",
+    "service_identities",
+    "signer_key_ref"
+  ]
 }

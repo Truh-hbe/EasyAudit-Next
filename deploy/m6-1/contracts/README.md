@@ -6,12 +6,22 @@ validator in `scripts/m6_1_recovery.py` is intentionally independent of the
 EasyAudit application: it imports no product module, database or object-store
 SDK, network client, deployment command, or secret resolver.
 
-`manifest_sha256` is computed over UTF-8 JSON with sorted keys and compact
-separators after excluding only the manifest's own hash field. Validators
-recompute it and never trust a submitted value. A recovery set contains only
-cut-time facts; target, timing, readiness and rollback facts belong to the
-separate recovery-attempt document. The two documents must reference the same
-recovery-set ID and hash.
+`manifest_sha256` is computed over the duplicate-free submitted JSON object as
+UTF-8 JSON with sorted keys and compact separators, after excluding only the
+root document's own hash field. Validators preserve submitted string spellings
+(including timestamp offsets), recompute the hash and never trust a submitted
+value. Positive fractional RPO/RTO durations are rounded up to the next whole
+second, so a boundary exceeded by microseconds cannot be reported as passing.
+A recovery set contains only cut-time facts; target, timing, readiness and
+rollback facts belong to the separate recovery-attempt document. The two
+documents must reference the same recovery-set ID and hash. PostgreSQL and
+object-storage identities are explicit and must be either immutable OCI
+digests or immutable managed-service references.
+
+The recovery attempt records opaque references for the clean target, approved
+runtime and approved private network. All TLS and exposure probes must refer
+to one target and fall within the attempt window. Rollback records distinct
+known-good (A) and candidate (B) release sets plus failed-target isolation.
 
 Run the passive checks with:
 
@@ -24,4 +34,7 @@ python scripts/m6_1_recovery.py validate --release release.json \
 This slice performs no signing, backup, restore, deployment, network probe or
 secret resolution. Detached signature verification, concrete topology and
 operator evidence remain later M6.1 slices. Inputs and failures are reported
-without echoing document values, credentials, raw object keys or customer data.
+without echoing document values, untrusted field names, credentials, raw
+object keys or customer data. `check-schemas` compares the committed Draft
+2020-12 files with the runtime Pydantic schema projection, including nested
+constraints; cross-document and time arithmetic remain runtime-only checks.

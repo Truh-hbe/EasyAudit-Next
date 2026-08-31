@@ -10,11 +10,13 @@ execution dependency.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
 import sys
-from datetime import UTC, datetime
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -33,10 +35,11 @@ from pydantic import (
 SCHEMA_VERSION = "m6.1.v1"
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 OPAQUE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-ISO_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T")
 OpaqueId = Annotated[StrictStr, Field(min_length=1, max_length=128, pattern=OPAQUE_ID_RE.pattern)]
 Digest = Annotated[StrictStr, Field(pattern=SHA256_RE.pattern)]
 Timestamp = datetime
+REQUIRED_RESTORE_ORDER = ("postgres", "object_fixture", "application", "gateway")
+SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 
 class ContractModel(BaseModel):
@@ -57,6 +60,12 @@ class SecretRef(ContractModel):
     version: OpaqueId
 
 
+def _require_unique_secret_refs(refs: list[SecretRef]) -> None:
+    keys = [(ref.id, ref.version) for ref in refs]
+    if len(keys) != len(set(keys)) or len({key[0] for key in keys}) != len(keys):
+        raise ValueError("secret references must be unique")
+
+
 class SchemaCompatibility(ContractModel):
     postgres_major: Literal[17]
     alembic_head: OpaqueId
@@ -67,7 +76,23 @@ class PostgresBackup(ContractModel):
     completed_at: Timestamp
     failure_domain_ref: OpaqueId
 
-    _completed_at_aware = field_validator("completed_at")( _aware )
+    _completed_at_aware = field_validator("completed_at")(_aware)
+
+
+class OCIServiceIdentity(ContractModel):
+    identity_type: Literal["oci-digest"]
+    reference: Digest
+
+
+class ManagedServiceIdentity(ContractModel):
+    identity_type: Literal["managed-version"]
+    reference: OpaqueId
+
+
+ServiceIdentity = Annotated[
+    OCIServiceIdentity | ManagedServiceIdentity,
+    Field(discriminator="identity_type"),
+]
 
 
 class ObjectRoot(ContractModel):
@@ -116,17 +141,25 @@ class ExposureProbe(ContractModel):
 
 class RollbackProof(ContractModel):
     known_good_release_set_id: OpaqueId
+    candidate_release_set_id: OpaqueId
     failure_injected: Literal["controlled-non-secret"]
     stop_condition: OpaqueId
     database_restored_during_rollback: StrictBool
     layered_readiness_after_rollback: StrictBool
     fixture_unchanged: StrictBool
+    failed_target_isolated: StrictBool
 
     @model_validator(mode="after")
     def isolated_rollback(self) -> RollbackProof:
         if self.database_restored_during_rollback:
             raise ValueError("rollback must not restore the database")
-        if not self.layered_readiness_after_rollback or not self.fixture_unchanged:
+        if self.candidate_release_set_id == self.known_good_release_set_id:
+            raise ValueError("rollback candidate must differ from known-good release")
+        if (
+            not self.layered_readiness_after_rollback
+            or not self.fixture_unchanged
+            or not self.failed_target_isolated
+        ):
             raise ValueError("rollback readiness and fixture invariants are incomplete")
         return self
 
@@ -152,6 +185,9 @@ class ReleaseManifest(ContractModel):
     release_set_id: OpaqueId
     created_at: Timestamp
     release_digests: dict[StrictStr, Digest]
+    service_identities: dict[Literal["postgres", "object_storage"], ServiceIdentity] = Field(
+        min_length=2
+    )
     config_revision: OpaqueId
     schema_: SchemaCompatibility = Field(alias="schema")
     secret_refs: list[SecretRef] = Field(min_length=1)
@@ -165,6 +201,9 @@ class ReleaseManifest(ContractModel):
         required = {"api", "web_gateway"}
         if not required.issubset(self.release_digests):
             raise ValueError("api and web_gateway image digests are required")
+        if set(self.service_identities) != {"postgres", "object_storage"}:
+            raise ValueError("postgres and object-storage identities are required")
+        _require_unique_secret_refs(self.secret_refs)
         return self
 
 
@@ -175,6 +214,9 @@ class RecoverySet(ContractModel):
     cut_started_at: Timestamp
     recovery_set_cut_completed: Timestamp
     release_digests: dict[StrictStr, Digest]
+    service_identities: dict[Literal["postgres", "object_storage"], ServiceIdentity] = Field(
+        min_length=2
+    )
     config_revision: OpaqueId
     secret_refs: list[SecretRef] = Field(min_length=1)
     postgres_backup: PostgresBackup
@@ -194,15 +236,24 @@ class RecoverySet(ContractModel):
     def complete_cut(self) -> RecoverySet:
         if self.recovery_set_cut_completed < self.cut_started_at:
             raise ValueError("recovery set cut completion precedes cut start")
-        if self.postgres_backup.completed_at > self.recovery_set_cut_completed:
-            raise ValueError("database backup completed after the joint cut")
+        if not (
+            self.cut_started_at
+            <= self.postgres_backup.completed_at
+            <= self.recovery_set_cut_completed
+        ):
+            raise ValueError("database backup must complete within the joint cut")
         if self.postgres_backup.failure_domain_ref == self.primary_failure_domain_ref:
             raise ValueError("backup must use a separate failure domain")
         required = {"api", "web_gateway"}
         if not required.issubset(self.release_digests):
             raise ValueError("recovery set must include complete release digests")
+        if set(self.service_identities) != {"postgres", "object_storage"}:
+            raise ValueError("recovery set must include postgres and object-storage identities")
         if len(set(self.restore_order)) != len(self.restore_order):
             raise ValueError("restore order must not contain duplicates")
+        if tuple(self.restore_order) != REQUIRED_RESTORE_ORDER:
+            raise ValueError("restore order must be postgres, object_fixture, application, gateway")
+        _require_unique_secret_refs(self.secret_refs)
         return self
 
 
@@ -212,6 +263,9 @@ class RecoveryAttempt(ContractModel):
     recovery_set_id: OpaqueId
     manifest_sha256: Digest
     target_opaque_id: OpaqueId
+    clean_target_ref: OpaqueId
+    runtime_prerequisite_ref: OpaqueId
+    private_network_prerequisite_ref: OpaqueId
     recovery_triggered_at: Timestamp
     restoration_started_at: Timestamp
     restored_ready_at: Timestamp
@@ -243,6 +297,11 @@ SCHEMA_FILES = {
     "recovery-set": "recovery-set.schema.json",
     "recovery-attempt": "recovery-attempt.schema.json",
 }
+SCHEMA_IDS = {
+    "release": "https://easyaudit.invalid/m6.1/release-manifest.schema.json",
+    "recovery-set": "https://easyaudit.invalid/m6.1/recovery-set.schema.json",
+    "recovery-attempt": "https://easyaudit.invalid/m6.1/recovery-attempt.schema.json",
+}
 
 ALLOWED_SECRET_FIELDS = {"secret_refs", "signer_key_ref", "issuer_trust_store_ref"}
 FORBIDDEN_FIELD_WORDS = {
@@ -262,6 +321,19 @@ SECRET_PATTERNS = (
 )
 
 
+class DuplicateKeyError(ValueError):
+    """Raised when a JSON object contains duplicate keys."""
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateKeyError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def _scan_for_leaks(value: Any, path: tuple[str, ...] = ()) -> list[str]:
     findings: list[str] = []
     if isinstance(value, dict):
@@ -272,25 +344,45 @@ def _scan_for_leaks(value: Any, path: tuple[str, ...] = ()) -> list[str]:
                 any(word in lowered for word in FORBIDDEN_FIELD_WORDS)
                 and key_text not in ALLOWED_SECRET_FIELDS
             ):
-                findings.append(".".join((*path, key_text)))
+                findings.append("forbidden-sensitive-field")
             findings.extend(_scan_for_leaks(child, (*path, key_text)))
     elif isinstance(value, list):
         for index, child in enumerate(value):
             findings.extend(_scan_for_leaks(child, (*path, str(index))))
     elif isinstance(value, str) and any(pattern.search(value) for pattern in SECRET_PATTERNS):
-        findings.append(".".join(path))
+        findings.append("sensitive-value")
     return findings
 
 
-def canonical_hash(model: ContractModel) -> str:
-    data = model.model_dump(mode="json", by_alias=True, exclude={"manifest_sha256"})
+def canonical_hash(document: ContractModel | Mapping[str, Any]) -> str:
+    """Hash the submitted JSON projection, excluding only its root hash field.
+
+    Callers validating files should pass the duplicate-free raw mapping so that
+    timestamp spellings and other submitted string values remain immutable
+    evidence. The model form remains supported for tooling callers, but uses
+    Pydantic's JSON projection when no raw document is available.
+    """
+    if isinstance(document, ContractModel):
+        data = document.model_dump(mode="json", by_alias=True)
+    else:
+        data = copy.deepcopy(dict(document))
+    data.pop("manifest_sha256", None)
     encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def _ceil_seconds(delta: timedelta) -> int:
+    """Return a conservative whole-second duration without float truncation."""
+    if delta < timedelta(0):
+        return -1
+    return delta.days * 86_400 + delta.seconds + (1 if delta.microseconds else 0)
+
+
 def _load[T: ContractModel](path: Path, kind: str, model_type: type[T]) -> tuple[T, dict[str, Any]]:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys)
+    except DuplicateKeyError:
+        raise ValueError(f"{kind}: unreadable JSON document (DuplicateKeyError)") from None
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{kind}: unreadable JSON document ({type(exc).__name__})") from None
     if not isinstance(raw, dict):
@@ -348,9 +440,9 @@ def _validate_linked(
     release_raw: dict[str, Any],
     recovery_set_raw: dict[str, Any],
 ) -> tuple[ReleaseManifest, RecoverySet, RecoveryAttempt]:
-    if canonical_hash(release) != release.manifest_sha256:
+    if canonical_hash(release_raw) != release.manifest_sha256:
         raise ValueError("release: manifest hash mismatch")
-    if canonical_hash(recovery_set) != recovery_set.manifest_sha256:
+    if canonical_hash(recovery_set_raw) != recovery_set.manifest_sha256:
         raise ValueError("recovery-set: manifest hash mismatch")
     if recovery_set.release_set_id != release.release_set_id:
         raise ValueError("recovery-set: release set reference mismatch")
@@ -360,14 +452,20 @@ def _validate_linked(
         raise ValueError("recovery-set: configuration revision mismatch")
     if recovery_set.schema_ != release.schema_:
         raise ValueError("recovery-set: schema compatibility mismatch")
+    if recovery_set.service_identities != release.service_identities:
+        raise ValueError("recovery-set: service identity set mismatch")
+    if {(ref.id, ref.version) for ref in recovery_set.secret_refs} != {
+        (ref.id, ref.version) for ref in release.secret_refs
+    }:
+        raise ValueError("recovery-set: secret reference set mismatch")
     if attempt.recovery_set_id != recovery_set.recovery_set_id:
         raise ValueError("recovery-attempt: recovery set reference mismatch")
     if attempt.manifest_sha256 != recovery_set.manifest_sha256:
         raise ValueError("recovery-attempt: recovery-set manifest hash mismatch")
-    rpo = int(
-        (attempt.recovery_triggered_at - recovery_set.recovery_set_cut_completed).total_seconds()
-    )
-    rto = int((attempt.restored_ready_at - attempt.recovery_triggered_at).total_seconds())
+    rpo_delta = attempt.recovery_triggered_at - recovery_set.recovery_set_cut_completed
+    rto_delta = attempt.restored_ready_at - attempt.recovery_triggered_at
+    rpo = _ceil_seconds(rpo_delta)
+    rto = _ceil_seconds(rto_delta)
     if rpo < 0 or rto < 0:
         raise ValueError("recovery-attempt: timing is negative")
     if attempt.observed_rpo_seconds != rpo or attempt.observed_rto_seconds != rto:
@@ -380,6 +478,20 @@ def _validate_linked(
         raise ValueError("recovery-attempt: observed RTO exceeds 4 hours")
     if attempt.checks.rollback.known_good_release_set_id != recovery_set.release_set_id:
         raise ValueError("recovery-attempt: rollback baseline does not match release set")
+    fingerprints = {probe.target_fingerprint for probe in attempt.checks.exposure_probes}
+    if len(fingerprints) != 1:
+        raise ValueError("recovery-attempt: exposure probes must identify one target")
+    evidence_timestamps = [
+        attempt.checks.private_tls.probe_at,
+        *(probe.probe_at for probe in attempt.checks.exposure_probes),
+    ]
+    if any(
+        timestamp < attempt.recovery_triggered_at or timestamp > attempt.restored_ready_at
+        for timestamp in evidence_timestamps
+    ):
+        raise ValueError("recovery-attempt: probe evidence is outside the attempt window")
+    if attempt.clean_target_ref != attempt.target_opaque_id:
+        raise ValueError("recovery-attempt: clean target reference mismatch")
     # Keep the raw parse intentionally used: this guards against callers that
     # bypass Pydantic's strict model and submit a duplicate hash field shape.
     release_fields = set(release.model_dump(mode="json", by_alias=True))
@@ -389,25 +501,58 @@ def _validate_linked(
     return release, recovery_set, attempt
 
 
+def _expected_schema(kind: str, model_type: type[ContractModel]) -> dict[str, Any]:
+    schema = model_type.model_json_schema(by_alias=True, ref_template="#/$defs/{model}")
+    schema["$schema"] = SCHEMA_DIALECT
+    schema["$id"] = SCHEMA_IDS[kind]
+    fields = {field.alias or name for name, field in model_type.model_fields.items()}
+    schema["x-model-fields"] = sorted(fields)
+
+    if kind in {"release", "recovery-set"}:
+        digests = schema["properties"]["release_digests"]
+        digests["required"] = ["api", "web_gateway"]
+        service_identities = schema["properties"]["service_identities"]
+        service_identity_refs = [
+            {"$ref": "#/$defs/OCIServiceIdentity"},
+            {"$ref": "#/$defs/ManagedServiceIdentity"},
+        ]
+        service_identities.update(
+            {
+                "additionalProperties": False,
+                "required": ["postgres", "object_storage"],
+                "properties": {
+                    "postgres": {"oneOf": service_identity_refs},
+                    "object_storage": {"oneOf": service_identity_refs},
+                },
+            }
+        )
+    if kind == "recovery-set":
+        schema["properties"]["restore_order"] = {
+            "type": "array",
+            "const": list(REQUIRED_RESTORE_ORDER),
+            "minItems": 4,
+            "maxItems": 4,
+            "uniqueItems": True,
+            "items": {
+                "enum": list(REQUIRED_RESTORE_ORDER),
+            },
+        }
+    return schema
+
+
 def check_schemas(schema_dir: Path) -> None:
     for kind, model_type in MODELS.items():
         path = schema_dir / SCHEMA_FILES[kind]
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
+            data = json.loads(
+                path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, DuplicateKeyError):
             raise ValueError(f"schema {kind}: unreadable schema") from None
-        if data.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
-            raise ValueError(f"schema {kind}: wrong JSON Schema dialect")
-        if data.get("additionalProperties") is not False:
-            raise ValueError(f"schema {kind}: additionalProperties must be false")
-        required = set(data.get("required", []))
-        fields = {
-            field.alias or name for name, field in model_type.model_fields.items()
-        }
-        if required != fields:
-            raise ValueError(f"schema {kind}: required fields are out of sync")
-        if data.get("x-model-fields") != sorted(fields):
-            raise ValueError(f"schema {kind}: model field marker is out of sync")
+        if data != _expected_schema(kind, model_type):
+            raise ValueError(
+                f"schema {kind}: committed schema is out of sync with the runtime model"
+            )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -432,8 +577,8 @@ def main(argv: list[str] | None = None) -> int:
             check_schemas(args.schema_dir)
             print("M6.1 contract schemas are synchronized")
         elif args.command == "hash":
-            model, _ = _load(args.path, args.kind, MODELS[args.kind])
-            print(canonical_hash(model))
+            _, raw = _load(args.path, args.kind, MODELS[args.kind])
+            print(canonical_hash(raw))
         else:
             validate_documents(args.release, args.recovery_set, args.attempt)
             print("M6.1 recovery contract valid")
