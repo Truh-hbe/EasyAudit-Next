@@ -9,3 +9,11 @@ htmlcov
 tests
 *.pyc
 *.log
+.env*
+!.env.example
+deploy/private/
+deploy/m6-1/evidence/
+*.key
+*.pem
+*.p12
+*.pfx

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyaudit.invalid/m6.1/recovery-attempt.schema.json",
+  "title": "M6.1 Recovery Attempt",
+  "type": "object",
+  "additionalProperties": false,
+  "x-model-fields": ["checks", "clock_source", "manifest_sha256", "observed_rpo_seconds", "observed_rto_seconds", "recovery_attempt_id", "recovery_set_id", "recovery_triggered_at", "restoration_started_at", "restored_ready_at", "schema_version", "target_opaque_id"],
+  "required": ["checks", "clock_source", "manifest_sha256", "observed_rpo_seconds", "observed_rto_seconds", "recovery_attempt_id", "recovery_set_id", "recovery_triggered_at", "restoration_started_at", "restored_ready_at", "schema_version", "target_opaque_id"],
+  "properties": {
+    "schema_version": {"const": "m6.1.recovery-attempt.v1"},
+    "recovery_attempt_id": {"type": "string"},
+    "recovery_set_id": {"type": "string"},
+    "manifest_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "target_opaque_id": {"type": "string"},
+    "recovery_triggered_at": {"type": "string", "format": "date-time"},
+    "restoration_started_at": {"type": "string", "format": "date-time"},
+    "restored_ready_at": {"type": "string", "format": "date-time"},
+    "observed_rpo_seconds": {"type": "integer", "minimum": 0},
+    "observed_rto_seconds": {"type": "integer", "minimum": 0},
+    "clock_source": {"type": "string"},
+    "checks": {"type": "object", "additionalProperties": false, "required": ["layered_readiness", "private_tls", "exposure_probes", "rollback"], "properties": {
+      "layered_readiness": {"const": true},
+      "private_tls": {"type": "object", "additionalProperties": false, "required": ["certificate_fingerprint", "issuer_trust_store_ref", "hostname_verified", "validity_checked", "probe_at"], "properties": {"certificate_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "issuer_trust_store_ref": {"type": "string"}, "hostname_verified": {"const": true}, "validity_checked": {"const": true}, "probe_at": {"type": "string", "format": "date-time"}}},
+      "exposure_probes": {"type": "array", "minItems": 2, "items": {"type": "object", "additionalProperties": false, "required": ["vantage_class", "target_fingerprint", "probe_at", "result"], "properties": {"vantage_class": {"enum": ["approved-private", "public-negative"]}, "target_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "probe_at": {"type": "string", "format": "date-time"}, "result": {"enum": ["reachable", "not-reachable"]}, "failure_reason_class": {"type": ["string", "null"]}}}},
+      "rollback": {"type": "object", "additionalProperties": false, "required": ["known_good_release_set_id", "failure_injected", "stop_condition", "database_restored_during_rollback", "layered_readiness_after_rollback", "fixture_unchanged"], "properties": {"known_good_release_set_id": {"type": "string"}, "failure_injected": {"const": "controlled-non-secret"}, "stop_condition": {"type": "string"}, "database_restored_during_rollback": {"const": false}, "layered_readiness_after_rollback": {"const": true}, "fixture_unchanged": {"const": true}}}
+    }}
+  }
+}
