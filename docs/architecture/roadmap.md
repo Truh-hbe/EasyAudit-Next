@@ -7,7 +7,7 @@ and engineering health review.
 Current baseline:
 
 ```text
-main@43fdf9d9a98c3e01d4f2fd50d795567c2fe9a62c
+main@9d3daaa941548066b65877a5aa434fcdbb46c745
 ```
 
 M6.0 controlled-pilot rollout readiness is complete as a planning and
@@ -161,7 +161,7 @@ M6.1a  Recovery contract / tooling validation
   ->
 M6.1b  Real private-network infrastructure qualification
   ->
-M6-Ops Operational readiness & observability foundation
+M6-Ops Operational Readiness Foundation
   ->
 M6.2   Plan/Case idempotency + unknown-result recovery
   ->
@@ -279,7 +279,7 @@ later M6 slices change the final application image, schema and real Evidence
 boundary, its recovery proof must not be treated as the final rollout recovery
 proof. M6-RC owns that final qualification.
 
-### M6-Ops — Operational Readiness & Observability Foundation
+### M6-Ops — Operational Readiness Foundation
 
 M6-Ops closes the production-engineering gap between a correct application and
 an operable application.
