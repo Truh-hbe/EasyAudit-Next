@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6-ops-operational-readiness",
-  "phase": "MERGE_AUTHORIZED",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
     "sha": "9d3daaa941548066b65877a5aa434fcdbb46c745"
