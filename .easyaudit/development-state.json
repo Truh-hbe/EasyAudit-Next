@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6",
   "slice": "M6-ops-operational-readiness",
-  "phase": "GATE_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "9d3daaa941548066b65877a5aa434fcdbb46c745"
@@ -36,10 +36,10 @@
       "deploy/**"
     ]
   },
-  "fixed_head": null,
+  "fixed_head": "473043f45e90f8eb391013d04fd25dabb659ba1b",
   "docs_review_head": "473043f45e90f8eb391013d04fd25dabb659ba1b",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Independent M6-Ops Gate Re-review only; no executable implementation"
+  "next_allowed_action": "Merge PR #41 only; no executable implementation"
 }
