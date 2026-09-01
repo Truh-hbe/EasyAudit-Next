@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test index.test.ts"
+    "test": "bun test *.test.ts"
   },
   "dependencies": {
     "@oh-my-pi/pi-coding-agent": "18.0.11"
