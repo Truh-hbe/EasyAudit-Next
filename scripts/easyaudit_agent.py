@@ -1456,7 +1456,8 @@ def consume_activation(token: str, child_pid: int) -> dict[str, Any]:
         proof = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ControlError(
-            "launcher activation proof does not exist; session must start through easyaudit_agent.py launch"
+            "launcher activation proof does not exist; "
+            "session must start through easyaudit_agent.py launch"
         ) from exc
     except json.JSONDecodeError as exc:
         raise ControlError("launcher activation proof JSON is invalid") from exc
@@ -1469,8 +1470,9 @@ def consume_activation(token: str, child_pid: int) -> dict[str, Any]:
     if proof.get("hostname") != socket.gethostname():
         raise ControlError("launcher activation proof host mismatch")
     if proof.get("expected_child_pid") != child_pid:
+        expected_pid = proof.get("expected_child_pid")
         raise ControlError(
-            f"launcher activation proof PID mismatch (expected {proof.get('expected_child_pid')}, got {child_pid})"
+            f"launcher activation proof PID mismatch (expected {expected_pid}, got {child_pid})"
         )
     if proof.get("consumed") is True:
         raise ControlError("launcher activation proof has already been consumed")
