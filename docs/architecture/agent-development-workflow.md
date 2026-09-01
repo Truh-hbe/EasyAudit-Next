@@ -1,21 +1,23 @@
-# Agent Development Workflow — ChatGPT + Codex + GitHub
+# Agent Development Workflow — ChatGPT + OMP Agent + GitHub
 
 ## Purpose
 
-EasyAudit-Next keeps its existing architecture/acceptance discipline while removing repeated manual transfer of source, diffs, test summaries, SHAs and PR metadata between ChatGPT and Codex.
-
-The workflow has three authorities:
+EasyAudit-Next separates reasoning, local execution, repository evidence and
+human authority:
 
 ```text
-ChatGPT             Codex                    GitHub / Actions
-reason / review  <-> execute / generate  <-> canonical repository evidence
+ChatGPT             OMP Agent                 GitHub / Actions
+architecture/review <-> execute/verify/control <-> canonical remote evidence
+                              |
+                              v
+                    Human Maintainer authority
 ```
 
-Codex with ChatGPT (C2C) is a read-only review bridge. It is not a workflow authority and does not weaken any Gate.
+Conversation memory is never a workflow authority. The machine state,
+trusted workflow policy, reviewed Gate, Git ancestry, exact-head CI and current
+human action form the authority chain.
 
-## 1. Two-layer state model
-
-### Outer EasyAudit lifecycle
+## 1. Outer lifecycle
 
 ```text
 GATE_DRAFT
@@ -26,276 +28,186 @@ GATE_DRAFT
   -> MERGED
 ```
 
-The outer state is stored in `.easyaudit/development-state.json` when `active=true`.
+The current Slice is stored in `.easyaudit/development-state.json` while
+`active=true`. The versioned trust policy is
+`.easyaudit/workflow-policy.json`.
 
-### Inner C2C iteration
+`fixed_head` identifies the reviewed executable candidate. `docs_review_head`
+identifies a reviewed docs-only candidate. Later control commits may change
+only `finalization_allowed_paths`, normally the state file.
 
-```text
-INIT -> PLAN -> EXECUTED -> REVIEW -> PLAN | DONE | BLOCKED
-```
+## 2. Per-turn OMP protocol
 
-C2C `DONE` only closes the current inner iteration. It never advances the outer EasyAudit lifecycle by itself.
-
-## 2. Machine-readable development state
-
-At the start of a new milestone slice, Codex updates `.easyaudit/development-state.json` in the initial Gate commit.
-
-Example:
-
-```json
-{
-  "schema_version": 1,
-  "active": true,
-  "project": "EasyAudit-Next",
-  "milestone": "M5",
-  "slice": "M5.1",
-  "phase": "GATE_DRAFT",
-  "base": {
-    "branch": "main",
-    "sha": "<verified-main-sha>"
-  },
-  "work_branch": "codex/m5-1-planning-surface",
-  "pr": { "number": 28 },
-  "gate_docs": [
-    "docs/architecture/m5-1-planning-surface.md",
-    "docs/architecture/m5-1-acceptance.md"
-  ],
-  "scope": {
-    "allowed_paths": [
-      ".easyaudit/development-state.json",
-      "docs/architecture/**"
-    ],
-    "forbidden_paths": [
-      "src/**",
-      "web/**",
-      "alembic/**",
-      ".github/workflows/**"
-    ]
-  },
-  "fixed_head": null,
-  "next_allowed_action": "Architecture / Acceptance review"
-}
-```
-
-When Architecture / Acceptance review passes, Codex changes the outer state to `IMPLEMENTATION` and updates allowed/forbidden scope according to the approved Gate. The Gate itself remains the source of semantic constraints; the JSON file is only the machine-readable routing/enforcement layer.
-
-`fixed_head` has one precise meaning: the last executable candidate that
-completed Implementation Review. It is not the commit that happens to contain
-the `FINAL_REVIEW` state. In `FINAL_REVIEW`, the candidate HEAD must descend
-from `fixed_head`, and the range after `fixed_head` may contain only paths named
-by `finalization_allowed_paths` (normally the development state file). This
-allows the state transition to be recorded without requiring a commit to know
-its own future SHA. Any source, test, CI or configuration change after
-`fixed_head` fails the Gate and starts a new implementation review.
-
-### Candidate kinds and docs-only finalization
-
-The process may explicitly distinguish `candidate_kind: executable` from
-`candidate_kind: docs-only`. An executable candidate keeps the `fixed_head`
-contract above. A docs-only candidate has no executable fixed head and instead
-uses `docs_review_head` after its document candidate has been reviewed.
-
-The docs-only exception is process-owned and must not be created merely by
-adding paths to a milestone's `allowed_paths`. The validator implementation
-must require that the complete docs-only change set is a subset of the
-process-owned positive allowlist `.easyaudit/development-state.json` and
-`docs/**`; the milestone scope may only narrow that set. It must also require
-that finalization paths remain a subset of the state file, reject
-`IMPLEMENTATION` and `FINAL_REVIEW`, and reject an active `MERGED` state. A
-merged docs-only state is closed with `active=false`.
-
-The docs-only lifecycle is therefore:
+Every request is classified before tools run:
 
 ```text
-GATE_DRAFT -> GATE_REVIEW -> MERGE_AUTHORIZED -> MERGED (then active=false)
+READ_ONLY | PLAN | MUTATE | REVIEW | MERGE | DEPLOY
 ```
 
-Only the separately reviewed process-hardening implementation may add these
-validator rules and their tests. Until that implementation Gate passes, a
-process-hardening branch remains an ordinary executable candidate and must
-follow the full outer lifecycle.
+- READ_ONLY verifies external claims rather than trusting prose.
+- PLAN verifies machine predecessors and Roadmap direction.
+- MUTATE requires the single-writer lease, passing preflight and exact Scope.
+- REVIEW targets a fixed candidate with a clean/current Bundle.
+- MERGE requires MERGE_AUTHORIZED, trusted exact-head checks, expected-head
+  protection and a one-shot current human confirmation.
+- DEPLOY requires a dedicated environment Gate and current operator action.
 
-## 3. Gate check
+The project OMP Extension injects a fresh status snapshot before every Agent
+turn and after startup/reload/session replacement/compaction. Historical chat
+and compaction summaries cannot mint phase, evidence or authorization.
 
-Run:
+## 3. Single-writer workspace
 
-```bash
-python scripts/easyaudit_gate.py check
-```
+The OMP control plane stores a Git-ignored writer lease under
+`.easyaudit/runtime/`. The lease binds repository, Session, process, host and a
+unique generation nonce.
 
-When `active=true`, the check validates:
+- Only one Session may own writer mode.
+- Other Sessions remain read-only.
+- Heartbeat/release/takeover compare owner + generation.
+- A live owner is never silently preempted.
+- Stale takeover requires dead-owner evidence, timeout and explicit human
+  confirmation.
+- Without a writer lease, all model-facing shell and mutating tools are
+  blocked; only dedicated status/diff/verify tools remain.
 
-- current `BASE...HEAD` changed paths;
-- allowed path boundaries;
-- forbidden path boundaries;
-- required Gate documents;
-- a non-empty, resolvable fixed head in `FINAL_REVIEW`;
-- fixed-head ancestry and finalization-only changes in `FINAL_REVIEW`;
-- expected work branch when a branch name is available.
+## 4. Protected policy roots
 
-The check deliberately does not decide architecture correctness. It prevents mechanical Scope drift so review time can focus on architecture and business invariants.
-
-## 4. Review Bundle
-
-Before an implementation or Final Review request, Codex runs:
-
-```bash
-python scripts/easyaudit_gate.py bundle
-python scripts/easyaudit_gate.py check --require-clean --require-bundle
-```
-
-The second command is mandatory for Final Review. It rejects a missing or
-malformed bundle and verifies that `gate-proof.json` and every canonical
-artifact match freshly rebuilt current HEAD, tree, base, branch, changed paths,
-Gate phase, state fingerprint and working-tree evidence. Missing, modified,
-stale or mixed-generation artifacts are invalid. Bundle generation writes the
-diff artifacts first and `gate-proof.json` last; the proof is the completion
-marker. If anything changes after bundle generation, regenerate the bundle
-before requesting review.
-
-The generated `.easyaudit-review/` directory is intentionally ignored by Git and intentionally readable through C2C.
-
-It contains:
+These files cannot be changed through generic edit/write/shell:
 
 ```text
-.easyaudit-review/
-├── gate-proof.json
-├── changed-files.txt
-├── branch.diff
-├── candidate.diff
-├── control.diff
-└── working-tree.diff
+.easyaudit/development-state.json
+.easyaudit/workflow-policy.json
 ```
 
-`branch.diff` is generated from the committed `BASE...HEAD` comparison. This is required because a clean working tree has no useful ordinary `git diff HEAD`, while Final Review must inspect all committed changes in the milestone slice.
+State changes use a typed old-state → proposed-state adapter. It validates
+adjacent phase movement, Scope non-escalation, candidate ancestry, clean Bundle,
+trusted predecessors and target-phase remote evidence before atomic write.
 
-For Final Review, `candidate.diff` is the canonical full-slice diff
-`BASE...fixed_head`; `control.diff` is the canonical metadata-only delta
-`fixed_head..bundle_head`. `working-tree.diff` is the uncommitted delta. The
-proof records these refs so a reviewer never has to infer which commit a diff
-represents from its filename alone.
+Workflow policy changes use a separate reviewed policy-seed PR. A candidate
+policy never authorizes itself or the validator/CI that consumes it.
 
-`working-tree.diff` separately exposes any uncommitted delta so ChatGPT can detect a review candidate that is not actually fixed/clean.
+## 5. Safe command surface
 
-## 5. Evidence hierarchy
+Arbitrary model shell is disabled during active Gates. OMP uses versioned
+`ea_exec` argv profiles for Gate checks, evidence generation, tests and bounded
+Git operations. Unknown profiles, shell composition and protected-root writes
+are refused.
 
-Evidence is intentionally separated into three levels.
+TUI `!cmd` uses the `user_bash` guard. An RPC host must prove its direct bash
+surface is disabled or equivalently guarded. JSON/print and unverified RPC
+modes are read-only NO-GO for mutation, transition, merge and deploy.
 
-### Iteration evidence
+## 6. Machine predecessor enforcement
 
-Codex runs focused local tests and records the result through C2C execution records. ChatGPT may use `test_status` / `execution_summary` while iterating.
+Roadmap prose explains dependencies but does not authorize them. The trusted
+workflow policy maps Slice identifiers to predecessor Slice identifiers.
 
-This is fast feedback only.
+For each predecessor, OMP finds a trusted-main state commit containing:
+
+```text
+slice == predecessor
+phase == MERGED
+active == false
+```
+
+That completion commit must be an ancestor of both Slice base and working HEAD.
+Missing or side-branch completion blocks PLAN, MUTATE, FINAL_REVIEW and merge.
+
+## 7. Evidence hierarchy
+
+### Local iteration evidence
+
+Focused tests are fast feedback only.
 
 ### Candidate evidence
 
-Before implementation/final review, Codex runs the Gate-relevant local PostgreSQL/API/browser tests and generates the Review Bundle. ChatGPT independently reads the committed diff and relevant source.
-
-PostgreSQL tests are opt-in outside CI. A skipped PostgreSQL suite is not
-candidate evidence and must be reported as incomplete. When a local PostgreSQL
-instance is available, use the same switch as CI:
+Before Review:
 
 ```bash
-EASYAUDIT_RUN_POSTGRES_TESTS=1 python3 -m pytest
+python3 scripts/easyaudit_gate.py bundle
+python3 scripts/easyaudit_gate.py check --require-clean --require-bundle
 ```
 
-If PostgreSQL is unavailable, keep the local result as fast feedback only and
-rely on the exact-head GitHub run for final evidence. Do not summarize skipped
-tests as passed tests.
+The Bundle separates:
+
+```text
+BASE...candidate
+candidate...control
+uncommitted working tree
+```
 
 ### Final evidence
 
-GitHub Actions is the final CI authority. A C2C execution record is never accepted as proof that exact-head CI passed.
+GitHub exact-head CI is authoritative. Required check identities come from
+branch rulesets or the trusted versioned policy contract. Empty, missing,
+pending, failed, cancelled, unexpectedly skipped or head-mismatched checks are
+NO-GO.
 
-The existing CI remains responsible for Ruff, mypy, architecture checks, OpenAPI, Alembic, PostgreSQL tests, frontend checks, mocked browser acceptance and real PostgreSQL + FastAPI browser acceptance as required by the slice.
+## 8. External ChatGPT and connector evidence
 
-## 6. Review responsibilities
+ChatGPT may write through its GitHub Connector and perform independent Review.
+Its returned SHA, PR, CI and merge statements remain unverified until OMP reads
+Git/GitHub directly.
 
-### ChatGPT
-
-- read development state and Gate docs first;
-- inspect `gate-proof.json`, `candidate.diff`, `control.diff` and
-  `working-tree.diff` independently; `branch.diff` is convenience evidence,
-  not the canonical Final Review diff;
-- read only relevant source through C2C;
-- return architecture/acceptance findings as P1/P2 or PASS;
-- never infer merge authorization from C2C `DONE`;
-- use GitHub state/CI as canonical final evidence.
-
-### Codex
-
-- never advance the outer phase without the corresponding review decision;
-- execute edits/tests/git work;
-- keep Gate scope machine-valid;
-- generate the Review Bundle before review;
-- record each completed execution immediately through the C2C execution-record
-  path; an unrecorded run is not candidate evidence;
-- isolate out-of-scope prerequisites into separate PRs unless the Gate is formally revised;
-- push candidates and collect GitHub CI evidence;
-- merge only after explicit user authorization and expected-head protection.
-
-### User
-
-The user remains the authority for product direction, acceptance of architectural trade-offs, and final merge authorization.
-
-## 7. Session lifecycle
-
-EasyAudit does **not** use one indefinitely growing ChatGPT C2C conversation for the whole repository.
-
-Default rule:
+Connector fallback order:
 
 ```text
-one milestone slice / PR -> one C2C conversation
+ChatGPT GitHub Connector
+  -> OMP gh CLI mechanical action
+  -> human GitHub UI
 ```
 
-After merge, the next slice starts a fresh conversation. Context is reconstructed from:
+Fallback changes only execution channel. It never grants review, merge,
+deployment, secret or traffic authority.
+
+## 9. Human authorization
+
+A merge/deploy grant is created only by a current blocking human UI challenge
+that displays exact repository, action, PR/environment, head/release and a
+random nonce.
+
+The grant:
+
+- exists only in memory;
+- is bound to one tool invocation and exact action;
+- is consumed on success/failure/cancel/timeout;
+- is not inherited by new/resume/fork/clone/reload/compaction/restart;
+- cannot be created by Agent text, state, history, ChatGPT or an injected
+  message.
+
+## 10. Prompt orchestration
+
+Project templates under `.omp/prompts/` advance at most one outer transition.
+Each names exact refs, allowed and prohibited actions, required evidence and a
+stop condition. `/ea-next` generates a prompt only; it does not send it,
+change state, authorize or merge.
+
+## 11. Normal Slice
 
 ```text
-roadmap
-+ development-state.json
-+ Gate docs
-+ repository source
-+ git history
-```
-
-This reduces stale assumptions from old milestones while preserving reproducibility.
-
-## 8. C2C toolchain policy
-
-The reviewed C2C revision is pinned in `.easyaudit/toolchain.json`.
-
-Automatic self-update is disabled for EasyAudit work. Upgrade only between milestone slices as an explicit tooling change, verify the new bridge, then update the pin.
-
-This keeps the review harness reproducible alongside fixed-head development discipline.
-
-## 9. Sensitive-data boundary
-
-`.c2cignore` excludes credentials, private deployment material, customer data, exports, uploaded evidence storage and other runtime data. Gate docs, source, tests and generated `.easyaudit-review` evidence remain readable.
-
-The bridge is a source-review tool, not a production-data access path.
-
-## 10. Recommended normal slice
-
-```text
-User selects slice
-  -> Codex creates branch + Draft PR + Gate docs + active development state
-  -> Gate check
-  -> ChatGPT Architecture / Acceptance Review
-  -> state = IMPLEMENTATION
-  -> C2C PLAN / Codex execution / focused tests / C2C REVIEW loops
-  -> bundle
-  -> ChatGPT implementation review
-  -> fixes + regressions
-  -> state = FINAL_REVIEW + fixed_head (executable review head)
-  -> finalization-only state commit
-  -> bundle + check --require-clean --require-bundle
-  -> GitHub exact-head CI
-  -> GitHub evidence attached to the actual current PR/control HEAD
-  -> ChatGPT Final Review
-  -> user merge authorization
+human selects and scopes Slice
+  -> machine predecessor check
+  -> branch + Draft Gate PR
+  -> Gate Review
+  -> typed IMPLEMENTATION transition
+  -> OMP edits + focused tests
+  -> Bundle + fixed candidate
+  -> FINAL_REVIEW
+  -> exact-head required CI
+  -> independent Review PASS
+  -> current one-shot human authorization
   -> expected-head merge
-  -> post-merge verification
-  -> state rebaselined for next Gate
+  -> post-merge verification/rebaseline
 ```
 
-The intended optimization is therefore not fewer correctness checks. It is fewer human-transcribed facts.
+At any failure, return to the legal repair phase, clear invalid candidate
+references, record a bounded reason, fix and re-prove. Never weaken Acceptance
+to obtain green CI.
+
+## 12. Sensitive data
+
+Control snapshots, leases, logs, prompts and Bundles must not expose passwords,
+cookies, tokens, credentials, customer exports, Evidence binaries, private
+keys or secret values. Lease metadata contains only bounded process/session
+identity. Errors report a bounded class/reason, not raw sensitive input.

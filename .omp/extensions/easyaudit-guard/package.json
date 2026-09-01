@@ -1,0 +1,19 @@
+{
+  "name": "easyaudit-omp-guard",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test index.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "typebox": "1.3.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}
