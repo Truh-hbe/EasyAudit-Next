@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "process-omp-agent-control-plane-hardening",
-  "phase": "GATE_REVIEW",
+  "phase": "GATE_DRAFT",
   "base": {
     "branch": "main",
     "sha": "8f923a64ade514e531c6de94a15029dc9a9ae136"
@@ -41,9 +41,9 @@
     ]
   },
   "fixed_head": null,
-  "docs_review_head": "03716bc37abd5346b9d24596cd295ecd49466bba",
+  "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Independent review of OMP Agent Control Plane docs candidate 03716bc37abd5346b9d24596cd295ecd49466bba only; no tooling implementation, product implementation, merge, deployment, secret access or real traffic"
+  "next_allowed_action": "Revise OMP Agent Control Plane Gate documents to close PR #43 P1 findings only; no tooling implementation, product implementation, merge, deployment, secret access or real traffic"
 }
