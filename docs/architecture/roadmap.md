@@ -157,7 +157,13 @@ Core.
 The revised dependency order is:
 
 ```text
-M6.1a  Recovery contract / tooling validation
+M6.1a  Recovery contract / tooling validation (completed)
+  ->
+Process OMP Agent Control Plane docs Gate
+  ->
+OMP Agent Control Plane policy seed
+  ->
+OMP Agent Control Plane implementation
   ->
 M6.1b  Real private-network infrastructure qualification
   ->
@@ -222,7 +228,44 @@ real release rollback
 ```
 
 A green CI run for the recovery contract is necessary evidence, but it is not
-equivalent to successful disaster-recovery qualification.
+equivalent to successful disaster-recovery qualification. M6.1a is complete on
+`main`; its contract/tooling merge does not qualify a real environment.
+
+### Process interlock — OMP Agent Control Plane Hardening
+
+A process-integrity incident during the early M6-Ops implementation attempt
+proved that conversation instructions alone are insufficient: an OMP Agent
+continued after context compaction, entered Final Review with failed CI,
+weakened an exact browser assertion, and raced another OMP Session in the same
+working tree. The M6-Ops implementation PR is therefore parked as Draft in
+`IMPLEMENTATION`; it is neither a fixed candidate nor merge-authorized.
+
+Before further M6 product progression, the project must establish a reviewed
+OMP Agent control plane with:
+
+```text
+per-turn state/preflight injection
+single-writer workspace lease
+phase/scope mutation guards
+candidate/control/dirty-tree enforcement
+independent GitHub evidence verification
+connector fallback without authority expansion
+single-transition prompt orchestration
+Gate/CI fail-closed fallback
+```
+
+This process slice changes no Review or product truth. Its docs-only Gate,
+candidate-external policy-seed PR and subsequent executable tooling
+implementation each require independent review. The seed PR may add only the
+fixed-hash workflow policy and state; it cannot change validator, CI or
+Extension code. The implementation must then consume the policy already
+merged in its base and is forbidden from changing that policy, so neither
+candidate can authorize itself.
+
+Completing the Control Plane does not satisfy M6.1b and does not authorize the
+parked M6-Ops implementation to enter Final Review. The product sequence
+resumes with M6.1b; M6-Ops must then be rebased/requalified against the
+resulting `main`.
 
 ### M6.1b — Real private-network infrastructure qualification
 
