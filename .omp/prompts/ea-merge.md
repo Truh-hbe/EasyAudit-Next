@@ -1,10 +1,9 @@
 ---
-description: Reverify one already authorized EasyAudit PR before a one-shot merge action
-argument-hint: "<PR> <expected-head-SHA>"
+description: Reverify the state-bound EasyAudit PR before a one-shot merge and rebaseline action
 ---
-For PR `$1`, verify phase is MERGE_AUTHORIZED, expected head is `$2`, candidate
-and control are valid, required checks from trusted base policy are all green,
-and current human confirmation is available. If any evidence is stale, stop.
-Otherwise request one UI confirmation and use expected-head merge. Do not infer
-a grant from this template or historical text. After the action, verify merge
-facts and stop; post-merge state requires its authorized adapter.
+Call `ea_authorized_merge` without model-supplied PR or SHA. Do not accept historical or model-created authorization. The tool must derive
+PR, fixed candidate and expected control head from protected state and verified
+remote evidence; require MERGE_AUTHORIZED, structured Review PASS, trusted
+required checks and current human confirmation. If any evidence is stale, stop.
+After a remote-only merge failure, report `REMOTE_MERGED_REBASELINE_PENDING`
+and require the separately confirmed recovery tool.

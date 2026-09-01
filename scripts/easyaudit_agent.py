@@ -42,7 +42,9 @@ PROTECTED_PATHS = {DOCS_ONLY_STATE_PATH, WORKFLOW_POLICY_PATH}
 SENSITIVE_READ_PATTERNS = {
     ".env",
     ".env.*",
+    ".git",
     ".git/**",
+    ".easyaudit/runtime",
     ".easyaudit/runtime/**",
 }
 READ_ONLY_TOOLS = {
@@ -56,6 +58,19 @@ READ_ONLY_TOOLS = {
     "ea_next",
 }
 MUTATING_TOOLS = {"edit", "write", "ast_edit", "bash", "powershell"}
+CONTROL_TOOLS = {
+    "ea_status",
+    "ea_preflight",
+    "ea_verify",
+    "ea_next",
+    "ea_exec",
+    "ea_bootstrap",
+    "ea_record_pr",
+    "ea_transition",
+    "ea_authorized_merge",
+    "ea_recover_rebaseline",
+    "ea_takeover_lease",
+}
 FORWARD_PHASES = {
     "GATE_DRAFT": {"GATE_REVIEW"},
     "GATE_REVIEW": {"IMPLEMENTATION", "MERGE_AUTHORIZED"},
@@ -80,6 +95,8 @@ COMMAND_PROFILES: dict[str, tuple[str, ...]] = {
     "architecture-check": (sys.executable, "scripts/check_architecture.py"),
     "openapi-check": (sys.executable, "scripts/check_openapi.py"),
 }
+_OWNER_OVERRIDE: Owner | None = None
+
 MUTATING_PROFILES = {
     "git-fetch",
     "gate-bundle",
@@ -200,25 +217,46 @@ def _run(argv: Sequence[str], *, check: bool = True) -> subprocess.CompletedProc
 
 
 def _is_ancestor(ancestor: str, descendant: str) -> bool:
-    return subprocess.run(
-        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
-        cwd=ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    ).returncode == 0
+    return (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode
+        == 0
+    )
 
 
 def current_owner() -> Owner:
+    if _OWNER_OVERRIDE is not None:
+        return _OWNER_OVERRIDE
     return Owner(
         session_id=(
-            os.getenv("PI_SESSION_ID")
-            or os.getenv("OMP_SESSION_ID")
-            or f"pid-{os.getpid()}"
+            os.getenv("PI_SESSION_ID") or os.getenv("OMP_SESSION_ID") or f"pid-{os.getpid()}"
         ),
         session_file=os.getenv("PI_SESSION_FILE") or os.getenv("OMP_SESSION_FILE"),
         pid=os.getpid(),
         hostname=socket.gethostname(),
+    )
+
+
+def configure_owner_override(args: argparse.Namespace) -> None:
+    global _OWNER_OVERRIDE
+    supplied = (args.owner_session, args.owner_pid, args.owner_host)
+    if not any(value is not None for value in supplied):
+        _OWNER_OVERRIDE = None
+        return
+    if not all(value is not None for value in supplied):
+        raise ControlError("stable owner requires session, PID and hostname together")
+    if args.owner_pid <= 0:
+        raise ControlError("stable owner PID must be positive")
+    _OWNER_OVERRIDE = Owner(
+        session_id=args.owner_session,
+        session_file=args.owner_session_file,
+        pid=args.owner_pid,
+        hostname=args.owner_host,
     )
 
 
@@ -290,7 +328,12 @@ def _write_lease(lease: dict[str, Any]) -> None:
             pass
 
 
-def acquire_lease(*, takeover: bool = False, expected_generation: str | None = None) -> LeaseResult:
+def acquire_lease(
+    *,
+    takeover: bool = False,
+    expected_generation: str | None = None,
+    remote_owner_confirmed: bool = False,
+) -> LeaseResult:
     owner = current_owner()
     now = time.time()
     with _lease_guard():
@@ -307,7 +350,8 @@ def acquire_lease(*, takeover: bool = False, expected_generation: str | None = N
             generation_matches = expected_generation == existing.get("generation_nonce")
             if not takeover:
                 return LeaseResult(False, "another OMP Session owns the writer lease", existing)
-            if not stale or alive is not False or not generation_matches:
+            owner_is_recoverable = alive is False or (alive is None and remote_owner_confirmed)
+            if not stale or not owner_is_recoverable or not generation_matches:
                 return LeaseResult(
                     False,
                     "writer lease takeover preconditions are not satisfied",
@@ -388,11 +432,9 @@ def _matches(path: str, patterns: Sequence[str]) -> bool:
 
 
 def runtime_write_capable(mode: str) -> bool:
-    if mode == "tui":
-        return True
-    if mode == "rpc":
-        return os.getenv("EASYAUDIT_OMP_RPC_BASH_GUARDED") == "1"
-    return False
+    # OMP exposes RPC direct-bash outside model tool_call interception. Until the
+    # host provides a cryptographic/host-owned capability, RPC is always read-only.
+    return mode == "tui"
 
 
 def guard_tool(tool_name: str, *, path: str | None, mode: str) -> tuple[bool, str]:
@@ -435,7 +477,7 @@ def guard_tool(tool_name: str, *, path: str | None, mode: str) -> tuple[bool, st
                 return False, "candidate is frozen; only finalization paths may change"
         return True, "writer lease and Gate scope permit this path"
 
-    if tool_name.startswith("ea_"):
+    if tool_name in CONTROL_TOOLS:
         return True, "registered EasyAudit control-plane tool"
     if tool_name in MUTATING_TOOLS or tool_name not in READ_ONLY_TOOLS:
         return False, "unknown or mutating tool is denied by default"
@@ -444,11 +486,14 @@ def guard_tool(tool_name: str, *, path: str | None, mode: str) -> tuple[bool, st
 
 def _trusted_main_ref() -> str:
     for candidate in ("refs/remotes/origin/main", "refs/heads/main"):
-        if subprocess.run(
-            ["git", "show-ref", "--verify", "--quiet", candidate],
-            cwd=ROOT,
-            check=False,
-        ).returncode == 0:
+        if (
+            subprocess.run(
+                ["git", "show-ref", "--verify", "--quiet", candidate],
+                cwd=ROOT,
+                check=False,
+            ).returncode
+            == 0
+        ):
             return candidate
     raise ControlError("trusted main ref is unavailable")
 
@@ -514,13 +559,17 @@ def verify_predecessors(state: dict[str, Any] | None = None) -> list[dict[str, A
     return results
 
 
-def _gate_check(*extra: str) -> bool:
+def _gate_check(*extra: str, state_path: Path | None = None) -> bool:
     local_environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")
     }
     local_environment["EASYAUDIT_REPO_ROOT"] = str(ROOT)
+    command = [sys.executable, str(Path(__file__).with_name("easyaudit_gate.py"))]
+    if state_path is not None:
+        command.extend(("--state", str(state_path)))
+    command.extend(("check", *extra))
     completed = subprocess.run(
-        [sys.executable, str(Path(__file__).with_name("easyaudit_gate.py")), "check", *extra],
+        command,
         cwd=ROOT,
         env=local_environment,
         stdout=subprocess.DEVNULL,
@@ -552,6 +601,7 @@ def status_payload(*, mode: str) -> dict[str, Any]:
         "head": _git("rev-parse", "HEAD"),
         "base": (state.get("base") or {}).get("sha"),
         "candidate": state.get("fixed_head") or state.get("docs_review_head"),
+        "pr_number": (state.get("pr") or {}).get("number"),
         "working_tree_clean": _git("status", "--porcelain=v1") == "",
         "gate_pass": _gate_check(),
         "writer_lease_owned": lease.allowed,
@@ -640,13 +690,94 @@ def _remote_required_contexts(base_branch: str) -> tuple[set[str] | None, str]:
     return None, "unavailable"
 
 
+def _repository_slug() -> str:
+    result = _run(("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"))
+    slug = result.stdout.strip()
+    if not slug or "/" not in slug:
+        raise ControlError("repository identity is unavailable")
+    return slug
+
+
+def verify_review_reference(
+    pr_number: int,
+    candidate: str,
+    reference: str,
+) -> dict[str, Any]:
+    try:
+        kind, raw_id = reference.split(":", 1)
+        evidence_id = int(raw_id)
+    except (ValueError, TypeError) as exc:
+        raise ControlError("Review reference must be comment:<id> or review:<id>") from exc
+    slug = _repository_slug()
+    if kind == "comment":
+        endpoint = f"repos/{slug}/issues/comments/{evidence_id}"
+    elif kind == "review":
+        endpoint = f"repos/{slug}/pulls/{pr_number}/reviews/{evidence_id}"
+    else:
+        raise ControlError("unsupported Review evidence provider")
+    fetched = _run(("gh", "api", endpoint), check=False)
+    if fetched.returncode != 0:
+        raise ControlError("Review evidence is unavailable")
+    try:
+        payload = json.loads(fetched.stdout)
+    except json.JSONDecodeError as exc:
+        raise ControlError("Review evidence is invalid") from exc
+    body = str(payload.get("body") or "")
+    association = str(payload.get("author_association") or "")
+    if association not in {"OWNER", "MEMBER", "COLLABORATOR"}:
+        raise ControlError("Review evidence author is not trusted")
+    candidate_match = re.search(
+        r"(?i)(?:fixed(?:\s+review)?\s+candidate|candidate)\s*(?:=|:)\s*`?([0-9a-f]{40})",
+        body,
+    )
+    counts = {
+        severity: re.search(rf"(?i)\b{severity}\s*=\s*(\d+)", body)
+        for severity in ("P0", "P1", "P2")
+    }
+    result_match = re.search(r"(?i)\bRESULT\s*=\s*(PASS|NO-GO)", body)
+    if (
+        candidate_match is None
+        or candidate_match.group(1).lower() != candidate.lower()
+        or any(match is None or int(match.group(1)) != 0 for match in counts.values())
+        or result_match is None
+        or result_match.group(1).upper() != "PASS"
+    ):
+        raise ControlError("Review evidence does not bind a zero-finding PASS to the candidate")
+    return {
+        "provider": "github",
+        "type": kind,
+        "id": evidence_id,
+        "reference": reference,
+        "pr": pr_number,
+        "candidate": candidate,
+        "result": "PASS",
+        "p0": 0,
+        "p1": 0,
+        "p2": 0,
+        "author": (payload.get("user") or {}).get("login"),
+        "author_association": association,
+        "url": payload.get("html_url"),
+    }
+
+
+def _finalization_chain_is_valid(state: dict[str, Any], control_head: str) -> bool:
+    candidate = state.get("fixed_head")
+    if not isinstance(candidate, str) or not _is_ancestor(candidate, control_head):
+        return False
+    changed = _git("diff", "--name-only", f"{candidate}..{control_head}").splitlines()
+    allowed = [str(value) for value in state.get("finalization_allowed_paths") or []]
+    return all(_matches(path, allowed) for path in changed)
+
+
 def verify_pr(pr_number: int) -> dict[str, Any]:
     policy = load_trusted_policy()
     required = policy.get("required_checks") or {}
     main = required.get("main") if isinstance(required, dict) else None
     contexts = main.get("contexts") if isinstance(main, dict) else None
-    if not isinstance(contexts, list) or not contexts or not all(
-        isinstance(item, str) for item in contexts
+    if (
+        not isinstance(contexts, list)
+        or not contexts
+        or not all(isinstance(item, str) for item in contexts)
     ):
         raise ControlError("authoritative required-check contract is unavailable")
 
@@ -696,13 +827,61 @@ def verify_pr(pr_number: int) -> dict[str, Any]:
     }
 
 
+def merge_eligibility() -> dict[str, Any]:
+    state = load_state()
+    if state.get("phase") != "MERGE_AUTHORIZED":
+        raise ControlError("merge requires MERGE_AUTHORIZED phase")
+    pr_number = (state.get("pr") or {}).get("number")
+    if not isinstance(pr_number, int):
+        raise ControlError("merge requires a bound PR")
+    local_head = _git("rev-parse", "HEAD")
+    remote = verify_pr(pr_number)
+    pr = remote["pr"]
+    if (
+        not remote["pass"]
+        or pr.get("state") != "OPEN"
+        or pr.get("isDraft") is not False
+        or pr.get("headRefOid") != local_head
+    ):
+        raise ControlError("PR head/state/check evidence is not merge-eligible")
+    if not _finalization_chain_is_valid(state, local_head):
+        raise ControlError("candidate-to-control finalization chain is invalid")
+    review = state.get("review_evidence")
+    candidate = state.get("fixed_head")
+    if not isinstance(review, dict) or review.get("candidate") != candidate:
+        raise ControlError("stored Review evidence does not bind the fixed candidate")
+    verified_review = verify_review_reference(
+        pr_number,
+        str(candidate),
+        str(review.get("reference") or ""),
+    )
+    return {
+        "pass": True,
+        "pr_number": pr_number,
+        "expected_head": local_head,
+        "fixed_candidate": candidate,
+        "review": verified_review,
+        "required_checks": remote["required_checks"],
+        "required_source": remote["required_source"],
+        "fetched_at": remote["fetched_at"],
+    }
+
+
 def _validate_scope_immutability(
     old: dict[str, Any],
     new: dict[str, Any],
     *,
     post_merge: bool = False,
 ) -> None:
-    immutable = ["project", "slice", "pr", "candidate_kind", "gate_docs"]
+    immutable = [
+        "project",
+        "slice",
+        "pr",
+        "candidate_kind",
+        "gate_docs",
+        "approved_implementation",
+        "implementation_authorization_commit",
+    ]
     if not post_merge:
         immutable.extend(("base", "work_branch"))
     for key in immutable:
@@ -756,22 +935,76 @@ def validate_state_transition(
 
 
 def _atomic_write_state(old_bytes: bytes, proposed: dict[str, Any]) -> None:
-    fd, temporary = tempfile.mkstemp(prefix="state-", suffix=".json", dir=STATE_PATH.parent)
+    del old_bytes  # Publication happens only after proposed-state validation succeeds.
+    validation_fd, validation_path = tempfile.mkstemp(prefix="easyaudit-proposed-", suffix=".json")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(validation_fd, "w", encoding="utf-8") as handle:
             json.dump(proposed, handle, indent=2)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, STATE_PATH)
-        if not _gate_check():
-            STATE_PATH.write_bytes(old_bytes)
+        if not _gate_check(state_path=Path(validation_path)):
             raise ControlError("proposed state failed the repository Gate")
     finally:
         try:
-            os.unlink(temporary)
+            os.unlink(validation_path)
         except FileNotFoundError:
             pass
+
+    publish_fd, publish_path = tempfile.mkstemp(
+        prefix="state-",
+        suffix=".json",
+        dir=STATE_PATH.parent,
+    )
+    try:
+        with os.fdopen(publish_fd, "w", encoding="utf-8") as handle:
+            json.dump(proposed, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(publish_path, STATE_PATH)
+        directory_fd = os.open(STATE_PATH.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            os.unlink(publish_path)
+        except FileNotFoundError:
+            pass
+
+
+def _implementation_authorization(
+    slice_name: str,
+    base_sha: str,
+) -> tuple[dict[str, Any], str]:
+    trusted_main = _trusted_main_ref()
+    commits = _git("log", "--format=%H", trusted_main, "--", DOCS_ONLY_STATE_PATH)
+    for commit in commits.splitlines():
+        completed = subprocess.run(
+            ["git", "show", f"{commit}:{DOCS_ONLY_STATE_PATH}"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            continue
+        try:
+            state = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            continue
+        approved = state.get("approved_implementation") if isinstance(state, dict) else None
+        if (
+            isinstance(approved, dict)
+            and approved.get("slice") == slice_name
+            and state.get("phase") == "MERGED"
+            and state.get("active") is False
+            and _is_ancestor(commit, base_sha)
+        ):
+            return approved, commit
+    raise ControlError("trusted main has no merged Gate authorization for this implementation")
 
 
 def bootstrap_state(
@@ -785,6 +1018,10 @@ def bootstrap_state(
     allowed_paths: Sequence[str],
     forbidden_paths: Sequence[str],
     include_roadmap: bool,
+    implementation_slice: str | None = None,
+    implementation_allowed_paths: Sequence[str] = (),
+    implementation_forbidden_paths: Sequence[str] = (),
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     old_bytes = STATE_PATH.read_bytes()
     old = load_state()
@@ -802,27 +1039,58 @@ def bootstrap_state(
         if not relative.startswith("docs/architecture/") or not relative.endswith(".md"):
             raise ControlError("Gate documents must be Markdown under docs/architecture")
         normalized_gate_docs.append(relative)
-        if kind == "gate" and not resolved.exists():
+        if kind == "gate" and not resolved.exists() and not dry_run:
             resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text("# Gate Draft\n", encoding="utf-8")
             created_gate_docs.append(resolved)
         if kind == "implementation" and not resolved.is_file():
             raise ControlError("implementation bootstrap requires merged Gate documents")
 
+    approved_implementation: dict[str, Any] | None = None
+    authorization_commit: str | None = None
     if kind == "gate":
         allowed = [DOCS_ONLY_STATE_PATH, *normalized_gate_docs]
         if include_roadmap:
             allowed.append("docs/architecture/roadmap.md")
         candidate_kind = "docs-only"
         phase = "GATE_DRAFT"
+        if implementation_slice:
+            approved_allowed = list(dict.fromkeys(implementation_allowed_paths))
+            if DOCS_ONLY_STATE_PATH not in approved_allowed:
+                approved_allowed.insert(0, DOCS_ONLY_STATE_PATH)
+            if WORKFLOW_POLICY_PATH in approved_allowed or any(
+                _matches(WORKFLOW_POLICY_PATH, [pattern]) for pattern in approved_allowed
+            ):
+                raise ControlError("approved implementation must not allow workflow policy")
+            approved_forbidden = list(dict.fromkeys(implementation_forbidden_paths))
+            if WORKFLOW_POLICY_PATH not in approved_forbidden:
+                approved_forbidden.insert(0, WORKFLOW_POLICY_PATH)
+            approved_implementation = {
+                "slice": implementation_slice,
+                "gate_docs": normalized_gate_docs,
+                "allowed_paths": approved_allowed,
+                "forbidden_paths": approved_forbidden,
+            }
     elif kind == "implementation":
-        allowed = list(dict.fromkeys(allowed_paths))
-        if DOCS_ONLY_STATE_PATH not in allowed:
-            allowed.insert(0, DOCS_ONLY_STATE_PATH)
-        if WORKFLOW_POLICY_PATH in allowed or any(
-            _matches(WORKFLOW_POLICY_PATH, [pattern]) for pattern in allowed
-        ):
-            raise ControlError("implementation bootstrap must not allow workflow policy")
+        caller_supplied_scope = (
+            allowed_paths
+            or forbidden_paths
+            or implementation_allowed_paths
+            or implementation_forbidden_paths
+        )
+        if caller_supplied_scope:
+            raise ControlError("implementation Scope must be derived, not supplied by the caller")
+        approved_implementation, authorization_commit = _implementation_authorization(
+            slice_name,
+            base_sha,
+        )
+        approved_gate_docs = approved_implementation.get("gate_docs")
+        if approved_gate_docs != normalized_gate_docs:
+            raise ControlError("implementation Gate identity does not match trusted authorization")
+        allowed = [str(value) for value in approved_implementation.get("allowed_paths") or []]
+        forbidden_paths = tuple(
+            str(value) for value in approved_implementation.get("forbidden_paths") or []
+        )
         candidate_kind = "executable"
         phase = "IMPLEMENTATION"
     else:
@@ -853,9 +1121,15 @@ def bootstrap_state(
             else "Implement this reviewed Slice only"
         ),
     }
+    if approved_implementation is not None and kind == "gate":
+        proposed["approved_implementation"] = approved_implementation
+    if authorization_commit is not None:
+        proposed["implementation_authorization_commit"] = authorization_commit
     predecessor_results = verify_predecessors(proposed)
     if any(not result["pass"] for result in predecessor_results):
         raise ControlError("bootstrap predecessor completion is missing from base ancestry")
+    if dry_run:
+        return proposed
     try:
         _atomic_write_state(old_bytes, proposed)
     except Exception:
@@ -874,8 +1148,8 @@ def record_pr_number(pr_number: int) -> dict[str, Any]:
     if state.get("phase") not in {"GATE_DRAFT", "IMPLEMENTATION"}:
         raise ControlError("PR may only be recorded in a draft/implementation phase")
     current = (state.get("pr") or {}).get("number")
-    if current not in (None, pr_number):
-        raise ControlError("PR number is already bound to another PR")
+    if current is not None:
+        raise ControlError("PR number may only be bound once from null")
     proposed = json.loads(json.dumps(state))
     proposed["pr"] = {"number": pr_number}
     _atomic_write_state(old_bytes, proposed)
@@ -946,11 +1220,27 @@ def transition_state(
         if not review_pass_ref:
             raise ControlError("MERGE_AUTHORIZED requires an independent Review PASS reference")
         pr_number = (old.get("pr") or {}).get("number")
-        if not isinstance(pr_number, int):
-            raise ControlError("MERGE_AUTHORIZED requires a PR number")
+        candidate = old.get("fixed_head")
+        if not isinstance(pr_number, int) or not isinstance(candidate, str):
+            raise ControlError("MERGE_AUTHORIZED requires a PR and fixed candidate")
+        local_head = _git("rev-parse", "HEAD")
         evidence = verify_pr(pr_number)
-        if not evidence["pass"]:
-            raise ControlError("required exact-head CI is not green")
+        pr = evidence["pr"]
+        if (
+            not evidence["pass"]
+            or pr.get("state") != "OPEN"
+            or pr.get("isDraft") is not False
+            or pr.get("headRefOid") != local_head
+        ):
+            raise ControlError("required exact-head PR evidence is not merge-authorized")
+        if not _finalization_chain_is_valid(old, local_head):
+            raise ControlError("candidate-to-control finalization chain is invalid")
+        new["review_evidence"] = verify_review_reference(
+            pr_number,
+            candidate,
+            review_pass_ref,
+        )
+        new["authorized_control_parent"] = local_head
     elif target == "MERGED":
         if _git("branch", "--show-current") != "main":
             raise ControlError("post-merge rebaseline must run on main")
@@ -969,6 +1259,8 @@ def transition_state(
     elif target in {"GATE_DRAFT", "IMPLEMENTATION"}:
         new["fixed_head"] = None
         new["docs_review_head"] = None
+        new.pop("review_evidence", None)
+        new.pop("authorized_control_parent", None)
     validate_state_transition(old, new, rollback_reason=rollback_reason)
     _atomic_write_state(old_bytes, new)
     return new
@@ -1019,7 +1311,19 @@ def execute_profile(profile: str, arguments: Sequence[str]) -> subprocess.Comple
             or state.get("phase") != "MERGED"
         ):
             raise ControlError("main push is limited to a completed post-merge rebaseline")
-        return _run(("git", "push", "origin", "main"), check=False)
+        expected_remote = str((state.get("base") or {}).get("sha") or "")
+        if not expected_remote:
+            raise ControlError("post-merge rebaseline has no expected remote base")
+        return _run(
+            (
+                "git",
+                "push",
+                f"--force-with-lease=refs/heads/main:{expected_remote}",
+                "origin",
+                "main",
+            ),
+            check=False,
+        )
     raise ControlError("unknown command profile")
 
 
@@ -1036,11 +1340,93 @@ def next_prompt() -> str:
     )
 
 
+def _activation_path(token: str) -> Path:
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return RUNTIME_DIR / f"omp-activation-{digest}.json"
+
+
+def prove_activation() -> dict[str, Any]:
+    token = os.getenv("EASYAUDIT_OMP_LAUNCH_TOKEN")
+    if not token or len(token) < 32:
+        raise ControlError("trusted OMP launcher token is unavailable")
+    owner = current_owner()
+    proof = {
+        "schema_version": 1,
+        "repository_realpath": str(ROOT),
+        "session_id": owner.session_id,
+        "host_pid": owner.pid,
+        "hostname": owner.hostname,
+        "proved_at": _utc_now(),
+        "token_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+    }
+    path = _activation_path(token)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(path, proof)
+    return proof
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f"{path.stem}-", suffix=".json", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def launch_omp(arguments: Sequence[str]) -> int:
+    token = f"{uuid4().hex}{uuid4().hex}"
+    proof_path = _activation_path(token)
+    proof_path.unlink(missing_ok=True)
+    extension = ROOT / ".omp" / "extensions" / "easyaudit-guard" / "index.ts"
+    if not extension.is_file():
+        raise ControlError("EasyAudit OMP guard extension is missing")
+    forwarded = list(arguments)
+    if forwarded and forwarded[0] == "--":
+        forwarded.pop(0)
+    environment = {**os.environ, "EASYAUDIT_OMP_LAUNCH_TOKEN": token}
+    process = subprocess.Popen(
+        ["omp", "--extension", str(extension), *forwarded],
+        cwd=ROOT,
+        env=environment,
+    )
+    deadline = time.monotonic() + 10.0
+    try:
+        while time.monotonic() < deadline:
+            if proof_path.is_file():
+                return process.wait()
+            returncode = process.poll()
+            if returncode is not None:
+                raise ControlError("OMP exited before control-plane activation proof")
+            time.sleep(0.1)
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        raise ControlError("EASYAUDIT CONTROL PLANE NOT ACTIVE — NO-GO")
+    finally:
+        proof_path.unlink(missing_ok=True)
+
+
 def _lease_command(args: argparse.Namespace) -> None:
     if args.lease_action == "acquire":
         result = acquire_lease()
     elif args.lease_action == "takeover":
-        result = acquire_lease(takeover=True, expected_generation=args.generation)
+        result = acquire_lease(
+            takeover=True,
+            expected_generation=args.generation,
+            remote_owner_confirmed=args.remote_owner_confirmed,
+        )
     elif args.lease_action == "heartbeat":
         result = heartbeat_lease(args.generation)
     elif args.lease_action == "release":
@@ -1060,6 +1446,10 @@ def _lease_command(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--owner-session")
+    parser.add_argument("--owner-session-file")
+    parser.add_argument("--owner-pid", type=int)
+    parser.add_argument("--owner-host")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     status_parser = subparsers.add_parser("status")
@@ -1071,6 +1461,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("status", "acquire", "heartbeat", "release", "takeover"),
     )
     lease_parser.add_argument("--generation")
+    lease_parser.add_argument("--remote-owner-confirmed", action="store_true")
 
     guard_parser = subparsers.add_parser("guard")
     guard_parser.add_argument("--tool", required=True)
@@ -1079,6 +1470,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify_parser = subparsers.add_parser("verify-pr")
     verify_parser.add_argument("--pr", type=int, required=True)
+
+    review_parser = subparsers.add_parser("review-check")
+    review_parser.add_argument("--pr", type=int, required=True)
+    review_parser.add_argument("--candidate", required=True)
+    review_parser.add_argument("--reference", required=True)
+
+    subparsers.add_parser("merge-eligibility")
 
     bootstrap_parser = subparsers.add_parser("bootstrap")
     bootstrap_parser.add_argument("--kind", choices=("gate", "implementation"), required=True)
@@ -1090,6 +1488,10 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument("--allowed-path", action="append", default=[])
     bootstrap_parser.add_argument("--forbidden-path", action="append", default=[])
     bootstrap_parser.add_argument("--include-roadmap", action="store_true")
+    bootstrap_parser.add_argument("--implementation-slice")
+    bootstrap_parser.add_argument("--implementation-allowed-path", action="append", default=[])
+    bootstrap_parser.add_argument("--implementation-forbidden-path", action="append", default=[])
+    bootstrap_parser.add_argument("--dry-run", action="store_true")
 
     record_pr_parser = subparsers.add_parser("record-pr")
     record_pr_parser.add_argument("--pr", type=int, required=True)
@@ -1106,6 +1508,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("next")
     subparsers.add_parser("policy-check")
+    subparsers.add_parser("activation-prove")
+    launch_parser = subparsers.add_parser("launch")
+    launch_parser.add_argument("omp_arguments", nargs=argparse.REMAINDER)
     return parser
 
 
@@ -1113,6 +1518,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        configure_owner_override(args)
         if args.command == "status":
             _json_output(status_payload(mode=args.mode))
         elif args.command == "lease":
@@ -1129,6 +1535,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             _json_output(evidence)
             if not evidence["pass"]:
                 raise SystemExit(2)
+        elif args.command == "review-check":
+            evidence = verify_review_reference(args.pr, args.candidate, args.reference)
+            _json_output({"pass": True, "review": evidence})
+        elif args.command == "merge-eligibility":
+            _json_output(merge_eligibility())
         elif args.command == "bootstrap":
             state = bootstrap_state(
                 kind=args.kind,
@@ -1140,6 +1551,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 allowed_paths=args.allowed_path,
                 forbidden_paths=args.forbidden_path,
                 include_roadmap=args.include_roadmap,
+                implementation_slice=args.implementation_slice,
+                implementation_allowed_paths=args.implementation_allowed_path,
+                implementation_forbidden_paths=args.implementation_forbidden_path,
+                dry_run=args.dry_run,
             )
             _json_output({"pass": True, "state": state})
         elif args.command == "record-pr":
@@ -1174,6 +1589,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 raise SystemExit(completed.returncode)
         elif args.command == "next":
             _json_output({"pass": True, "prompt": next_prompt()})
+        elif args.command == "activation-prove":
+            _json_output({"pass": True, "activation": prove_activation()})
+        elif args.command == "launch":
+            raise SystemExit(launch_omp(args.omp_arguments))
         elif args.command == "policy-check":
             actual = canonical_policy_hash()
             _json_output(

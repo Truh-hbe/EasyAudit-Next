@@ -12,6 +12,8 @@ authorization.
 
 ## Start every task
 
+Mutation-capable sessions must be started with `python3 scripts/easyaudit_agent.py launch --`. Direct OMP, RPC, JSON/print, disabled Extensions or missing activation proof are read-only NO-GO.
+
 1. Run `/ea-status` or call `ea_status`.
 2. Read `.easyaudit/development-state.json` and the named Gate documents.
 3. Confirm branch, HEAD, base, phase, working-tree state and writer lease.
@@ -25,8 +27,7 @@ authorization.
 - `PLAN`: verify machine predecessors before proposing a route.
 - `MUTATE`: require writer lease, passing preflight and exact Gate scope.
 - `REVIEW`: review the fixed candidate, not a floating PR head.
-- `MERGE`: require MERGE_AUTHORIZED, trusted required checks, expected head and
-  one current human UI confirmation.
+- `MERGE`: require MERGE_AUTHORIZED, structured GitHub Review evidence bound to the fixed candidate, trusted required checks, derived expected head and one current human UI confirmation.
 - `DEPLOY`: require a dedicated environment Gate and current operator
   confirmation; otherwise stop.
 
@@ -48,6 +49,7 @@ W = uncommitted working tree
 
 - Use built-in edit/write only for paths permitted by the active Gate.
 - State and workflow policy are protected roots; use typed control commands.
+- Implementation Scope is derived from the matching merged Gate authorization in trusted main; never pass model-invented Scope.
 - Arbitrary model shell is disabled during an active Gate. Use `ea_exec`
   profiles.
 - Without a writer lease, remain read-only. Never take over a live lease.

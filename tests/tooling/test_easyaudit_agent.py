@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -27,9 +28,7 @@ POLICY = {
             "M6.1a-recovery-contract-tooling",
             "process-omp-agent-control-plane-implementation",
         ],
-        "M6-ops-operational-readiness": [
-            "M6.1b-private-infrastructure-qualification"
-        ],
+        "M6-ops-operational-readiness": ["M6.1b-private-infrastructure-qualification"],
     },
     "protected_paths": [
         ".easyaudit/development-state.json",
@@ -117,6 +116,28 @@ def point_gate_at(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     monkeypatch.setattr(gate, "ROOT", root)
 
 
+def test_launcher_activation_proof_requires_current_token_and_stable_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_repo(tmp_path)
+    point_agent_at(monkeypatch, tmp_path)
+    monkeypatch.setenv("EASYAUDIT_OMP_LAUNCH_TOKEN", "a" * 64)
+    monkeypatch.setattr(
+        agent,
+        "_OWNER_OVERRIDE",
+        agent.Owner("omp-session", "/tmp/session.jsonl", 1234, "host"),
+    )
+    proof = agent.prove_activation()
+    assert proof["session_id"] == "omp-session"
+    assert proof["host_pid"] == 1234
+    assert agent._activation_path("a" * 64).is_file()
+
+    monkeypatch.delenv("EASYAUDIT_OMP_LAUNCH_TOKEN")
+    with pytest.raises(agent.ControlError, match="launcher token"):
+        agent.prove_activation()
+
+
 def test_committed_policy_matches_candidate_external_hash() -> None:
     assert agent.canonical_policy_hash() == agent.EXPECTED_POLICY_HASH
 
@@ -162,6 +183,8 @@ def test_read_only_tools_cannot_escape_repo_or_read_runtime_secrets(
     point_agent_at(monkeypatch, tmp_path)
     assert agent.guard_tool("read", path="docs/allowed.md", mode="tui")[0] is True
     assert agent.guard_tool("read", path=".env", mode="tui")[0] is False
+    assert agent.guard_tool("ls", path=".git", mode="tui")[0] is False
+    assert agent.guard_tool("find", path=".easyaudit/runtime", mode="tui")[0] is False
     assert agent.guard_tool("read", path=".easyaudit/runtime/lease.json", mode="tui")[0] is False
     with pytest.raises(agent.ControlError, match="outside the repository"):
         agent.guard_tool("read", path=str(tmp_path.parent / "secret"), mode="tui")
@@ -236,7 +259,65 @@ def test_rpc_without_host_guard_is_read_only_no_go(
 
     assert agent.guard_tool("edit", path="docs/allowed.md", mode="rpc")[0] is False
     monkeypatch.setenv("EASYAUDIT_OMP_RPC_BASH_GUARDED", "1")
-    assert agent.guard_tool("edit", path="docs/allowed.md", mode="rpc")[0] is True
+    assert agent.guard_tool("edit", path="docs/allowed.md", mode="rpc")[0] is False
+
+
+def test_stable_omp_owner_survives_short_lived_helper_processes(tmp_path: Path) -> None:
+    init_repo(tmp_path)
+    source_root = Path(__file__).resolve().parents[2]
+    common = [
+        sys.executable,
+        str(source_root / "scripts" / "easyaudit_agent.py"),
+        "--owner-session",
+        "stable-omp-session",
+        "--owner-pid",
+        str(os.getpid()),
+        "--owner-host",
+        socket.gethostname(),
+    ]
+    environment = {
+        **os.environ,
+        "PYTHONPATH": str(source_root),
+        "EASYAUDIT_REPO_ROOT": str(tmp_path),
+    }
+
+    acquired = subprocess.run(
+        [*common, "lease", "acquire"],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    generation = json.loads(acquired.stdout)["lease"]["generation_nonce"]
+    status = subprocess.run(
+        [*common, "lease", "status"],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(status.stdout)["pass"] is True
+    subprocess.run(
+        [*common, "lease", "heartbeat", "--generation", generation],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [*common, "guard", "--tool", "edit", "--path", "docs/allowed.md"],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [*common, "lease", "release", "--generation", generation],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_writer_lease_is_single_process_and_generation_safe(tmp_path: Path) -> None:
@@ -317,6 +398,34 @@ def test_takeover_requires_dead_owner_stale_heartbeat_and_generation(
     assert taken.lease["generation_nonce"] != generation
 
 
+def test_remote_owner_takeover_requires_stale_generation_and_human_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_repo(tmp_path)
+    point_agent_at(monkeypatch, tmp_path)
+    monkeypatch.setenv("PI_SESSION_ID", "session-a")
+    first = agent.acquire_lease()
+    generation = str(first.lease["generation_nonce"])
+    lease_path = tmp_path / ".easyaudit" / "runtime" / "omp-agent-lease.json"
+    lease = json.loads(lease_path.read_text(encoding="utf-8"))
+    lease["hostname"] = "remote-host"
+    lease["heartbeat_epoch"] = 0
+    write_json(lease_path, lease)
+
+    monkeypatch.setenv("PI_SESSION_ID", "session-b")
+    assert not agent.acquire_lease(
+        takeover=True,
+        expected_generation=generation,
+    ).allowed
+    recovered = agent.acquire_lease(
+        takeover=True,
+        expected_generation=generation,
+        remote_owner_confirmed=True,
+    )
+    assert recovered.allowed is True
+
+
 def test_old_generation_cannot_release_new_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -390,7 +499,7 @@ def test_implementation_bootstrap_rejects_policy_scope(
     run_git(tmp_path, "checkout", "-b", "codex/implementation")
     point_agent_at(monkeypatch, tmp_path)
 
-    with pytest.raises(agent.ControlError, match="must not allow workflow policy"):
+    with pytest.raises(agent.ControlError, match="Scope must be derived"):
         agent.bootstrap_state(
             kind="implementation",
             slice_name="process-omp-agent-control-plane-implementation",
@@ -404,6 +513,58 @@ def test_implementation_bootstrap_rejects_policy_scope(
         )
 
 
+def test_implementation_bootstrap_derives_scope_from_merged_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate_doc = "docs/architecture/reviewed-gate.md"
+    inactive = base_state(phase="MERGED", slice_name="gate-slice")
+    inactive["active"] = False
+    inactive["work_branch"] = None
+    inactive["gate_docs"] = [gate_doc]
+    inactive["approved_implementation"] = {
+        "slice": "approved-implementation",
+        "gate_docs": [gate_doc],
+        "allowed_paths": [
+            ".easyaudit/development-state.json",
+            "scripts/approved.py",
+        ],
+        "forbidden_paths": [
+            ".easyaudit/workflow-policy.json",
+            "src/**",
+        ],
+    }
+    init_repo(tmp_path, inactive)
+    reviewed = tmp_path / gate_doc
+    reviewed.parent.mkdir(parents=True, exist_ok=True)
+    reviewed.write_text("# Reviewed Gate\n", encoding="utf-8")
+    run_git(tmp_path, "add", gate_doc)
+    run_git(tmp_path, "commit", "-m", "merge Gate")
+    base = run_git(tmp_path, "rev-parse", "HEAD")
+    run_git(tmp_path, "checkout", "-b", "codex/approved-implementation")
+    point_agent_at(monkeypatch, tmp_path)
+
+    proposed = agent.bootstrap_state(
+        kind="implementation",
+        slice_name="approved-implementation",
+        milestone="M7",
+        branch="codex/approved-implementation",
+        base_sha=base,
+        gate_docs=(gate_doc,),
+        allowed_paths=(),
+        forbidden_paths=(),
+        include_roadmap=False,
+        dry_run=True,
+    )
+
+    assert proposed["scope"] == {
+        "allowed_paths": inactive["approved_implementation"]["allowed_paths"],
+        "forbidden_paths": inactive["approved_implementation"]["forbidden_paths"],
+    }
+    assert "slice" not in proposed["scope"]
+    assert proposed["implementation_authorization_commit"]
+
+
 def test_record_pr_is_typed_and_non_overwritable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -412,11 +573,43 @@ def test_record_pr_is_typed_and_non_overwritable(
     state["pr"] = {"number": None}
     init_repo(tmp_path, state)
     point_agent_at(monkeypatch, tmp_path)
-    monkeypatch.setattr(agent, "_gate_check", lambda *args: True)
+    monkeypatch.setattr(agent, "_gate_check", lambda *args, **kwargs: True)
 
     assert agent.record_pr_number(42)["pr"] == {"number": 42}
-    with pytest.raises(agent.ControlError, match="already bound"):
+    with pytest.raises(agent.ControlError, match="only be bound once"):
+        agent.record_pr_number(42)
+    with pytest.raises(agent.ControlError, match="only be bound once"):
         agent.record_pr_number(43)
+
+
+def test_state_publication_validates_before_atomic_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = base_state()
+    init_repo(tmp_path, state)
+    point_agent_at(monkeypatch, tmp_path)
+    old_bytes = agent.STATE_PATH.read_bytes()
+    proposed = json.loads(json.dumps(state))
+    proposed["next_allowed_action"] = "validated change"
+
+    monkeypatch.setattr(agent, "_gate_check", lambda *args, **kwargs: False)
+    with pytest.raises(agent.ControlError, match="proposed state failed"):
+        agent._atomic_write_state(old_bytes, proposed)
+    assert agent.STATE_PATH.read_bytes() == old_bytes
+
+    monkeypatch.setattr(agent, "_gate_check", lambda *args, **kwargs: True)
+    real_replace = os.replace
+
+    def fail_before_publication(source: str | Path, destination: str | Path) -> None:
+        if Path(destination) == agent.STATE_PATH:
+            raise OSError("fault before rename")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(agent.os, "replace", fail_before_publication)
+    with pytest.raises(OSError, match="fault before rename"):
+        agent._atomic_write_state(old_bytes, proposed)
+    assert agent.STATE_PATH.read_bytes() == old_bytes
 
 
 def test_transition_rejects_phase_jump_and_scope_escalation() -> None:
@@ -512,6 +705,100 @@ def test_command_profiles_reject_shell_escape() -> None:
         agent.execute_profile("git-commit", ["message", ";"])
     with pytest.raises(agent.ControlError, match="unknown command profile"):
         agent.execute_profile("arbitrary", [])
+
+
+def test_review_reference_binds_zero_finding_pass_to_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = "a" * 40
+    monkeypatch.setattr(agent, "_repository_slug", lambda: "owner/repo")
+    payload = {
+        "body": (f"fixed candidate = {candidate}\nP0 = 0\nP1 = 0\nP2 = 0\nRESULT = PASS\n"),
+        "author_association": "OWNER",
+        "user": {"login": "maintainer"},
+        "html_url": "https://example.invalid/comment/1",
+    }
+    monkeypatch.setattr(
+        agent,
+        "_run",
+        lambda argv, check=False: subprocess.CompletedProcess(
+            argv,
+            0,
+            json.dumps(payload),
+            "",
+        ),
+    )
+
+    evidence = agent.verify_review_reference(45, candidate, "comment:1")
+    assert evidence["candidate"] == candidate
+    assert evidence["result"] == "PASS"
+
+    payload["body"] = payload["body"].replace("P1 = 0", "P1 = 1")
+    with pytest.raises(agent.ControlError, match="zero-finding PASS"):
+        agent.verify_review_reference(45, candidate, "comment:1")
+
+
+def test_merge_authorization_binds_review_and_exact_remote_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = "a" * 40
+    control = "b" * 40
+    state = base_state(phase="FINAL_REVIEW")
+    state["fixed_head"] = candidate
+    write_json(tmp_path / ".easyaudit" / "development-state.json", state)
+    point_agent_at(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "_git", lambda *args, **kwargs: control)
+    monkeypatch.setattr(agent, "_is_ancestor", lambda ancestor, descendant: True)
+    monkeypatch.setattr(agent, "_finalization_chain_is_valid", lambda current, head: True)
+    monkeypatch.setattr(
+        agent,
+        "verify_pr",
+        lambda pr: {
+            "pass": True,
+            "pr": {"state": "OPEN", "isDraft": False, "headRefOid": control},
+        },
+    )
+    review = {
+        "reference": "comment:1",
+        "candidate": candidate,
+        "result": "PASS",
+        "p0": 0,
+        "p1": 0,
+        "p2": 0,
+    }
+    monkeypatch.setattr(agent, "verify_review_reference", lambda pr, head, ref: review)
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        agent,
+        "_atomic_write_state",
+        lambda old, proposed: captured.update(proposed),
+    )
+
+    result = agent.transition_state(
+        "MERGE_AUTHORIZED",
+        candidate=None,
+        rollback_reason=None,
+        review_pass_ref="comment:1",
+    )
+    assert result["review_evidence"] == review
+    assert result["authorized_control_parent"] == control
+
+    monkeypatch.setattr(
+        agent,
+        "verify_pr",
+        lambda pr: {
+            "pass": True,
+            "pr": {"state": "OPEN", "isDraft": False, "headRefOid": "c" * 40},
+        },
+    )
+    with pytest.raises(agent.ControlError, match="exact-head PR evidence"):
+        agent.transition_state(
+            "MERGE_AUTHORIZED",
+            candidate=None,
+            rollback_reason=None,
+            review_pass_ref="comment:1",
+        )
 
 
 def test_required_check_contract_rejects_github_drift(

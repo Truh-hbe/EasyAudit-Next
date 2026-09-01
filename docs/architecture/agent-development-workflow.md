@@ -58,9 +58,15 @@ and compaction summaries cannot mint phase, evidence or authorization.
 
 ## 3. Single-writer workspace
 
-The OMP control plane stores a Git-ignored writer lease under
-`.easyaudit/runtime/`. The lease binds repository, Session, process, host and a
-unique generation nonce.
+Mutation-capable OMP sessions must start through:
+
+```bash
+python3 scripts/easyaudit_agent.py launch --
+```
+
+The launcher explicitly loads the project Extension and requires a session-start activation proof. Direct `omp`, `--no-extensions`, disabled/import-failing Extensions, RPC, JSON and print sessions are read-only NO-GO.
+
+The OMP control plane stores a Git-ignored writer lease under `.easyaudit/runtime/`. The lease binds repository, stable OMP Session identity, OMP host process PID, host and a unique generation nonce. Short-lived Python helpers receive that stable owner explicitly and never use their own PID as the OMP owner.
 
 - Only one Session may own writer mode.
 - Other Sessions remain read-only.
@@ -161,7 +167,9 @@ ChatGPT GitHub Connector
 Fallback changes only execution channel. It never grants review, merge,
 deployment, secret or traffic authority.
 
-## 9. Human authorization
+## 9. Review evidence and human authorization
+
+An independent PASS must be a structured immutable GitHub comment/review reference bound to PR, fixed candidate, result and P0/P1/P2 counts. A free-form `PASS` string is not evidence. MERGE_AUTHORIZED verifies the reference, current local/control head, remote PR head and candidate-only finalization chain.
 
 A merge/deploy grant is created only by a current blocking human UI challenge
 that displays exact repository, action, PR/environment, head/release and a
@@ -198,12 +206,11 @@ human selects and scopes Slice
   -> independent Review PASS
   -> current one-shot human authorization
   -> expected-head merge
-  -> post-merge verification/rebaseline
+  -> verify remote main is the exact merge commit before state publication
+  -> CAS-protected post-merge verification/rebaseline
 ```
 
-At any failure, return to the legal repair phase, clear invalid candidate
-references, record a bounded reason, fix and re-prove. Never weaken Acceptance
-to obtain green CI.
+At any failure, return to the legal repair phase, clear invalid candidate references, record a bounded reason, fix and re-prove. If GitHub merge succeeds but rebaseline cannot safely proceed, report `REMOTE_MERGED_REBASELINE_PENDING` with the exact merge commit and use the human-confirmed idempotent recovery tool. Never weaken Acceptance to obtain green CI.
 
 ## 12. Sensitive data
 
