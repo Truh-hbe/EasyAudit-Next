@@ -15,12 +15,14 @@ function harness(options: {
   confirm?: boolean
   phase?: string
   writerLeaseOwned?: boolean
+  mode?: 'tui' | 'rpc' | 'json' | 'print'
 } = {}): Registered & {
   pi: any
   ctx: any
   confirmations: { count: number }
   merges: { count: number }
   status: Record<string, any>
+  leaseAcquires: { count: number }
 } {
   const handlers = new Map<string, (...args: any[]) => Promise<any>>()
   const tools = new Map<string, any>()
@@ -45,6 +47,7 @@ function harness(options: {
   }
   const confirmations = { count: 0 }
   const merges = { count: 0 }
+  const leaseAcquires = { count: 0 }
   const pi = {
     on(name: string, handler: (...args: any[]) => Promise<any>) {
       handlers.set(name, handler)
@@ -75,6 +78,7 @@ function harness(options: {
       assert.equal(command, 'python3')
       if (args.includes('status')) return { code: 0, stdout: JSON.stringify(status), stderr: '' }
       if (args.includes('lease') && args.includes('acquire')) {
+        leaseAcquires.count += 1
         return {
           code: 0,
           stdout: JSON.stringify({
@@ -113,7 +117,7 @@ function harness(options: {
     },
   }
   const ctx = {
-    mode: 'tui',
+    mode: options.mode ?? 'tui',
     hasUI: true,
     signal: undefined,
     isProjectTrusted: () => true,
@@ -128,7 +132,17 @@ function harness(options: {
     },
   }
   easyauditGuard(pi as unknown as ExtensionAPI)
-  return { handlers, tools, commands, pi, ctx, confirmations, merges, status }
+  return {
+    handlers,
+    tools,
+    commands,
+    pi,
+    ctx,
+    confirmations,
+    merges,
+    status,
+    leaseAcquires,
+  }
 }
 
 test('injects a fresh control snapshot before every agent turn', async () => {
@@ -165,6 +179,15 @@ test('observe mode warns without claiming hard enforcement', async () => {
   } finally {
     delete process.env.EASYAUDIT_OMP_GUARD_MODE
   }
+})
+
+test('unverified RPC runtime remains read-only and does not hold the writer lease', async () => {
+  delete process.env.EASYAUDIT_OMP_RPC_BASH_GUARDED
+  const { handlers, ctx, leaseAcquires } = harness({ mode: 'rpc' })
+  const sessionStart = handlers.get('session_start')
+  assert.ok(sessionStart)
+  await sessionStart({}, ctx)
+  assert.equal(leaseAcquires.count, 0)
 })
 
 test('blocks the independent user-bash surface during an active Gate', async () => {

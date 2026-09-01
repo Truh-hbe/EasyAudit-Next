@@ -89,8 +89,10 @@ export default function easyauditGuard(pi: ExtensionAPI) {
   }
 
   async function acquire(ctx: ExtensionContext): Promise<void> {
-    if (!ctx.isProjectTrusted()) {
-      ctx.ui.setStatus('easyaudit-guard', 'EasyAudit: UNTRUSTED / read-only-no-go')
+    const runtimeWriteCapable = ctx.mode === 'tui'
+      || (ctx.mode === 'rpc' && process.env.EASYAUDIT_OMP_RPC_BASH_GUARDED === '1')
+    if (!ctx.isProjectTrusted() || !runtimeWriteCapable) {
+      ctx.ui.setStatus('easyaudit-guard', 'EasyAudit: read-only-no-go')
       return
     }
     const result = await control(['lease', 'acquire'], ctx)
