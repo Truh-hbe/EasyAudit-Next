@@ -116,26 +116,49 @@ def point_gate_at(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     monkeypatch.setattr(gate, "ROOT", root)
 
 
-def test_launcher_activation_proof_requires_current_token_and_stable_owner(
+def test_launcher_activation_proof_lifecycle_and_replay_protection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     init_repo(tmp_path)
     point_agent_at(monkeypatch, tmp_path)
-    monkeypatch.setenv("EASYAUDIT_OMP_LAUNCH_TOKEN", "a" * 64)
-    monkeypatch.setattr(
-        agent,
-        "_OWNER_OVERRIDE",
-        agent.Owner("omp-session", "/tmp/session.jsonl", 1234, "host"),
-    )
-    proof = agent.prove_activation()
-    assert proof["session_id"] == "omp-session"
-    assert proof["host_pid"] == 1234
-    assert agent._activation_path("a" * 64).is_file()
+    token = "a" * 64
+    child_pid = 1234
+    launcher_pid = 5678
 
-    monkeypatch.delenv("EASYAUDIT_OMP_LAUNCH_TOKEN")
-    with pytest.raises(agent.ControlError, match="launcher token"):
-        agent.prove_activation()
+    # 1. Launcher records activation proof for expected child PID
+    path = agent._write_activation_record(
+        token,
+        launcher_pid=launcher_pid,
+        expected_child_pid=child_pid,
+    )
+    assert path.is_file()
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["expected_child_pid"] == child_pid
+    assert saved["consumed"] is False
+
+    # 2. Child PID consumes activation record successfully
+    consumed = agent.consume_activation(token, child_pid)
+    assert consumed["pass"] is True
+    assert consumed["host_pid"] == child_pid
+
+    # 3. Replay attack: second consumption is blocked
+    with pytest.raises(agent.ControlError, match="has already been consumed"):
+        agent.consume_activation(token, child_pid)
+
+    # 4. Wrong child PID is blocked
+    token2 = "b" * 64
+    agent._write_activation_record(
+        token2,
+        launcher_pid=launcher_pid,
+        expected_child_pid=child_pid,
+    )
+    with pytest.raises(agent.ControlError, match="PID mismatch"):
+        agent.consume_activation(token2, 9999)
+
+    # 5. Non-existent token is blocked
+    with pytest.raises(agent.ControlError, match="does not exist"):
+        agent.consume_activation("c" * 64, child_pid)
 
 
 def test_committed_policy_matches_candidate_external_hash() -> None:
@@ -717,17 +740,21 @@ def test_review_reference_binds_zero_finding_pass_to_candidate(
         "author_association": "OWNER",
         "user": {"login": "maintainer"},
         "html_url": "https://example.invalid/comment/1",
+        "issue_url": "https://api.github.com/repos/owner/repo/issues/45",
     }
-    monkeypatch.setattr(
-        agent,
-        "_run",
-        lambda argv, check=False: subprocess.CompletedProcess(
-            argv,
-            0,
-            json.dumps(payload),
-            "",
-        ),
-    )
+    issue_payload = {
+        "id": 45,
+        "pull_request": {"url": "https://api.github.com/repos/owner/repo/pulls/45"},
+    }
+
+    def fake_run(argv: tuple[str, ...], check: bool = False) -> subprocess.CompletedProcess[str]:
+        if argv == ("gh", "api", "repos/owner/repo/issues/comments/1"):
+            return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+        if argv == ("gh", "api", "repos/owner/repo/issues/45"):
+            return subprocess.CompletedProcess(argv, 0, json.dumps(issue_payload), "")
+        raise AssertionError(f"unexpected command: {argv}")
+
+    monkeypatch.setattr(agent, "_run", fake_run)
 
     evidence = agent.verify_review_reference(45, candidate, "comment:1")
     assert evidence["candidate"] == candidate
@@ -735,6 +762,25 @@ def test_review_reference_binds_zero_finding_pass_to_candidate(
 
     payload["body"] = payload["body"].replace("P1 = 0", "P1 = 1")
     with pytest.raises(agent.ControlError, match="zero-finding PASS"):
+        agent.verify_review_reference(45, candidate, "comment:1")
+    payload["body"] = payload["body"].replace("P1 = 1", "P1 = 0")
+
+    payload["issue_url"] = "https://api.github.com/repos/owner/repo/issues/99"
+    with pytest.raises(agent.ControlError, match="not associated with PR #45"):
+        agent.verify_review_reference(45, candidate, "comment:1")
+    payload["issue_url"] = "https://api.github.com/repos/owner/repo/issues/45"
+
+    non_pr_issue = {"id": 45}
+
+    def non_pr_run(argv: tuple[str, ...], check: bool = False) -> subprocess.CompletedProcess[str]:
+        if argv == ("gh", "api", "repos/owner/repo/issues/comments/1"):
+            return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+        if argv == ("gh", "api", "repos/owner/repo/issues/45"):
+            return subprocess.CompletedProcess(argv, 0, json.dumps(non_pr_issue), "")
+        raise AssertionError(f"unexpected command: {argv}")
+
+    monkeypatch.setattr(agent, "_run", non_pr_run)
+    with pytest.raises(agent.ControlError, match="not a pull request"):
         agent.verify_review_reference(45, candidate, "comment:1")
 
 
@@ -835,6 +881,8 @@ def test_required_check_contract_falls_back_to_trusted_base(
 ) -> None:
     monkeypatch.setattr(agent, "load_trusted_policy", lambda: POLICY)
     monkeypatch.setattr(agent, "_remote_required_contexts", lambda base: (None, "unavailable"))
+    monkeypatch.setattr(agent, "_repository_slug", lambda: "owner/repo")
+    head_sha = "a" * 40
 
     def fake_run(argv: tuple[str, ...], *, check: bool = True) -> subprocess.CompletedProcess[str]:
         if argv[:3] == ("gh", "pr", "view"):
@@ -844,22 +892,76 @@ def test_required_check_contract_falls_back_to_trusted_base(
                 "mergeable": "MERGEABLE",
                 "headRefName": "codex/example",
                 "baseRefName": "main",
-                "headRefOid": "a" * 40,
+                "headRefOid": head_sha,
                 "baseRefOid": "b" * 40,
                 "mergedAt": None,
                 "url": "https://example.invalid/pr/1",
             }
             return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
-        checks = [
-            {"name": name, "state": "SUCCESS", "bucket": "pass", "link": ""}
-            for name in ("check", "frontend", "browser-acceptance")
-        ]
-        return subprocess.CompletedProcess(argv, 0, json.dumps(checks), "")
+        if argv[:3] == ("gh", "api", f"repos/owner/repo/commits/{head_sha}/check-runs"):
+            payload = {
+                "check_runs": [
+                    {
+                        "name": name,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "head_sha": head_sha,
+                        "html_url": f"https://example.invalid/{name}",
+                    }
+                    for name in ("check", "frontend", "browser-acceptance")
+                ]
+            }
+            return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+        raise AssertionError(f"unexpected run: {argv}")
 
     monkeypatch.setattr(agent, "_run", fake_run)
     result = agent.verify_pr(1)
     assert result["pass"] is True
     assert result["required_source"] == "trusted-base-versioned-contract"
+
+
+def test_verify_pr_rejects_mismatched_check_run_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(agent, "load_trusted_policy", lambda: POLICY)
+    monkeypatch.setattr(agent, "_remote_required_contexts", lambda base: (None, "unavailable"))
+    monkeypatch.setattr(agent, "_repository_slug", lambda: "owner/repo")
+    pr_head_sha = "a" * 40
+    synthetic_merge_sha = "f" * 40
+
+    def fake_run(argv: tuple[str, ...], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+        if argv[:3] == ("gh", "pr", "view"):
+            payload = {
+                "state": "OPEN",
+                "isDraft": False,
+                "mergeable": "MERGEABLE",
+                "headRefName": "codex/example",
+                "baseRefName": "main",
+                "headRefOid": pr_head_sha,
+                "baseRefOid": "b" * 40,
+                "mergedAt": None,
+                "url": "https://example.invalid/pr/1",
+            }
+            return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+        if argv[:3] == ("gh", "api", f"repos/owner/repo/commits/{pr_head_sha}/check-runs"):
+            payload = {
+                "check_runs": [
+                    {
+                        "name": name,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "head_sha": synthetic_merge_sha,
+                        "html_url": f"https://example.invalid/{name}",
+                    }
+                    for name in ("check", "frontend", "browser-acceptance")
+                ]
+            }
+            return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+        raise AssertionError(f"unexpected run: {argv}")
+
+    monkeypatch.setattr(agent, "_run", fake_run)
+    result = agent.verify_pr(1)
+    assert result["pass"] is False
 
 
 def test_pr_metadata_sync_detects_current_and_drift(
@@ -977,3 +1079,26 @@ def test_gate_allows_exact_policy_seed_scope(
     result = gate._evaluate_scope(state, evidence)
     assert result["pass"] is True
     assert result["policy_violations"] == []
+
+
+def test_status_porcelain_paths_parsing() -> None:
+    raw_status = (
+        " M .github/workflows/ci.yml\n"
+        "M  docs/architecture/roadmap.md\n"
+        "?? src/easyaudit_next/new_file.py\n"
+        "R  old_file.py -> renamed_file.py\n"
+        ' M "docs/file with spaces.md"\n'
+        " D deleted.txt\n"
+        "short\n"
+        "   \n"
+    )
+    paths = agent._status_porcelain_paths(raw_status)
+    assert paths == [
+        ".github/workflows/ci.yml",
+        "docs/architecture/roadmap.md",
+        "src/easyaudit_next/new_file.py",
+        "renamed_file.py",
+        "docs/file with spaces.md",
+        "deleted.txt",
+    ]
+

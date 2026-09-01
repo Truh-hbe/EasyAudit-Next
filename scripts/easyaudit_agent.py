@@ -203,6 +203,36 @@ def _git(*args: str, check: bool = True) -> str:
     return completed.stdout.strip()
 
 
+def _status_porcelain_paths(status_text: str) -> list[str]:
+    paths: list[str] = []
+    for raw_line in status_text.splitlines():
+        line = raw_line.rstrip("\r\n")
+        if len(line) < 4 or line[2] != " ":
+            continue
+        payload = line[3:]
+        if " -> " in payload:
+            payload = payload.split(" -> ", 1)[1]
+        payload = payload.strip()
+        if payload.startswith('"') and payload.endswith('"') and len(payload) >= 2:
+            payload = payload[1:-1]
+        if payload:
+            paths.append(payload)
+    return paths
+
+
+def _git_status_paths() -> list[str]:
+    completed = subprocess.run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ControlError("git status failed")
+    return _status_porcelain_paths(completed.stdout)
+
+
 def _run(argv: Sequence[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         list(argv),
@@ -722,6 +752,17 @@ def verify_review_reference(
         payload = json.loads(fetched.stdout)
     except json.JSONDecodeError as exc:
         raise ControlError("Review evidence is invalid") from exc
+    if kind == "comment":
+        issue_url = str(payload.get("issue_url") or "")
+        expected_suffix = f"/repos/{slug}/issues/{pr_number}"
+        if not issue_url.endswith(expected_suffix):
+            raise ControlError(f"Review comment is not associated with PR #{pr_number}")
+        issue_fetched = _run(("gh", "api", f"repos/{slug}/issues/{pr_number}"), check=False)
+        if issue_fetched.returncode != 0:
+            raise ControlError("Review evidence parent PR is unavailable")
+        issue_payload = json.loads(issue_fetched.stdout or "{}")
+        if "pull_request" not in issue_payload:
+            raise ControlError(f"Issue #{pr_number} is not a pull request")
     body = str(payload.get("body") or "")
     association = str(payload.get("author_association") or "")
     if association not in {"OWNER", "MEMBER", "COLLABORATOR"}:
@@ -799,23 +840,57 @@ def verify_pr(pr_number: int) -> dict[str, Any]:
     required_source = (
         remote_source if remote_contexts is not None else "trusted-base-versioned-contract"
     )
-    checks_result = _run(
-        ("gh", "pr", "checks", str(pr_number), "--json", "name,state,bucket,link"),
+    slug = _repository_slug()
+    head_sha = str(pr.get("headRefOid") or "")
+    if not head_sha:
+        raise ControlError("PR head SHA is unavailable")
+
+    check_runs_result = _run(
+        ("gh", "api", f"repos/{slug}/commits/{head_sha}/check-runs"),
         check=False,
     )
-    if checks_result.returncode not in (0, 8):
-        raise ControlError("GitHub required-check evidence is unavailable")
-    checks = json.loads(checks_result.stdout or "[]")
-    by_name = {item.get("name"): item for item in checks if isinstance(item, dict)}
+    if check_runs_result.returncode != 0:
+        raise ControlError("GitHub commit check-runs evidence is unavailable")
+    check_runs_payload = json.loads(check_runs_result.stdout or "{}")
+    check_runs = check_runs_payload.get("check_runs") or []
+    by_context_runs: dict[str, list[dict[str, Any]]] = {}
+    for run in check_runs:
+        if isinstance(run, dict):
+            name = str(run.get("name") or "")
+            by_context_runs.setdefault(name, []).append(run)
+
     evidence = []
     for context in contexts:
-        item = by_name.get(context)
-        passed = bool(item and item.get("bucket") == "pass")
+        matching_runs = by_context_runs.get(context, [])
+        valid_run = next(
+            (
+                r
+                for r in matching_runs
+                if r.get("status") == "completed"
+                and r.get("conclusion") == "success"
+                and str(r.get("head_sha") or "").lower() == head_sha.lower()
+            ),
+            None,
+        )
+        passed = valid_run is not None
         evidence.append(
             {
                 "name": context,
                 "pass": passed,
-                "state": item.get("state") if item else None,
+                "head_sha": (
+                    valid_run.get("head_sha")
+                    if valid_run
+                    else (matching_runs[0].get("head_sha") if matching_runs else None)
+                ),
+                "state": (
+                    valid_run.get("conclusion")
+                    if valid_run
+                    else (
+                        matching_runs[0].get("conclusion") or matching_runs[0].get("status")
+                        if matching_runs
+                        else None
+                    )
+                ),
             }
         )
     return {
@@ -1277,8 +1352,7 @@ def execute_profile(profile: str, arguments: Sequence[str]) -> subprocess.Comple
         if len(arguments) != 1 or not arguments[0].strip():
             raise ControlError("git-commit requires one commit message")
         state = load_state()
-        changed = _git("status", "--porcelain=v1")
-        paths = [line[3:] for line in changed.splitlines() if len(line) > 3]
+        paths = _git_status_paths()
         scope = state.get("scope") or {}
         allowed = [str(value) for value in scope.get("allowed_paths") or []]
         forbidden = [str(value) for value in scope.get("forbidden_paths") or []]
@@ -1340,29 +1414,84 @@ def next_prompt() -> str:
     )
 
 
+ACTIVATION_TTL_SECONDS = 60.0
+
+
 def _activation_path(token: str) -> Path:
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     return RUNTIME_DIR / f"omp-activation-{digest}.json"
 
 
-def prove_activation() -> dict[str, Any]:
-    token = os.getenv("EASYAUDIT_OMP_LAUNCH_TOKEN")
-    if not token or len(token) < 32:
-        raise ControlError("trusted OMP launcher token is unavailable")
-    owner = current_owner()
+def _write_activation_record(
+    token: str,
+    *,
+    launcher_pid: int,
+    expected_child_pid: int,
+) -> Path:
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     proof = {
         "schema_version": 1,
-        "repository_realpath": str(ROOT),
-        "session_id": owner.session_id,
-        "host_pid": owner.pid,
-        "hostname": owner.hostname,
-        "proved_at": _utc_now(),
-        "token_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        "token_sha256": digest,
+        "launcher_pid": launcher_pid,
+        "expected_child_pid": expected_child_pid,
+        "repository_realpath": str(ROOT.resolve()),
+        "hostname": socket.gethostname(),
+        "created_at": _utc_now(),
+        "created_epoch": time.time(),
+        "consumed": False,
     }
     path = _activation_path(token)
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     _write_json_atomic(path, proof)
-    return proof
+    return path
+
+
+def consume_activation(token: str, child_pid: int) -> dict[str, Any]:
+    if not token or len(token) < 32:
+        raise ControlError("launcher token is invalid or missing")
+    if child_pid <= 0:
+        raise ControlError("child PID must be positive")
+    path = _activation_path(token)
+    try:
+        proof = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ControlError(
+            "launcher activation proof does not exist; session must start through easyaudit_agent.py launch"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ControlError("launcher activation proof JSON is invalid") from exc
+
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if proof.get("token_sha256") != digest:
+        raise ControlError("launcher activation proof token mismatch")
+    if proof.get("repository_realpath") != str(ROOT.resolve()):
+        raise ControlError("launcher activation proof repository path mismatch")
+    if proof.get("hostname") != socket.gethostname():
+        raise ControlError("launcher activation proof host mismatch")
+    if proof.get("expected_child_pid") != child_pid:
+        raise ControlError(
+            f"launcher activation proof PID mismatch (expected {proof.get('expected_child_pid')}, got {child_pid})"
+        )
+    if proof.get("consumed") is True:
+        raise ControlError("launcher activation proof has already been consumed")
+    created_epoch = proof.get("created_epoch")
+    if (
+        not isinstance(created_epoch, (int, float))
+        or (time.time() - created_epoch) > ACTIVATION_TTL_SECONDS
+    ):
+        raise ControlError("launcher activation proof has expired")
+
+    proof["consumed"] = True
+    proof["consumed_at"] = _utc_now()
+    _write_json_atomic(path, proof)
+    owner = current_owner()
+    return {
+        "pass": True,
+        "session_id": owner.session_id,
+        "host_pid": child_pid,
+        "hostname": proof["hostname"],
+        "token_sha256": digest,
+    }
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -1398,14 +1527,24 @@ def launch_omp(arguments: Sequence[str]) -> int:
         cwd=ROOT,
         env=environment,
     )
-    deadline = time.monotonic() + 10.0
+    _write_activation_record(
+        token,
+        launcher_pid=os.getpid(),
+        expected_child_pid=process.pid,
+    )
+    deadline = time.monotonic() + 15.0
     try:
         while time.monotonic() < deadline:
             if proof_path.is_file():
-                return process.wait()
+                try:
+                    data = json.loads(proof_path.read_text(encoding="utf-8"))
+                    if data.get("consumed") is True:
+                        return process.wait()
+                except (json.JSONDecodeError, OSError):
+                    pass
             returncode = process.poll()
             if returncode is not None:
-                raise ControlError("OMP exited before control-plane activation proof")
+                raise ControlError("OMP exited before control-plane activation proof consumption")
             time.sleep(0.1)
         process.terminate()
         try:
@@ -1508,7 +1647,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("next")
     subparsers.add_parser("policy-check")
-    subparsers.add_parser("activation-prove")
+    subparsers.add_parser("sync-pr")
+    consume_parser = subparsers.add_parser("activation-consume")
+    consume_parser.add_argument("--token", required=True)
+    consume_parser.add_argument("--child-pid", type=int, required=True)
     launch_parser = subparsers.add_parser("launch")
     launch_parser.add_argument("omp_arguments", nargs=argparse.REMAINDER)
     return parser
@@ -1589,8 +1731,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 raise SystemExit(completed.returncode)
         elif args.command == "next":
             _json_output({"pass": True, "prompt": next_prompt()})
-        elif args.command == "activation-prove":
-            _json_output({"pass": True, "activation": prove_activation()})
+        elif args.command == "sync-pr":
+            status = sync_pr_metadata(load_state())
+            _json_output({"pass": status == "current", "status": status})
+            if status != "current":
+                raise SystemExit(2)
+        elif args.command == "activation-consume":
+            _json_output(consume_activation(args.token, args.child_pid))
         elif args.command == "launch":
             raise SystemExit(launch_omp(args.omp_arguments))
         elif args.command == "policy-check":

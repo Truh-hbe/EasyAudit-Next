@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync, realpathSync } from 'node:fs'
 import { hostname } from 'node:os'
+import { resolve } from 'node:path'
 
 import type {
   ExtensionAPI,
@@ -128,9 +130,16 @@ export default function easyauditGuard(pi: ExtensionAPI) {
       )
       return
     }
-    const activation = await control(['activation-prove'], ctx)
+    const activation = await control(
+      ['activation-consume', '--token', launcherToken, '--child-pid', String(process.pid)],
+      ctx,
+    )
     if (!activation.pass) {
       ctx.ui.setStatus('easyaudit-guard', 'EasyAudit: activation proof failed / read-only-no-go')
+      ctx.ui.notify(
+        `EasyAudit activation failed: ${activation.reason ?? 'invalid activation proof'}`,
+        'error',
+      )
       return
     }
     const result = await control(['lease', 'acquire'], ctx)
@@ -174,10 +183,24 @@ export default function easyauditGuard(pi: ExtensionAPI) {
 
   function hasTrustedControlProvenance(toolName: string): boolean {
     const tool = pi.getAllTools().find((item) => item.name === toolName)
-    if (!tool || tool.sourceInfo.source !== 'extension') return false
-    const provenance = `${tool.sourceInfo.path} ${tool.sourceInfo.baseDir ?? ''}`
-      .replaceAll('\\\\', '/')
-    return provenance.includes('/.omp/extensions/easyaudit-guard')
+    if (!tool || tool.sourceInfo.source !== 'extension' || tool.sourceInfo.scope !== 'project') {
+      return false
+    }
+    const expectedGuardPath = resolve(import.meta.dirname, 'index.ts')
+    const expectedGuardDir = resolve(import.meta.dirname)
+    try {
+      const canonicalExpectedPath = existsSync(expectedGuardPath) ? realpathSync(expectedGuardPath) : expectedGuardPath
+      const canonicalExpectedDir = existsSync(expectedGuardDir) ? realpathSync(expectedGuardDir) : expectedGuardDir
+      const canonicalToolPath = existsSync(tool.sourceInfo.path) ? realpathSync(tool.sourceInfo.path) : resolve(tool.sourceInfo.path)
+      if (canonicalToolPath !== canonicalExpectedPath) return false
+      if (tool.sourceInfo.baseDir) {
+        const canonicalToolBaseDir = existsSync(tool.sourceInfo.baseDir) ? realpathSync(tool.sourceInfo.baseDir) : resolve(tool.sourceInfo.baseDir)
+        if (canonicalToolBaseDir !== canonicalExpectedDir) return false
+      }
+      return true
+    } catch {
+      return false
+    }
   }
 
   async function guard(event: ToolCallEvent, ctx: ExtensionContext) {
