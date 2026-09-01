@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "process-omp-agent-control-plane-policy-seed",
-  "phase": "MERGE_AUTHORIZED",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
-    "sha": "9532433d73878adf73faef0c1b85c77376cba379"
+    "sha": "7a300581f9e36990fb4d5955ba8110143624271e"
   },
-  "work_branch": "codex/process-omp-agent-control-plane-policy-seed",
+  "work_branch": null,
   "pr": {
     "number": 44
   },
@@ -44,5 +44,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge PR #44 with expected-head protection only, then perform post-merge rebaseline; no Control Plane implementation, product implementation, deployment, secret access or real traffic"
+  "next_allowed_action": "Await explicit authorization for the separate OMP Control Plane implementation slice; no tooling implementation, product implementation, deployment, secret access or real traffic is currently authorized"
 }
