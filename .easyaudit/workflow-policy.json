@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "policy_id": "easyaudit-workflow-policy-v1",
+  "required_checks": {
+    "main": {
+      "source": "versioned-contract",
+      "contexts": [
+        "check",
+        "frontend",
+        "browser-acceptance"
+      ]
+    }
+  },
+  "slice_predecessors": {
+    "M6.1b-private-infrastructure-qualification": [
+      "M6.1a-recovery-contract-tooling",
+      "process-omp-agent-control-plane-implementation"
+    ],
+    "M6-ops-operational-readiness": [
+      "M6.1b-private-infrastructure-qualification"
+    ]
+  },
+  "protected_paths": [
+    ".easyaudit/development-state.json",
+    ".easyaudit/workflow-policy.json"
+  ],
+  "policy_change_protocol": "separate-reviewed-policy-seed"
+}
