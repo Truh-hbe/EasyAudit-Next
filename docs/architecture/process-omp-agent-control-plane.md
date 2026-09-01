@@ -415,7 +415,7 @@ post-merge parent relation
 
 ### 9.1 机器化 Roadmap predecessor policy
 
-Roadmap Markdown 只供人类解释，不能作为执行授权解析源。Implementation 必须新增受保护、版本化的：
+Roadmap Markdown 只供人类解释，不能作为执行授权解析源。前置 policy-seed PR 必须按 §9.3 新增受保护、版本化的，后续 Implementation 只能从 base 读取：
 
 ```text
 .easyaudit/workflow-policy.json
@@ -440,7 +440,7 @@ active == false
 required CI set 不得由 Agent 猜测。Control Plane 使用一个明确权威源：
 
 1. 优先读取 GitHub branch protection/ruleset 的 required checks，并记录 fetch time/branch/revision；或
-2. 当仓库 API 权限无法读取 ruleset 时，读取 `.easyaudit/workflow-policy.json` 中独立版本化、精确命名的 required-check contract。
+2. 当仓库 API 权限无法读取 ruleset 时，读取 candidate base/main 中已受信的 `.easyaudit/workflow-policy.json` exact required-check contract；bootstrap seed 自身只能读取已合并 Gate 的 candidate-external fixed contract。
 
 本项目初始 contract 必须精确列出当前 required jobs，并由 CI 验证这些 job 仍存在于唯一工作流 `.github/workflows/ci.yml`。workflow-policy 不能与被审查产品 Slice 在同一普通 Scope 内一起改写以自我放行。
 
@@ -451,6 +451,91 @@ remote evidence unavailable/stale or NO-GO
 ```
 
 不得 PASS。
+
+### 9.3 Bootstrap trust anchor
+
+任何 proposed/current candidate policy 都不得授权创建或修改它的同一个 candidate。首次上线必须拆成三个独立信任阶段：
+
+```text
+A. reviewed docs-only Gate merged to trusted main
+  -> B. policy-seed PR adds only exact reviewed policy + state
+  -> policy seed merged to trusted main
+  -> C. Control Plane implementation based on seeded main
+```
+
+#### A. Candidate-external canonical bootstrap contract
+
+本 Gate 合并后的文档是 policy-seed PR 的 candidate-external authority。初始 policy 的语义内容固定为：
+
+```json
+{
+  "schema_version": 1,
+  "policy_id": "easyaudit-workflow-policy-v1",
+  "required_checks": {
+    "main": {
+      "source": "versioned-contract",
+      "contexts": ["check", "frontend", "browser-acceptance"]
+    }
+  },
+  "slice_predecessors": {
+    "M6.1b-private-infrastructure-qualification": [
+      "M6.1a-recovery-contract-tooling",
+      "process-omp-agent-control-plane-implementation"
+    ],
+    "M6-ops-operational-readiness": [
+      "M6.1b-private-infrastructure-qualification"
+    ]
+  },
+  "protected_paths": [
+    ".easyaudit/development-state.json",
+    ".easyaudit/workflow-policy.json"
+  ],
+  "policy_change_protocol": "separate-reviewed-policy-seed"
+}
+```
+
+使用 UTF-8、递归 key 排序和 compact separators `(',', ':')` 的 canonical JSON SHA-256 必须为：
+
+```text
+31e7c9d4aa8b9f61c20b1d95b85f948ceb919d1d91938c80c5b2006748780857
+```
+
+#### B. Policy-seed PR
+
+Gate 合并后先创建独立 slice：
+
+```text
+process-omp-agent-control-plane-policy-seed
+```
+
+该 PR 只能改变：
+
+```text
+.easyaudit/workflow-policy.json
+.easyaudit/development-state.json
+```
+
+它不得修改 validator、Extension、Skill、Prompt、测试、CI、Gate 文档或任何产品文件。其 Final Review/MERGE_AUTHORIZED 不得读取 proposed policy 为自己授权；必须根据已在 base/main 中的本 Gate 文档、上述固定 hash、base/main 原有 `.github/workflows/ci.yml` 和外部 `gh` check evidence，证明 exact PR head 上：
+
+```text
+check = success
+frontend = success
+browser-acceptance = success
+```
+
+若 Gate 文档不在 base ancestry、hash 不匹配、diff 超出两条路径、任一 check 无法获取或不成功，则 seed NO-GO。GitHub rules API 为 403 不允许回退到 proposed policy，只能使用 base/main 已合并 Gate 的 exact bootstrap contract；二者都不可用时 NO-GO。
+
+Seed 合并进入 main 后，policy 才成为 trusted policy root。
+
+#### C. Control Plane implementation PR
+
+Control Plane implementation 必须以包含 seed completion 的 main 为 base，并证明 seed commit 是 base/HEAD ancestor。Implementation allowlist 必须排除 `.easyaudit/workflow-policy.json`，因此 candidate 不能修改 required checks 或 predecessor 来批准自己。
+
+Implementation 可按 Gate 修改 `.github/workflows/ci.yml`，但 required check identity 始终来自 base 中已信任 policy；若 candidate 删除/重命名 required job，exact-head evidence 将显示缺失并 NO-GO。Implementation 的 proposed validator 结果只能作为补充证据；Final Review 与 MERGE_AUTHORIZED 还必须由 candidate-external OMP/GitHub 核验按照 base policy重新证明。
+
+bootstrap/rebaseline Scope 的判断只能使用 old/base trusted policy。Proposed policy 永远不能授权产生自己的 transition。
+
+未来每次 policy 变更也必须使用独立、先 Review 后 seed 的 policy-only PR；同一 PR 不得同时修改 policy 及其 consumer、validator 或 CI。
 
 ## 10. GitHub Connector 降级
 
@@ -509,7 +594,11 @@ Extension 每轮注入使流程不依赖 compaction summary。Skill 与 `AGENTS.
 
 ## 13. 实施分期
 
-### 13.1 实施观察阶段
+### 13.1 Bootstrap policy seed
+
+Docs Gate 合并后，先执行 §9.3 的 policy-only seed PR。Seed 未合并到 main 前，不得启动 Control Plane implementation。
+
+### 13.2 实施观察阶段
 
 Implementation 首先允许 Extension 以 observe 模式运行：
 
@@ -519,7 +608,7 @@ Implementation 首先允许 Extension 以 observe 模式运行：
 - 运行测试矩阵；
 - 不静默改变工具参数。
 
-### 13.2 强制阶段
+### 13.3 强制阶段
 
 Final candidate 必须默认启用 enforce 模式：
 
@@ -540,7 +629,6 @@ AGENTS.md
 .omp/prompts/**
 .omp/extensions/easyaudit-guard/**
 .gitignore
-.easyaudit/workflow-policy.json
 scripts/easyaudit_agent.py
 scripts/easyaudit_gate.py
 tests/tooling/**
@@ -550,6 +638,8 @@ docs/architecture/agent-development-workflow.md
 ```
 
 具体 allowlist 必须在进入 IMPLEMENTATION 的 state-only 转换中精确列出；此处不是提前授权。`.github/workflows/**` 不得作为宽泛 allowlist，初始实现只允许当前唯一的 `.github/workflows/ci.yml`。
+
+`.easyaudit/workflow-policy.json` 明确不在 Control Plane implementation allowlist 中；它只能由前置 policy-seed PR 按固定 hash 写入。
 
 不得修改：
 
@@ -584,7 +674,9 @@ deploy/**
 
 ```text
 M6.1a complete
-  -> Process OMP Agent Control Plane Hardening
+  -> Process OMP Agent Control Plane docs Gate
+  -> OMP Control Plane policy seed
+  -> OMP Control Plane implementation
   -> M6.1b
   -> resume/rebase M6-Ops implementation
 ```
@@ -604,13 +696,22 @@ GATE_DRAFT
   -> MERGED + active=false
 ```
 
-Gate 合并后，Control Plane implementation 必须创建独立 executable PR：
+Gate 合并后，先创建 policy-seed executable PR：
 
 ```text
-IMPLEMENTATION
+POLICY_SEED IMPLEMENTATION
+  -> FINAL_REVIEW (candidate-external bootstrap contract)
+  -> MERGE_AUTHORIZED
+  -> MERGED + active=false
+```
+
+Seed merged main 随后才允许 Control Plane implementation PR：
+
+```text
+IMPLEMENTATION (trusted base policy; policy path forbidden)
   -> FINAL_REVIEW
   -> MERGE_AUTHORIZED
   -> MERGED + active=false
 ```
 
-任何阶段都不得把 Gate Review PASS 误报为 executable implementation 完成。
+任何阶段都不得把 Gate Review PASS、proposed policy 或 candidate validator 结果误报为 bootstrap/implementation 完成。

@@ -159,7 +159,11 @@ The revised dependency order is:
 ```text
 M6.1a  Recovery contract / tooling validation (completed)
   ->
-Process OMP Agent Control Plane Hardening
+Process OMP Agent Control Plane docs Gate
+  ->
+OMP Agent Control Plane policy seed
+  ->
+OMP Agent Control Plane implementation
   ->
 M6.1b  Real private-network infrastructure qualification
   ->
@@ -250,11 +254,18 @@ single-transition prompt orchestration
 Gate/CI fail-closed fallback
 ```
 
-This process slice changes no Review or product truth. Its docs-only Gate and
-subsequent executable tooling implementation each require independent review.
-Completing it does not satisfy M6.1b and does not authorize the parked M6-Ops
-implementation to enter Final Review. The product sequence resumes with M6.1b;
-M6-Ops must then be rebased/requalified against the resulting `main`.
+This process slice changes no Review or product truth. Its docs-only Gate,
+candidate-external policy-seed PR and subsequent executable tooling
+implementation each require independent review. The seed PR may add only the
+fixed-hash workflow policy and state; it cannot change validator, CI or
+Extension code. The implementation must then consume the policy already
+merged in its base and is forbidden from changing that policy, so neither
+candidate can authorize itself.
+
+Completing the Control Plane does not satisfy M6.1b and does not authorize the
+parked M6-Ops implementation to enter Final Review. The product sequence
+resumes with M6.1b; M6-Ops must then be rebased/requalified against the
+resulting `main`.
 
 ### M6.1b — Real private-network infrastructure qualification
 

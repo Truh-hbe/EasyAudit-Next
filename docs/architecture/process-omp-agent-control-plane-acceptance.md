@@ -304,7 +304,7 @@ Control Plane 不需要通用理解所有测试语义，但必须至少做到：
 
 ## 18. Roadmap predecessor
 
-实现必须提交受保护的 `.easyaudit/workflow-policy.json`，并由 schema/静态测试证明 M6-Ops 的 predecessor 包含 M6.1b。普通 milestone state/Scope 不得修改该文件。
+前置 policy-seed PR 必须按 §30 的 candidate-external fixed contract 提交受保护的 `.easyaudit/workflow-policy.json`；后续 Control Plane implementation 只能从 base 读取且不得修改。schema/静态测试必须证明 M6-Ops 的 predecessor 包含 M6.1b。普通 milestone state/Scope 不得修改该文件。
 
 构造真实临时 Git topology：
 
@@ -341,7 +341,7 @@ main HEAD
 
 `/ea-verify` 必须通过 Git/GitHub 重新读取并报告差异，不得回显为已验证事实。
 
-required-check set 必须来自 GitHub branch protection/ruleset，或受保护的 `.easyaudit/workflow-policy.json` 精确 contract。测试必须证明：
+稳态 required-check set 必须来自 GitHub branch protection/ruleset，或 candidate base/main 中受保护的 `.easyaudit/workflow-policy.json` exact contract；policy seed 自身使用已合并 Gate 的固定 bootstrap contract，绝不读取 proposed policy 授权自己。测试必须证明：
 
 - contract 精确列出当前 required job names；
 - job names 能在唯一 `.github/workflows/ci.yml` 中找到；
@@ -524,7 +524,66 @@ Canonical CI 至少验证：
 - CI 修改范围精确为 `.github/workflows/ci.yml`，不使用 `.github/workflows/**`；
 - 未修改产品路径。
 
-## 30. PR metadata drift
+## 30. Bootstrap trust acceptance
+
+首次上线必须通过两个独立 executable PR，而不是一个 self-authorizing candidate。
+
+### 30.1 Canonical policy seed
+
+从已合并到 base/main 的 Gate 文档读取 canonical policy，按 UTF-8、递归 key 排序和 compact separators `(',', ':')` 计算 SHA-256。期望值固定为：
+
+```text
+31e7c9d4aa8b9f61c20b1d95b85f948ceb919d1d91938c80c5b2006748780857
+```
+
+Policy seed candidate 的完整 `BASE...C` diff 只能包含：
+
+```text
+.easyaudit/workflow-policy.json
+.easyaudit/development-state.json
+```
+
+并必须证明：
+
+- Gate docs candidate/merge 是 seed base ancestor；
+- policy canonical hash 精确匹配；
+- required contexts 精确为 `check`、`frontend`、`browser-acceptance`；
+- exact seed PR head 上三个 check 全部 success；
+- seed 未修改 `.github/workflows/ci.yml`、validator、scripts、Extension、Skill、Prompt、tests 或 docs；
+- seed Final Review/MERGE_AUTHORIZED 的 verifier 不读取 proposed policy 作为 authority；
+- rules/ruleset API 403 时只使用 base 中已合并 Gate 的固定 bootstrap contract；若 base contract 也不可用则 NO-GO。
+
+负面测试/临时 Git topology 必须覆盖：
+
+```text
+candidate creates weaker required-check policy + changes ci.yml -> NO-GO
+candidate changes predecessor governing itself -> NO-GO
+candidate policy claims its own bootstrap is authorized -> ignored / NO-GO
+candidate hash differs by one semantic field -> NO-GO
+branch/rules API unavailable + no trusted-base contract -> NO-GO
+Gate docs exist only in candidate, not base ancestry -> NO-GO
+seed diff includes validator/consumer/CI change -> NO-GO
+```
+
+### 30.2 Implementation after seed
+
+Control Plane implementation base 必须包含已合并 seed completion；seed commit 必须是 base/HEAD ancestor。Implementation scope 与 diff 均不得包含 `.easyaudit/workflow-policy.json`。
+
+Implementation 的 required checks 和 predecessor 必须从 base policy 读取，并重新验证 policy canonical identity/ancestry。Proposed validator 或 current candidate 内容不得替换 base authority。
+
+测试必须证明：
+
+- implementation candidate 尝试修改 policy：scope/preflight/CI 全部失败；
+- implementation candidate 删除/重命名 base-required CI job：required check 缺失并 NO-GO；
+- proposed policy 文件、工作区未提交 policy 或侧枝 policy：全部忽略；
+- bootstrap/rebaseline Scope 只由 old/base policy 判断；
+- policy 只有在 seed merge 到 main 后才被 future Slice 信任。
+
+### 30.3 Future policy changes
+
+未来 policy 更新必须先经过独立 docs review，再使用 policy-only seed PR；policy PR 不得同时修改 consumer、validator、CI 或产品。旧/base policy 和已合并 Gate 的 fixed contract 审核新 policy，新 policy 不审核自己。
+
+## 31. PR metadata drift
 
 每次 typed phase transition 后，专用 adapter 应更新 PR body 的 compact status section 并重新读取验证。测试必须证明：
 
@@ -533,7 +592,7 @@ Canonical CI 至少验证：
 - metadata drift 不改变 canonical state，但禁止把 PR body 当作授权或完成证据；
 - drift 可由 `gh` 降级修复并复核。
 
-## 31. Observe → Enforce 切换
+## 32. Observe → Enforce 切换
 
 Implementation 可以先运行 observe 模式，但 Final candidate 必须证明：
 
@@ -543,7 +602,7 @@ default mode = enforce
 
 测试中 observe 模式只告警，enforce 模式实际阻止。生产使用说明不得让用户误以为 observe 已提供硬保护。
 
-## 32. 性能与稳定性
+## 33. 性能与稳定性
 
 每轮本地轻量 preflight 不应执行完整测试套件或无条件网络 fetch。
 
@@ -556,7 +615,7 @@ no-network preflight p95 < 2 s
 
 涉及 GitHub 的验证可有独立超时，并明确标记 freshness。超时不得阻塞 TUI 无限等待。
 
-## 33. Go / No-Go
+## 34. Go / No-Go
 
 ### Go
 
@@ -577,6 +636,7 @@ P2 = 0
 - TUI user_bash/RPC/non-interactive capability contract 通过；
 - Final Review dirty-worktree 回归通过；
 - failed-CI、authoritative required-check 和 machine predecessor 回归通过；
+- bootstrap policy-seed 使用 candidate-external fixed contract 且 implementation policy path 被排除；
 - 一次性 current human authorization 生命周期通过；
 - Candidate/control/Bundle 检查通过；
 - Connector 降级不扩大权限；
@@ -600,6 +660,9 @@ P2 = 0
 - failed CI 可进入 MERGE_AUTHORIZED；
 - Roadmap predecessor 只靠 Markdown/Agent 解释或可被跳过；
 - required CI set 由 Agent 猜测、为空仍 pass 或与产品 Slice 一起自我改写；
+- candidate 创建/修改的 proposed policy 可以授权同一个 candidate；
+- policy seed 同时修改 validator/consumer/CI，或 Control Plane implementation 仍可修改 policy；
+- branch/rules 不可用且 base 无固定 bootstrap contract 时仍 PASS；
 - 历史/Agent/state 能伪造或继承 human authorization；
 - Connector 故障会自动扩大权限；
 - 无 UI 确认被默认视为批准；
@@ -608,7 +671,7 @@ P2 = 0
 - lease、日志或输出泄漏 Secret；
 - 通过修改产品代码来实现 Agent 控制面。
 
-## 34. Gate Review 输出要求
+## 35. Gate Review 输出要求
 
 独立 Gate Review 必须明确回答：
 
@@ -619,8 +682,9 @@ P2 = 0
 5. turn-scoped human grant 是否不可由 Agent/history/state 伪造或继承；
 6. machine predecessor policy 是否通过受信 main ancestry 阻止 M6.1b 跳过；
 7. required CI set 是否来自 branch ruleset 或独立版本化 exact contract；
-8. Extension 阻断与 Gate/CI 权威是否正确分层，是否存在完整沙箱的过度声明；
-9. Final Review dirty-worktree、failed-CI 与 assertion weakening 缺口是否被真正关闭；
-10. Connector 降级是否保持人类授权；
-11. implementation allowlist 是否足够窄；
-12. 是否存在任何产品、部署或 Secret 权限扩张。
+8. 首次 policy seed 是否由 base Gate fixed hash 审核，且后续 implementation 明确禁止修改 policy，从而不存在 candidate self-trust；
+9. Extension 阻断与 Gate/CI 权威是否正确分层，是否存在完整沙箱的过度声明；
+10. Final Review dirty-worktree、failed-CI 与 assertion weakening 缺口是否被真正关闭；
+11. Connector 降级是否保持人类授权；
+12. implementation allowlist 是否足够窄；
+13. 是否存在任何产品、部署或 Secret 权限扩张。
