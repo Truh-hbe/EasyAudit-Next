@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "process-omp-agent-control-plane-policy-seed",
-  "phase": "FINAL_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "9532433d73878adf73faef0c1b85c77376cba379"
@@ -44,5 +44,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Independent Final Review of Policy Seed candidate 9a8344e38caebc4ac03c2445adef6a27c439c139 only; no merge, tooling implementation, product implementation, deployment, secret access or real traffic"
+  "next_allowed_action": "Merge PR #44 with expected-head protection only, then perform post-merge rebaseline; no Control Plane implementation, product implementation, deployment, secret access or real traffic"
 }
