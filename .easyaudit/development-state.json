@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "process-omp-agent-control-plane-hardening",
-  "phase": "GATE_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "8f923a64ade514e531c6de94a15029dc9a9ae136"
@@ -45,5 +45,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Independent re-review of OMP Agent Control Plane bootstrap candidate 137f67ba456829701edfd5c289d996b82274eda8 only; no policy seed, tooling implementation, product implementation, merge, deployment, secret access or real traffic"
+  "next_allowed_action": "Merge PR #43 with expected-head protection only, then perform post-merge rebaseline; no policy seed, tooling implementation, product implementation, deployment, secret access or real traffic"
 }
