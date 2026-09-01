@@ -515,10 +515,14 @@ def verify_predecessors(state: dict[str, Any] | None = None) -> list[dict[str, A
 
 
 def _gate_check(*extra: str) -> bool:
+    local_environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")
+    }
+    local_environment["EASYAUDIT_REPO_ROOT"] = str(ROOT)
     completed = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("easyaudit_gate.py")), "check", *extra],
         cwd=ROOT,
-        env={**os.environ, "EASYAUDIT_REPO_ROOT": str(ROOT)},
+        env=local_environment,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
