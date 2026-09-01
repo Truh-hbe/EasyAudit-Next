@@ -211,6 +211,7 @@ session_file (若可用)
 pid
 hostname
 branch
+generation_nonce
 acquired_at
 heartbeat_at
 mode = read-only | writer
@@ -221,11 +222,13 @@ mode = read-only | writer
 ### 5.3 获取与失效
 
 - writer 租约必须通过原子创建/替换协议获取；
+- 每次成功获取生成不可预测且唯一的 `generation_nonce`；
+- heartbeat、release 与 takeover 必须同时比较 owner identity 和 generation，避免旧 owner/ABA 删除新租约；
 - 已有活跃 writer 时，后来的 Session 默认降级为 read-only 并明确告警；
 - 同主机 PID 存活且 heartbeat 新鲜时，不得自动抢占；
 - stale lease 必须同时满足超时和 owner 不存活/不可验证条件，才能进入人工确认的恢复流程；
-- Session shutdown 必须尽力释放自己的租约；
-- 崩溃后通过 TTL + owner 核验恢复；
+- Session shutdown 必须尽力释放自己当前 generation 的租约；
+- 崩溃后通过 TTL + owner + generation 核验恢复；
 - 不得仅因租约文件时间较旧就静默删除；
 - 用户显式 takeover 必须留下本地过程证据，但不能替代 GitHub merge/deploy 授权。
 
@@ -253,6 +256,35 @@ READ_ONLY may continue with explicit degraded-state warning
 MUTATE / MERGE / DEPLOY must fail closed
 ```
 
+### 6.1 Development-state transition validator
+
+`.easyaudit/development-state.json` 是策略根，不得通过通用 edit/write/bash 自行修改。所有 state 变化必须经专用 `ea_transition` adapter：
+
+```text
+read committed old state from HEAD + working tree
+  -> construct proposed state from a typed transition request
+  -> validate old -> proposed
+  -> re-prove Git/GitHub preconditions required by target phase
+  -> atomically write proposed state
+  -> run Gate check
+```
+
+validator 至少强制：
+
+- 只允许状态机定义的相邻转换或显式 rollback 转换；
+- rollback 必须清空无效 candidate，并写入 bounded reason；
+- 普通 transition 不得改变 project、slice、base、work branch、PR 或 candidate kind；
+- `allowed_paths` 不得扩大、`forbidden_paths` 不得削弱、`finalization_allowed_paths` 不得扩大；
+- Scope 变化只能发生在一个独立审查过的 bootstrap/rebaseline transition，并由当前 Gate 的机器策略允许；
+- `docs_review_head`/`fixed_head` 必须解析、满足 ancestry，并与 candidate kind/phase 一致；
+- 进入 `GATE_REVIEW` 必须有 docs candidate/control 证明；
+- 进入 `FINAL_REVIEW` 必须 clean、current Bundle、完整本地 required evidence 与固定 executable candidate；
+- 进入 `MERGE_AUTHORIZED` 必须重新获取 authoritative required-check set，并证明 exact PR head 全绿、Review finding 为零且具备当前人类授权动作；
+- 进入 `MERGED` 只能用于 post-merge rebaseline，并验证 main/merge parent/PR merged；
+- validator 失败时不得产生部分 state 写入。
+
+通用文件工具必须把 development-state 和机器策略文件视为 protected paths。即使持有 writer lease，也只能由专用 typed adapter 修改。
+
 ## 7. 工具调用防护
 
 ### 7.1 `edit` / `write`
@@ -267,19 +299,43 @@ MUTATE / MERGE / DEPLOY must fail closed
 - 拒绝没有 writer lease 的修改；
 - state/Gate 无法解析时 fail-closed。
 
-### 7.2 `bash`
+### 7.2 Model-facing `bash`
 
-Shell 无法仅靠字符串匹配获得完整语义安全，因此采用防御纵深：
+Shell 是否写盘不能通过字符串可靠判断。`python -c`、`tee`、`cp`、重定向和任意脚本都可绕过路径规则，因此：
 
-- 阻止明确的 merge、push、deploy、secret、破坏性 Git 和状态绕过命令；
-- 对高风险命令要求 phase 与人类确认；
-- 每次 shell 可能改变 Git 状态后使 preflight 失效；
-- 下一次 mutation 前重跑 Gate check；
-- CI 对最终 diff 和 phase 做权威验证。
+```text
+无有效 writer lease
+  -> 阻止所有 model-facing bash
+  -> 阻止所有 mutating tools（包括动态发现的 ast_edit 等）
+  -> 仅开放专用 read-only status/diff/verify 工具
+```
 
-不得声称 bash 拦截可以替代容器隔离或 GitHub 保护。
+持有 writer lease 时也不得开放可任意写策略根的无约束 shell。active Gate 下的 Agent 命令执行必须通过 `ea_exec` 的版本化 command profiles：
 
-### 7.3 Merge 与部署
+- read-only Git/status/diff/gh verify；
+- Gate/architecture/test/build 等审核过的项目命令；
+- 明确的 Git add/commit/push adapter；
+- 每个 profile 使用 argv/受控参数，不接受任意 shell 拼接；
+- profile 声明是否可能修改工作区，执行后使 preflight 失效并重新核验；
+- 任何 profile 都不得直接写 development-state 或 workflow policy。
+
+未匹配 profile 的 model-facing bash 在 active Gate 下默认阻止。若未来要开放 sandboxed shell，必须通过单独 Gate 证明文件系统保护，不能靠字符串 denylist。
+
+不得声称该机制替代容器隔离或 GitHub 保护。
+
+### 7.3 OMP `!cmd`、RPC 与非交互执行面
+
+Model tool `bash` 的 `tool_call` 拦截不自动覆盖用户 `!cmd` 或宿主 RPC bash。Control Plane 必须进行 runtime capability negotiation：
+
+- TUI `!cmd` 必须通过 `user_bash` hook 路由到同一 lease/phase guard；
+- RPC host 必须证明直接 bash/user-bash 被禁用或经过等价 guard；
+- JSON/print/无 UI 模式只允许安全 read-only status/diff/verify；
+- 无法证明执行面受控的运行模式，对 mutation/transition/merge/deploy 一律 NO-GO；
+- 启动 Widget/status 必须显示当前 mode 为 `protected-write` 或 `read-only-no-go`，不能静默假装受保护。
+
+用户直接在 Extension 外打开普通终端不属于 Agent 防护面，仍由 Git/CI/branch protection 兜底；文档不得扩大声明。
+
+### 7.4 Merge 与部署
 
 Merge 防护至少要求：
 
@@ -294,6 +350,21 @@ expected-head protection
 
 部署、secret access、restore rehearsal 与 traffic 必须依赖独立 Gate 的明确授权。Control Plane 不提供一键绕过。
 
+### 7.5 单次人类授权能力
+
+“当前人类授权”必须是不可继承的一次性能力，而不是聊天文本或 state 字段：
+
+- 只有当前受保护运行时中的阻塞式 human UI challenge/confirmation 可以产生；
+- challenge 必须显示 action、repository、PR/environment、exact head/release identity 和随机 nonce；
+- C2C、网页 ChatGPT 声明、历史消息、compaction summary、state 或 Agent 自己不能产生能力；
+- 无 UI、超时、取消或 identity 漂移均不产生能力；
+- 能力只存在内存，绑定一个 exact action 与当前 turn/tool invocation；
+- action 成功、失败、取消或 turn 结束后立即失效；
+- `/new`、`/resume`、`/fork`、`/clone`、`/reload`、compaction 和进程重启均不继承；
+- 最安全的实现是 `ea_authorized_merge` / `ea_authorized_deploy` 在一次受保护调用内完成重新核验、human challenge、执行和失效，不暴露可复用 token。
+
+MERGE/DEPLOY 必须同时满足 phase、remote evidence、exact identity 和该单次能力。
+
 ## 8. Candidate、Control 与工作区完整性
 
 现有协议继续生效：
@@ -307,6 +378,8 @@ W = uncommitted working tree
 Control Plane 必须新增或加强以下拒绝条件：
 
 - `FINAL_REVIEW`/`MERGE_AUTHORIZED` 下存在任何工作区修改；
+- 通用工具尝试修改 development-state 或 workflow policy；
+- proposed state 未通过 old-state → new-state transition validator；
 - executable Candidate 固定后出现非 finalization commit；
 - docs-only reviewed head 后出现非 state-only commit；
 - Candidate CI 失败后仍继续 Final Review；
@@ -339,6 +412,45 @@ post-merge parent relation
 - 必要的本地测试。
 
 核验结果应以结构化摘要返回，不得只回复“看起来正确”。
+
+### 9.1 机器化 Roadmap predecessor policy
+
+Roadmap Markdown 只供人类解释，不能作为执行授权解析源。Implementation 必须新增受保护、版本化的：
+
+```text
+.easyaudit/workflow-policy.json
+```
+
+policy 至少把 slice identifier 映射到 predecessor slice identifier，并定义 completion 证明规则。该文件不能由普通 milestone Scope 修改；变更它需要独立 process Gate。
+
+Preflight 必须从受信 `main` Git 历史中找到 predecessor 的 post-merge state commit，验证该 commit 中：
+
+```text
+slice == required predecessor
+phase == MERGED
+active == false
+```
+
+并证明 completion commit 是当前 `base.sha` 和工作分支 HEAD 的祖先。仅在 state 中填写一个 SHA、仅在 Roadmap 写 Completed、或仅由 Agent 声称完成均无效。
+
+真实回归固定为：M6-Ops 的 policy predecessor 包含 M6.1b；在 M6.1b completion commit 成为 rebaselined base/main 的祖先之前，PLAN、MUTATE、`/ea-next`、FINAL_REVIEW 和 merge 全部阻止。
+
+### 9.2 Authoritative required-check contract
+
+required CI set 不得由 Agent 猜测。Control Plane 使用一个明确权威源：
+
+1. 优先读取 GitHub branch protection/ruleset 的 required checks，并记录 fetch time/branch/revision；或
+2. 当仓库 API 权限无法读取 ruleset 时，读取 `.easyaudit/workflow-policy.json` 中独立版本化、精确命名的 required-check contract。
+
+本项目初始 contract 必须精确列出当前 required jobs，并由 CI 验证这些 job 仍存在于唯一工作流 `.github/workflows/ci.yml`。workflow-policy 不能与被审查产品 Slice 在同一普通 Scope 内一起改写以自我放行。
+
+无法读取权威源、required set 为空、check 缺失、pending、cancelled、skipped（除 contract 明确允许）或 head 不一致时只能返回：
+
+```text
+remote evidence unavailable/stale or NO-GO
+```
+
+不得 PASS。
 
 ## 10. GitHub Connector 降级
 
@@ -384,9 +496,11 @@ Extension 每轮注入使流程不依赖 compaction summary。Skill 与 `AGENTS.
 ```text
 /ea-status      当前状态、租约、branch/head、合法下一动作
 /ea-preflight   强制运行本地 preflight
-/ea-verify      核验指定 PR/candidate/CI
+/ea-verify      核验指定 PR/candidate/authoritative CI
 /ea-bundle      生成并验证 Review Bundle
 /ea-next        生成仅推动一个状态转换的下一条 Prompt
+/ea-transition  typed old-state -> proposed-state transition
+/ea-exec        执行版本化 command profile
 ```
 
 命令输出不得包含 Secret，并应在非交互/RPC 模式下有确定行为。
@@ -426,15 +540,16 @@ AGENTS.md
 .omp/prompts/**
 .omp/extensions/easyaudit-guard/**
 .gitignore
+.easyaudit/workflow-policy.json
 scripts/easyaudit_agent.py
 scripts/easyaudit_gate.py
 tests/tooling/**
-.github/workflows/**
+.github/workflows/ci.yml
 docs/architecture/agent-development-workflow.md
 .easyaudit/development-state.json
 ```
 
-具体 allowlist 必须在进入 IMPLEMENTATION 的 state-only 转换中精确列出；此处不是提前授权。
+具体 allowlist 必须在进入 IMPLEMENTATION 的 state-only 转换中精确列出；此处不是提前授权。`.github/workflows/**` 不得作为宽泛 allowlist，初始实现只允许当前唯一的 `.github/workflows/ci.yml`。
 
 不得修改：
 
@@ -474,7 +589,9 @@ M6.1a complete
   -> resume/rebase M6-Ops implementation
 ```
 
-当前 Draft PR 不修改或合并停放中的 M6-Ops PR。Control Plane 完成后，M6.1b 仍必须先于 M6-Ops Final Review/merge。
+当前 Draft PR 不修改或合并停放中的 M6-Ops PR。Control Plane 完成后，M6.1b 仍必须先于 M6-Ops Final Review/merge。该关系必须写入 `.easyaudit/workflow-policy.json` 并由 Git ancestry 验证，不能只依赖本段文字。
+
+每次 phase 转换后，PR body 的 compact status section 应由专用 adapter 同步并重新读取验证。PR body 不是授权源；同步失败时标记 metadata drift，不得把旧 body 当作当前 phase。
 
 ## 17. 生命周期
 

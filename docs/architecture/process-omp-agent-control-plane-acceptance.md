@@ -140,7 +140,8 @@ READ_ONLY / PLAN / MUTATE / REVIEW / MERGE / DEPLOY
 2. Session B 同时申请 writer；
 3. B 必须失败或只读降级；
 4. B 的 edit/write/mutating bash 被阻止；
-5. A 正常释放后 B 才能获取。
+5. A 正常释放后 B 才能获取；
+6. A、B 的 lease generation 不同，A 的旧 heartbeat/release 无法影响 B 的新 generation。
 
 不能用单进程顺序 mock 替代并发证明。
 
@@ -153,8 +154,8 @@ READ_ONLY / PLAN / MUTATE / REVIEW / MERGE / DEPLOY
 - 不存在 PID + heartbeat 未超时：默认禁止自动抢占；
 - 不存在 PID + 超时：要求显式 takeover；
 - owner 不可验证：fail-closed 或人工确认；
-- Session shutdown 只释放自己拥有的 lease；
-- 非 owner 无法删除或刷新 lease；
+- Session shutdown 只释放 owner + generation 均匹配的 lease；
+- 非 owner 或旧 generation 无法删除、刷新或 takeover 新 lease；
 - 崩溃遗留 lease 可在规则满足后恢复。
 
 租约文件必须位于 Git 忽略目录。获取/刷新租约不得使 working tree 变脏。
@@ -172,7 +173,17 @@ B 必须在任何 commit/state edit 前被阻止。测试输出应明确显示�
 
 ## 11. Scope 写入阻断
 
-在 active Gate fixture 中分别调用 edit/write：
+无 writer lease 时必须先证明：
+
+```text
+all model-facing bash blocked
+edit/write/ast_edit and every discovered mutating tool blocked
+only dedicated read-only status/diff/verify tools remain active
+```
+
+Extension 必须根据 tool provenance/capability 建立 mutating tool 集；未知工具默认不得在 read-only Session 激活。不能只测试内置 edit/write。
+
+持有 writer lease 后，在 active Gate fixture 中分别调用 edit/write：
 
 - allowed path：可进入后续检查；
 - unmatched path：阻止；
@@ -181,7 +192,8 @@ B 必须在任何 commit/state edit 前被阻止。测试输出应明确显示�
 - symlink 指向 forbidden/root 外路径：阻止；
 - state JSON 无法解析：阻止；
 - Gate check 失败：阻止；
-- 无 writer lease：阻止。
+- 无 writer lease：阻止；
+- development-state 或 workflow-policy：通用工具始终阻止，必须走 typed adapter。
 
 路径判断必须基于规范化 real path，并与 Git root 绑定。
 
@@ -200,7 +212,31 @@ B 必须在任何 commit/state edit 前被阻止。测试输出应明确显示�
 | MERGE_AUTHORIZED | non-state change | 阻止 |
 | MERGED active=false | mutation | 仅显式新任务可启动，不继承旧授权 |
 
-## 13. Final Review 脏工作区回归
+## 13. Development-state 提权回归
+
+实现必须提供 old-state → proposed-state validator 的真实文件/Git topology 测试。至少拒绝：
+
+- `IMPLEMENTATION -> MERGE_AUTHORIZED` 非相邻跳转；
+- 普通 transition 扩大 `allowed_paths`；
+- 删除/缩小 `forbidden_paths`；
+- 扩大 `finalization_allowed_paths`；
+- 修改 slice/base/PR/candidate kind；
+- 填写不存在或非 ancestor candidate；
+- CI failed/pending 时进入 `MERGE_AUTHORIZED`；
+- dirty 或 Bundle stale 时进入 `FINAL_REVIEW`；
+- 非 post-merge main 上进入 `MERGED`；
+- 用通用 edit/write/bash 修改 state/policy。
+
+至少接受：
+
+- reviewed docs candidate 的 `GATE_DRAFT -> GATE_REVIEW`；
+- failed candidate 的 typed rollback `FINAL_REVIEW -> IMPLEMENTATION`，同时清空 fixed head 并记录 bounded reason；
+- exact-head CI、Review、human grant 都满足时的相邻授权转换；
+- 已核验 merge 后的 post-merge rebaseline。
+
+validator 写入必须原子；失败 fixture 证明 state bytes 保持不变。
+
+## 14. Final Review 脏工作区回归
 
 复现：
 
@@ -221,7 +257,7 @@ CI Gate check path used for Final Review
 
 不能再次出现普通 `check` 显示 pass 而 Agent 宣称 Final Review 就绪的情况。
 
-## 14. Failed CI 状态回归
+## 15. Failed CI 状态回归
 
 给定：
 
@@ -238,7 +274,7 @@ Control Plane 必须：
 - 生成回退至 IMPLEMENTATION/修复流程的 Prompt；
 - 不把其他 green job 抵消失败 job。
 
-## 15. Candidate/control 完整性
+## 16. Candidate/control 完整性
 
 测试 executable 与 docs-only 两类：
 
@@ -250,7 +286,7 @@ Control Plane 必须：
 - Review Bundle 与旧 state/head 对应：失败；
 - working tree diff 必须独立记录。
 
-## 16. Acceptance 弱化检测
+## 17. Acceptance 弱化检测
 
 使用本次测试修改作为 fixture：
 
@@ -266,9 +302,11 @@ Control Plane 不需要通用理解所有测试语义，但必须至少做到：
 - diff/evidence 中 test changes 不得被隐藏；
 - Agent 不得仅因新测试 green 就自动消除 Review finding。
 
-## 17. Roadmap predecessor
+## 18. Roadmap predecessor
 
-构造：
+实现必须提交受保护的 `.easyaudit/workflow-policy.json`，并由 schema/静态测试证明 M6-Ops 的 predecessor 包含 M6.1b。普通 milestone state/Scope 不得修改该文件。
+
+构造真实临时 Git topology：
 
 ```text
 A -> B -> C
@@ -277,11 +315,19 @@ B incomplete
 请求启动 C implementation
 ```
 
-`/ea-next` 与每轮 PLAN/MUTATE preflight 必须报告 B 未完成，并拒绝生成可执行 C 的指令。
+`/ea-next` 与每轮 PLAN/MUTATE preflight 必须从 policy 获取 B，扫描受信 main history，验证 B 的 completion commit 内容为 `slice=B, phase=MERGED, active=false`，并证明该 commit 是 C 的 base/HEAD 祖先；否则拒绝生成可执行 C 的指令。
 
-以真实路线验证：M6.1b 未完成时不得批准 M6-Ops Final Review/merge。
+负面测试包括：
 
-## 18. 外部声明核验
+- Roadmap 文字写 Completed 但 Git 无 completion；
+- state 自填伪造 completion SHA；
+- completion commit 存在但不是 base ancestor；
+- completion 在未受信远端/侧枝；
+- policy 缺失、无效或被当前普通 Slice 修改。
+
+以真实路线验证：M6.1b 未完成时不得批准 M6-Ops PLAN/MUTATE/Final Review/merge；M6.1b post-merge completion 成为 rebaselined base 祖先后才通过。
+
+## 19. 外部声明与 required CI 核验
 
 输入伪造的：
 
@@ -295,7 +341,16 @@ main HEAD
 
 `/ea-verify` 必须通过 Git/GitHub 重新读取并报告差异，不得回显为已验证事实。
 
-离线或 GitHub 不可用时结果必须是：
+required-check set 必须来自 GitHub branch protection/ruleset，或受保护的 `.easyaudit/workflow-policy.json` 精确 contract。测试必须证明：
+
+- contract 精确列出当前 required job names；
+- job names 能在唯一 `.github/workflows/ci.yml` 中找到；
+- 普通产品 Slice 不能同时改 contract 为自己放行；
+- required set 为空、缺 job、pending、failed、cancelled、意外 skipped 或 SHA 不一致均 NO-GO；
+- 非 required job green 不能抵消 required failure；
+- branch protection/ruleset API 与 fallback contract 冲突时报告 drift，不自行选择较弱集合。
+
+离线、GitHub/ruleset/contract 不可用或 freshness 超时的结果必须是：
 
 ```text
 remote evidence unavailable/stale
@@ -303,7 +358,7 @@ remote evidence unavailable/stale
 
 而不是 pass。
 
-## 19. Connector 降级
+## 20. Connector 降级
 
 模拟网页 GitHub Connector 的 Draft → Ready mutation 失败：
 
@@ -312,9 +367,26 @@ remote evidence unavailable/stale
 - phase 与授权不因 Connector 失败自动改变；
 - 非 MERGE_AUTHORIZED 时 `gh pr merge` 被阻止；
 - required CI 未绿时 merge 被阻止；
-- 缺少人类当前授权时 merge 被阻止。
+- 缺少人类当前一次性授权能力时 merge 被阻止。
 
-## 20. Expected-head merge
+Connector、网页 ChatGPT、C2C 文本和历史消息都不得 mint 人类授权能力。
+
+## 21. Turn-scoped human authorization
+
+使用 Extension UI harness 验证：
+
+- challenge 显示 exact action、repo、PR/environment、head/release 与随机 nonce；
+- 当前人类确认后只允许绑定动作执行一次；
+- 成功、失败、取消、超时、turn end 后能力失效；
+- head/environment 在确认前后漂移时拒绝并要求重新确认；
+- Agent 文本、state 字段、历史“已授权”、网页 ChatGPT 返回和 extension-injected message 无法 mint；
+- `/new`、`/resume`、`/fork`、`/clone`、`/reload`、compaction、重启不继承；
+- TUI/RPC 无真实 UI responder、JSON/print 模式一律拒绝；
+- grant 不写入 session/state/磁盘/日志。
+
+优先用单一 `ea_authorized_merge/deploy` 调用内的 challenge + reverify + action，测试不得暴露可复用 bearer token。
+
+## 22. Expected-head merge
 
 在临时 GitHub adapter/harness 中验证：
 
@@ -322,13 +394,17 @@ remote evidence unavailable/stale
 - expected head 已漂移：阻止；
 - synthetic merge SHA 被当作 expected head：阻止；
 - merge 后必须核验 PR merged、main head、merge parent/tree 和 post-merge state；
-- 任一核验失败不得宣称闭环完成。
+- 任一核验失败不得宣称闭环完成；
+- 即使 phase/CI/head 均正确，没有未消费的当前 human grant 也不得进入 merge adapter；
+- action 结束后相同调用参数再次使用必须重新获得 human confirmation。
 
 真实 GitHub destructive merge 不要求在单元测试中执行。
 
-## 21. Bash 防护
+## 23. Bash 与独立执行面防护
 
-至少阻止或要求授权：
+无 writer lease 时，所有 model-facing bash 必须无条件阻止，不能通过 read-only 字符串启发式放行；read-only 诊断使用专用工具。
+
+有 writer lease 时，仅允许版本化 `ea_exec` command profiles，至少阻止或要求专用授权：
 
 ```text
 git reset --hard
@@ -339,11 +415,20 @@ docker compose against non-test environment
 deploy/restore/secret commands
 ```
 
-测试必须证明普通只读命令不被误阻止。
+测试必须证明专用 read-only status/diff/verify 工具可用，而不是要求通用 bash 保持开放。`ea_exec` 参数不得接受 `;`、重定向或任意 shell 拼接来逃逸 profile。
+
+分别验证：
+
+- model `bash` tool_call guard；
+- TUI `!cmd` 的 `user_bash` hook；
+- RPC direct bash capability negotiation；
+- JSON/print/non-UI mode。
+
+若某 host/runtime 无法证明 `!cmd`/RPC bash 受控，status 必须显示 `read-only-no-go`，mutation/transition/merge/deploy 全部拒绝。不得把 model tool_call 测试冒充所有执行面证明。
 
 文档和实现不得宣称 shell 字符串规则可以解析任意脚本语义；最终 diff/CI 仍是权威兜底。
 
-## 22. OMP 命令
+## 24. OMP 命令
 
 ### `/ea-status`
 
@@ -363,18 +448,29 @@ deploy/restore/secret commands
 
 ### `/ea-next`
 
-必须只生成下一合法状态动作的 Prompt，不修改 state、不发送 Prompt、不 merge。
+必须使用 machine workflow policy 和 verified predecessor completion，只生成下一合法状态动作的 Prompt，不修改 state、不发送 Prompt、不 merge。
 
-## 23. 非交互模式
+### `/ea-transition`
 
-Extension 在 TUI、RPC、JSON/print 或无 UI 场景中必须有确定的 fail-closed 行为：
+必须接受 typed transition intent，执行 old→proposed validator，并禁止调用者直接提供任意完整 state JSON。
+
+### `/ea-exec`
+
+必须只执行版本化 argv profiles；未知 profile/参数、shell 拼接和策略根写入拒绝。
+
+## 25. 非交互与 RPC 模式
+
+Extension 在 TUI、RPC、JSON/print 或无 UI 场景中必须先报告 runtime capability，并有确定的 fail-closed 行为：
 
 - 需要确认但无 UI 时，不得默认批准；
 - mutation/merge/deploy 返回 blocked；
 - read-only status 可输出结构化结果；
-- 不启动无法在 session shutdown 清理的后台资源。
+- 不启动无法在 session shutdown 清理的后台资源；
+- RPC direct bash 未被 host 禁用/guard 时，整个 RPC Session 只能 read-only；
+- TUI `!cmd` 未安装 `user_bash` guard 时，整个 TUI Session 只能 read-only；
+- mode protection 状态必须在 `/ea-status` 和 Widget 可见。
 
-## 24. Secret negative
+## 26. Secret negative
 
 将 unmistakable sentinel 放入：
 
@@ -388,7 +484,7 @@ lease metadata surrounding input
 
 Extension 日志、Widget、命令输出、测试快照和 Review Bundle 不得出现 sentinel 值。错误只输出 bounded class/reason。
 
-## 25. Resource discovery 与 trust
+## 27. Resource discovery 与 trust
 
 在受信项目中验证：
 
@@ -398,7 +494,7 @@ Extension 日志、Widget、命令输出、测试快照和 Review Bundle 不得�
 - guard 未加载/项目未信任时给出明显 NO-GO，而不是静默假装受保护；
 - 文档要求对精确仓库路径执行项目 trust，不建议全局 `always trust`。
 
-## 26. Extension 故障
+## 28. Extension 故障
 
 人为让 state parser、lease reader 或 Gate subprocess 抛错：
 
@@ -408,7 +504,7 @@ Extension 日志、Widget、命令输出、测试快照和 Review Bundle 不得�
 - 错误不泄漏 raw state/command Secret；
 - Extension 故障不会被解释为授权。
 
-## 27. CI 与静态检查
+## 29. CI 与静态检查
 
 Canonical CI 至少验证：
 
@@ -419,11 +515,25 @@ Canonical CI 至少验证：
 - scope/phase/tool-call guard matrix；
 - dirty Final Review 回归；
 - candidate/control matrix；
+- state transition privilege-escalation matrix；
+- workflow-policy schema、predecessor ancestry 和 required-check contract；
+- user_bash/RPC/non-interactive capability matrix；
+- one-shot human authorization lifecycle；
 - Gate tooling tests；
 - architecture check；
+- CI 修改范围精确为 `.github/workflows/ci.yml`，不使用 `.github/workflows/**`；
 - 未修改产品路径。
 
-## 28. Observe → Enforce 切换
+## 30. PR metadata drift
+
+每次 typed phase transition 后，专用 adapter 应更新 PR body 的 compact status section 并重新读取验证。测试必须证明：
+
+- body phase/head 与 state 一致时为 current；
+- Connector 更新失败或 body 仍旧时标记 metadata drift；
+- metadata drift 不改变 canonical state，但禁止把 PR body 当作授权或完成证据；
+- drift 可由 `gh` 降级修复并复核。
+
+## 31. Observe → Enforce 切换
 
 Implementation 可以先运行 observe 模式，但 Final candidate 必须证明：
 
@@ -433,7 +543,7 @@ default mode = enforce
 
 测试中 observe 模式只告警，enforce 模式实际阻止。生产使用说明不得让用户误以为 observe 已提供硬保护。
 
-## 29. 性能与稳定性
+## 32. 性能与稳定性
 
 每轮本地轻量 preflight 不应执行完整测试套件或无条件网络 fetch。
 
@@ -446,7 +556,7 @@ no-network preflight p95 < 2 s
 
 涉及 GitHub 的验证可有独立超时，并明确标记 freshness。超时不得阻塞 TUI 无限等待。
 
-## 30. Go / No-Go
+## 33. Go / No-Go
 
 ### Go
 
@@ -462,9 +572,12 @@ P2 = 0
 
 - 每轮动态控制快照有效；
 - 单 writer lease 并发测试通过；
-- scope/phase 写阻断通过；
+- scope/phase 写阻断与 state transition validator 通过；
+- 无 lease 的全部 model bash/mutating tool 阻断通过；
+- TUI user_bash/RPC/non-interactive capability contract 通过；
 - Final Review dirty-worktree 回归通过；
-- failed-CI 和 predecessor 回归通过；
+- failed-CI、authoritative required-check 和 machine predecessor 回归通过；
+- 一次性 current human authorization 生命周期通过；
 - Candidate/control/Bundle 检查通过；
 - Connector 降级不扩大权限；
 - Prompt 只推动一个状态转换；
@@ -480,9 +593,14 @@ P2 = 0
 - 仅依赖 AGENTS/Skill/Prompt，没有工具层阻断；
 - 仅依赖 Extension，没有 CI/Gate 兜底；
 - 两个 OMP Session 可同时写同一工作区；
+- 无 lease Session 仍能调用任意 model bash 或 mutating tool；
+- user_bash/RPC 未受控但模式仍宣称支持 mutation；
+- development-state/workflow-policy 可由通用工具自我提权；
 - Final Review 允许脏 executable 工作区；
 - failed CI 可进入 MERGE_AUTHORIZED；
-- Roadmap predecessor 可被跳过；
+- Roadmap predecessor 只靠 Markdown/Agent 解释或可被跳过；
+- required CI set 由 Agent 猜测、为空仍 pass 或与产品 Slice 一起自我改写；
+- 历史/Agent/state 能伪造或继承 human authorization；
 - Connector 故障会自动扩大权限；
 - 无 UI 确认被默认视为批准；
 - Candidate 固定后测试/代码可继续变化；
@@ -490,15 +608,19 @@ P2 = 0
 - lease、日志或输出泄漏 Secret；
 - 通过修改产品代码来实现 Agent 控制面。
 
-## 31. Gate Review 输出要求
+## 34. Gate Review 输出要求
 
 独立 Gate Review 必须明确回答：
 
-1. writer lease 是否能可靠处理多 Session、崩溃与 takeover；
-2. Extension 阻断与 Gate/CI 权威是否正确分层；
-3. bash 防护是否存在被误称为完整沙箱的过度声明；
-4. Final Review dirty-worktree 与 failed-CI 缺口是否被真正关闭；
-5. `/ea-next` 是否会跨 Roadmap predecessor；
-6. Connector 降级是否保持人类授权；
-7. implementation allowlist 是否足够窄；
-8. 是否存在任何产品、部署或 Secret 权限扩张。
+1. writer lease 的 owner + generation 是否能可靠处理多 Session、崩溃、ABA 与 takeover；
+2. development-state/workflow-policy 是否只能通过不可提权的 typed transition 修改；
+3. 无 lease 的全部 model bash/mutating tool 是否真正 fail-closed；
+4. TUI `!cmd`、RPC direct bash 与非交互模式是否被控制或明确降级为 read-only NO-GO；
+5. turn-scoped human grant 是否不可由 Agent/history/state 伪造或继承；
+6. machine predecessor policy 是否通过受信 main ancestry 阻止 M6.1b 跳过；
+7. required CI set 是否来自 branch ruleset 或独立版本化 exact contract；
+8. Extension 阻断与 Gate/CI 权威是否正确分层，是否存在完整沙箱的过度声明；
+9. Final Review dirty-worktree、failed-CI 与 assertion weakening 缺口是否被真正关闭；
+10. Connector 降级是否保持人类授权；
+11. implementation allowlist 是否足够窄；
+12. 是否存在任何产品、部署或 Secret 权限扩张。
