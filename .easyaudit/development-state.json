@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "process-omp-agent-control-plane-hardening",
-  "phase": "MERGE_AUTHORIZED",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
-    "sha": "8f923a64ade514e531c6de94a15029dc9a9ae136"
+    "sha": "889d041ef6eee6ce89a2dc5b1dbaba277601d802"
   },
-  "work_branch": "codex/process-omp-agent-control-plane-gate",
+  "work_branch": null,
   "pr": {
     "number": 43
   },
@@ -45,5 +45,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge PR #43 with expected-head protection only, then perform post-merge rebaseline; no policy seed, tooling implementation, product implementation, deployment, secret access or real traffic"
+  "next_allowed_action": "Await explicit authorization for the separate OMP Control Plane policy-seed slice; no policy seed, tooling implementation, product implementation, deployment, secret access or real traffic is currently authorized"
 }
