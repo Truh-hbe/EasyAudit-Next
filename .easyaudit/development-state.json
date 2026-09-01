@@ -1,49 +1,48 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
-  "slice": "process-omp-agent-control-plane-hardening",
-  "phase": "MERGED",
+  "slice": "process-omp-agent-control-plane-policy-seed",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
-    "sha": "889d041ef6eee6ce89a2dc5b1dbaba277601d802"
+    "sha": "9532433d73878adf73faef0c1b85c77376cba379"
   },
-  "work_branch": null,
+  "work_branch": "codex/process-omp-agent-control-plane-policy-seed",
   "pr": {
-    "number": 43
+    "number": 44
   },
   "gate_docs": [
     "docs/architecture/process-omp-agent-control-plane.md",
     "docs/architecture/process-omp-agent-control-plane-acceptance.md"
   ],
-  "candidate_kind": "docs-only",
+  "candidate_kind": "executable",
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      "docs/architecture/roadmap.md",
-      "docs/architecture/process-omp-agent-control-plane.md",
-      "docs/architecture/process-omp-agent-control-plane-acceptance.md"
+      ".easyaudit/workflow-policy.json"
     ],
     "forbidden_paths": [
       "AGENTS.md",
       ".omp/**",
-      "src/**",
-      "alembic/**",
       ".github/**",
-      "openapi/**",
-      "web/**",
+      "docs/**",
       "scripts/**",
       "tests/**",
+      "src/**",
+      "alembic/**",
+      "openapi/**",
+      "web/**",
       "Dockerfile*",
       "compose*",
       "deploy/**"
     ]
   },
-  "fixed_head": null,
-  "docs_review_head": "137f67ba456829701edfd5c289d996b82274eda8",
+  "fixed_head": "9a8344e38caebc4ac03c2445adef6a27c439c139",
+  "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Await explicit authorization for the separate OMP Control Plane policy-seed slice; no policy seed, tooling implementation, product implementation, deployment, secret access or real traffic is currently authorized"
+  "next_allowed_action": "Merge PR #44 with expected-head protection only, then perform post-merge rebaseline; no Control Plane implementation, product implementation, deployment, secret access or real traffic"
 }
