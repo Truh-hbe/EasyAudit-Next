@@ -82,10 +82,10 @@ Acceptance requires:
    - API service health probes respond with 200 OK.
    - Synthetic browser / E2E journey executes against the restored target over HTTPS, verifying successful authentication, workbench list querying, and Case detail viewing.
 4. **Multi-Tenant Isolation & Resource Authorization Invariants**:
-   Restored database facts must maintain exact existing authorization semantics:
-   - `Org A user -> Org B Case`: Strictly **DENY** (`403 Forbidden`).
-   - `Same-Org user with zero resource relationships` (no `CaseMember`, `FindingParticipant(DepartmentActor)` department grant, `ActionAssignee`, or `responsible_department` relation): Strictly **DENY** (`403 Forbidden`).
-   - `Same-Org user with lawful resource relationship` (`CaseMember` or lawful `responsible_department` finding participant grant per `process_review@1` ScenarioPolicy): **ALLOW** (`200 OK`).
+   Restored database facts must maintain exact existing authorization semantics without redefining authorization policy:
+   - `Cross-Organization`: `Org A user -> Org B Case`: Strictly **DENY without resource disclosure** (`GET /api/v1/review-cases/{case_id}` => `404 Not Found`, preventing cross-tenant existence disclosure).
+   - `Same-Organization without Resource Relationship`: `Same-Org user with zero resource relationships` (no `CaseMember`, `FindingParticipant(DepartmentActor)` department grant, `ActionAssignee`, or `responsible_department` relation): Strictly **DENY** (`403 Forbidden`).
+   - `Same-Organization with Lawful Relationship`: `Same-Org user with lawful resource relationship` (`CaseMember` or lawful `responsible_department` finding participant grant per `process_review@1` ScenarioPolicy): **ALLOW** (`200 OK`).
 
 ## 5. Controlled Rollback Qualification Acceptance
 

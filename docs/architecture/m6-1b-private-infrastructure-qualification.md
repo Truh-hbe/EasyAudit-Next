@@ -123,7 +123,7 @@ Restoration qualification proves that the system can be fully recovered onto a c
 
 4. **Multi-Tenant Isolation & Resource Authorization Invariants**:
    Restored database facts must strictly preserve existing Review Core authorization semantics and multi-tenant isolation without redefining authorization policies:
-   - **Cross-Organization Boundary**: A user in Organization A attempting to read/access a Case belonging to Organization B is strictly **DENIED** (`403 Forbidden`).
+   - **Cross-Organization Boundary**: A user in Organization A attempting to read/access a Case belonging to Organization B is strictly **DENIED without resource existence disclosure** (`GET /api/v1/review-cases/{case_id}` => `404 Not Found`, preventing cross-tenant existence disclosure).
    - **Intra-Organization without Resource Relationship**: A user within the same Organization who has no resource relationship (`CaseMember`, `FindingParticipant(DepartmentActor)` department grant, `ActionAssignee`, or `responsible_department` membership) is strictly **DENIED** (`403 Forbidden`).
    - **Intra-Organization with Lawful Relationship**: A user within the Organization with a valid resource relationship (`CaseMember` assignment or lawful `responsible_department` finding participant grant per `process_review@1` ScenarioPolicy) is **ALLOWED** (`200 OK`).
 
