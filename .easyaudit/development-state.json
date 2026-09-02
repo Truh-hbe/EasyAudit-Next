@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "active": true,
+  "active": false,
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "process-omp-agent-control-plane-implementation",
-  "phase": "MERGE_AUTHORIZED",
+  "phase": "MERGED",
   "base": {
     "branch": "main",
-    "sha": "edce3ae414abc39c20fca5798a891a51be0b1935"
+    "sha": "1780244f551adf5718b0a45c9e6033c9f6018456"
   },
-  "work_branch": "codex/process-omp-agent-control-plane-implementation",
+  "work_branch": null,
   "pr": {
     "number": 45
   },
@@ -48,5 +48,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Merge candidate fd88894d9747157cf92d4aafda9536baac6bd445 into main upon human maintainer authorization"
+  "next_allowed_action": "Await explicit authorization for the next milestone or slice; no tooling implementation, product implementation, deployment, secret access or real traffic is currently authorized"
 }
