@@ -30,7 +30,7 @@
     ]
   },
   "fixed_head": null,
-  "docs_review_head": "5759146f2de6fa51d640d3db672f6fbb71dc3d86",
+  "docs_review_head": "069277c33943330050ac1e60b36dd8d4ab82ebc9",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
