@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
   "slice": "process-omp-agent-control-plane-implementation",
-  "phase": "FINAL_REVIEW",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
     "sha": "edce3ae414abc39c20fca5798a891a51be0b1935"
@@ -48,5 +48,5 @@
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Implement and verify the reviewed OMP Agent Control Plane only; workflow policy is immutable and no merge, M6.1b, M6-Ops, deployment, secret access or real traffic is authorized"
+  "next_allowed_action": "Merge candidate fd88894d9747157cf92d4aafda9536baac6bd445 into main upon human maintainer authorization"
 }
