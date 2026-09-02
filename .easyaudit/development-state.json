@@ -4,7 +4,7 @@
   "project": "EasyAudit-Next",
   "milestone": "M6.1b",
   "slice": "m6-1b-private-infrastructure-qualification-gate",
-  "phase": "GATE_DRAFT",
+  "phase": "GATE_REVIEW",
   "base": {
     "branch": "main",
     "sha": "c989629b32cb115f84ec869852af9356ea4877a1"
@@ -30,7 +30,7 @@
     ]
   },
   "fixed_head": null,
-  "docs_review_head": null,
+  "docs_review_head": "80a607aa33b69689726f1d1cff6b97b34b15e9d9",
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
