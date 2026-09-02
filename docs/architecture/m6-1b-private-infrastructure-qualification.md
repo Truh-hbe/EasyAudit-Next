@@ -36,13 +36,14 @@ M6.1b owns:
 - Single entrypoint HTTPS gateway reverse proxy binding exclusively to an approved private/VPN address.
 - Negative public-exposure verification proving no internal service (FastAPI, PostgreSQL 17, MinIO S3 object storage) publishes host ports.
 - Joint PostgreSQL and object storage recovery cut execution within an atomic/bounded window.
-- Separate backup failure domain storage isolation.
+- Operational qualification of genuine failure domain separation for backup artifacts.
 - Fresh deployment from disposable empty volumes.
-- Clean target restoration and verification against expected Alembic migration head.
+- Clean target restoration adhering strictly to the frozen M6.1a restore sequence (`postgres -> object_fixture -> application -> gateway`).
+- Alembic migration head readiness verification.
 - Layered post-restore readiness checks: HTTP health probes and synthetic browser journey.
-- Post-restore cross-tenant read negative test ensuring department isolation.
+- Restored resource authorization preservation and multi-tenant isolation negative verification.
 - Controlled rollback rehearsal to an immutable known-good release without restoring the database.
-- Real RPO / RTO duration measurement and arithmetic contract validation.
+- Real RPO / RTO duration measurement and authoritative arithmetic contract validation.
 - Automated infrastructure qualification test suite and qualification script under `deploy/m6-1/` and `tests/infrastructure/`.
 
 M6.1b explicitly does **not** own:
@@ -79,7 +80,7 @@ approved private / VPN network interface
 2. **No Port Leakage**: FastAPI (`8000`), PostgreSQL (`5432`), and S3-compatible object storage (`9000`, `9001`) run on internal container networks only and must not publish host ports.
 3. **Provider-Neutral Runtime**: The substrate configuration is containerized and provider-neutral, operating identically on local Docker Compose or private cloud container hosts.
 
-## Joint Recovery Cut Contract
+## Joint Recovery Cut & Genuine Failure Domain Separation
 
 A valid joint recovery cut must satisfy the M6.1a contract:
 
@@ -93,7 +94,14 @@ A valid joint recovery cut must satisfy the M6.1a contract:
      <= object_root.captured_at
      <= recovery_set_cut_completed
    ```
-2. **Failure Domain Separation**: The backup artifact target location must be distinctly separate from primary application volume mounts.
+
+2. **Genuine Failure Domain Separation (Operational Qualification)**:
+   - The backup storage destination and primary runtime storage must reside on genuinely independent physical/operational failure domains.
+   - Merely configuring different directory paths, different volume names, or distinct Docker volume mounts on the same physical disk or single-host substrate is explicitly **insufficient** and rejected as a false positive.
+   - Genuine separation requires distinct fault domains (e.g. independent physical disks/host storage subsystems, dedicated block storage devices, isolated disaster-recovery managed storage domains, or remote object storage fault domains).
+   - Evidence records preserve provider-neutral, sanitized metadata (e.g. opaque `failure_domain_ref`, `substrate_class`, sanitized qualification proof identifiers) without exposing plaintext credentials, private IPs, or internal topology secrets.
+   - Both PostgreSQL database backups and S3 object storage fixtures must satisfy this fault domain separation.
+
 3. **Release Set Parity**: The `recovery-set.json` must exactly match the release digests, configuration revision, and schema head declared in `release-manifest.json`.
 4. **Integrity Hashing**: Canonical SHA-256 hashes must be recomputed and match the contract schemas.
 
@@ -102,14 +110,22 @@ A valid joint recovery cut must satisfy the M6.1a contract:
 Restoration qualification proves that the system can be fully recovered onto a clean, distinct target from backup artifacts:
 
 1. **Empty Volume Provisioning**: Target database and object storage volumes start completely empty.
-2. **Restore Execution Order**:
-   - Restore object storage bucket content from the joint cut.
-   - Restore PostgreSQL relational dump from the joint cut.
-3. **Schema Verification**: Verify the restored database matches the exact expected Alembic revision head.
-4. **Layered Readiness Probes**:
+2. **Restore Execution Sequence (Strict M6.1a Parity)**:
+   The restore sequence must strictly adhere to the frozen M6.1a contract (`postgres -> object_fixture -> application -> gateway`):
+   - `postgres`: Restore PostgreSQL relational database dump into the clean target database.
+   - `object_fixture`: Restore S3 object storage bucket fixtures and verify content root hashes.
+   - `application`: Verify that the restored PostgreSQL schema matches the exact expected Alembic revision head, then start the FastAPI application service.
+   - `gateway`: Enable and route the HTTPS reverse proxy gateway to the restored application service.
+
+3. **Layered Readiness Probes**:
    - HTTP health probe on the API service (`/health` or `/api/v1/cases`).
-   - Browser / Playwright automated verification against the HTTPS gateway confirming login, workbench queries, and case navigation succeed against restored data.
-5. **Multi-Tenant Isolation Invariant**: Verification that restored synthetic data across distinct organizations/departments remains inaccessible across tenant boundaries.
+   - Browser / Playwright automated verification against the HTTPS gateway confirming login, workbench queries, and Case detail viewing succeed against restored data.
+
+4. **Multi-Tenant Isolation & Resource Authorization Invariants**:
+   Restored database facts must strictly preserve existing Review Core authorization semantics and multi-tenant isolation without redefining authorization policies:
+   - **Cross-Organization Boundary**: A user in Organization A attempting to read/access a Case belonging to Organization B is strictly **DENIED** (`403 Forbidden`).
+   - **Intra-Organization without Resource Relationship**: A user within the same Organization who has no resource relationship (`CaseMember`, `FindingParticipant(DepartmentActor)` department grant, `ActionAssignee`, or `responsible_department` membership) is strictly **DENIED** (`403 Forbidden`).
+   - **Intra-Organization with Lawful Relationship**: A user within the Organization with a valid resource relationship (`CaseMember` assignment or lawful `responsible_department` finding participant grant per `process_review@1` ScenarioPolicy) is **ALLOWED** (`200 OK`).
 
 ## Controlled Rollback Qualification
 

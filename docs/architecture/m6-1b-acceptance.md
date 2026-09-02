@@ -58,7 +58,10 @@ Acceptance requires:
 1. **Inclusive Joint Cut Window**:
    - Execution of a real joint backup cut producing `release-manifest.json` and `recovery-set.json`.
    - `postgres_backup.completed_at` and `object_root.captured_at` fall strictly within `[cut_started_at, recovery_set_cut_completed]`.
-2. **Failure Domain Separation**: Backup artifacts are stored in an isolated failure domain distinct from primary volume storage.
+2. **Genuine Failure Domain Separation (Operational Qualification)**:
+   - Backup artifacts (both PostgreSQL backup and S3 object fixtures) must be stored in a genuinely separate operational failure domain distinct from primary volume storage.
+   - Distinct failure domains require separate underlying storage infrastructure (e.g., independent physical disks/host storage subsystems, dedicated block storage devices, or remote object storage fault domains), and not merely distinct directories or different Docker volume names on the same physical host disk.
+   - Review artifacts record leak-safe sanitized metadata and references (`failure_domain_ref`, `substrate_class`) without leaking plaintext credentials, private IPs, or secrets.
 3. **Detached Signature and Integrity**:
    - Manifest SHA-256 is recomputed and verified against committed schemas.
    - Detached signature reference is recorded.
@@ -69,14 +72,20 @@ Acceptance requires:
 Acceptance requires:
 
 1. **Empty Volume Target**: Restoration executes against a fresh, completely empty target volume set.
-2. **Restore Order**:
-   - S3 object storage state restored first;
-   - PostgreSQL relational backup restored second.
-3. **Migration Head Validation**: Restored database is verified against the expected Alembic revision head.
-4. **Layered Readiness Verification**:
+2. **Restore Order (Strict M6.1a Contract Parity)**:
+   The restore procedure must execute strictly in the order frozen by the M6.1a contract (`postgres -> object_fixture -> application -> gateway`):
+   - `postgres`: PostgreSQL relational backup restored into target database;
+   - `object_fixture`: S3 object storage state/fixture restored;
+   - `application`: Database schema validated against expected Alembic migration revision head, and application service started;
+   - `gateway`: HTTPS reverse proxy gateway routed and enabled.
+3. **Layered Readiness Verification**:
    - API service health probes respond with 200 OK.
    - Synthetic browser / E2E journey executes against the restored target over HTTPS, verifying successful authentication, workbench list querying, and Case detail viewing.
-5. **Multi-Tenant Isolation Invariant**: Restored synthetic multi-department data is verified to maintain strict department isolation (users cannot access cross-department Cases).
+4. **Multi-Tenant Isolation & Resource Authorization Invariants**:
+   Restored database facts must maintain exact existing authorization semantics:
+   - `Org A user -> Org B Case`: Strictly **DENY** (`403 Forbidden`).
+   - `Same-Org user with zero resource relationships` (no `CaseMember`, `FindingParticipant(DepartmentActor)` department grant, `ActionAssignee`, or `responsible_department` relation): Strictly **DENY** (`403 Forbidden`).
+   - `Same-Org user with lawful resource relationship` (`CaseMember` or lawful `responsible_department` finding participant grant per `process_review@1` ScenarioPolicy): **ALLOW** (`200 OK`).
 
 ## 5. Controlled Rollback Qualification Acceptance
 
