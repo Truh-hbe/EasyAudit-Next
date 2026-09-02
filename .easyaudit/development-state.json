@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "active": false,
+  "active": true,
   "project": "EasyAudit-Next",
   "milestone": "PROCESS",
-  "slice": "process-omp-agent-control-plane-policy-seed",
-  "phase": "MERGED",
+  "slice": "process-omp-agent-control-plane-implementation",
+  "phase": "MERGE_AUTHORIZED",
   "base": {
     "branch": "main",
-    "sha": "7a300581f9e36990fb4d5955ba8110143624271e"
+    "sha": "edce3ae414abc39c20fca5798a891a51be0b1935"
   },
-  "work_branch": null,
+  "work_branch": "codex/process-omp-agent-control-plane-implementation",
   "pr": {
-    "number": 44
+    "number": 45
   },
   "gate_docs": [
     "docs/architecture/process-omp-agent-control-plane.md",
@@ -21,15 +21,19 @@
   "scope": {
     "allowed_paths": [
       ".easyaudit/development-state.json",
-      ".easyaudit/workflow-policy.json"
+      "AGENTS.md",
+      ".omp/skills/easyaudit-control-plane/**",
+      ".omp/prompts/**",
+      ".omp/extensions/easyaudit-guard/**",
+      ".gitignore",
+      "scripts/easyaudit_agent.py",
+      "scripts/easyaudit_gate.py",
+      "tests/tooling/**",
+      ".github/workflows/ci.yml",
+      "docs/architecture/agent-development-workflow.md"
     ],
     "forbidden_paths": [
-      "AGENTS.md",
-      ".omp/**",
-      ".github/**",
-      "docs/**",
-      "scripts/**",
-      "tests/**",
+      ".easyaudit/workflow-policy.json",
       "src/**",
       "alembic/**",
       "openapi/**",
@@ -39,10 +43,10 @@
       "deploy/**"
     ]
   },
-  "fixed_head": "9a8344e38caebc4ac03c2445adef6a27c439c139",
+  "fixed_head": "fd88894d9747157cf92d4aafda9536baac6bd445",
   "docs_review_head": null,
   "finalization_allowed_paths": [
     ".easyaudit/development-state.json"
   ],
-  "next_allowed_action": "Await explicit authorization for the separate OMP Control Plane implementation slice; no tooling implementation, product implementation, deployment, secret access or real traffic is currently authorized"
+  "next_allowed_action": "Merge candidate fd88894d9747157cf92d4aafda9536baac6bd445 into main upon human maintainer authorization"
 }

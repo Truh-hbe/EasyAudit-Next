@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.getenv("EASYAUDIT_REPO_ROOT", Path(__file__).resolve().parents[1])).resolve()
 DEFAULT_STATE = ROOT / ".easyaudit" / "development-state.json"
 DEFAULT_OUTPUT = ROOT / ".easyaudit-review"
 DEFAULT_FINALIZATION_ALLOWED_PATHS = [".easyaudit/development-state.json"]
@@ -36,6 +36,11 @@ VALID_PHASES = {
 }
 VALID_CANDIDATE_KINDS = {"executable", "docs-only"}
 DOCS_ONLY_STATE_PATH = ".easyaudit/development-state.json"
+WORKFLOW_POLICY_PATH = ".easyaudit/workflow-policy.json"
+EXPECTED_WORKFLOW_POLICY_HASH = (
+    "31e7c9d4aa8b9f61c20b1d95b85f948ceb919d1d91938c80c5b2006748780857"
+)
+POLICY_SEED_SLICE = "process-omp-agent-control-plane-policy-seed"
 
 
 class GateError(RuntimeError):
@@ -187,6 +192,70 @@ def _matches(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+def _load_workflow_policy() -> tuple[dict[str, Any] | None, str | None]:
+    path = ROOT / WORKFLOW_POLICY_PATH
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(value, dict):
+        return None, None
+    canonical = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return value, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _trusted_main_ref() -> str | None:
+    for ref in ("refs/remotes/origin/main", "refs/heads/main"):
+        completed = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", ref],
+            cwd=ROOT,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return ref
+    return None
+
+
+def _completion_commit(slice_name: str, trusted_main: str) -> str | None:
+    try:
+        commits = _git(
+            "log",
+            "--format=%H",
+            trusted_main,
+            "--",
+            DOCS_ONLY_STATE_PATH,
+        )
+    except GateError:
+        return None
+    for commit in commits.splitlines():
+        completed = subprocess.run(
+            ["git", "show", f"{commit}:{DOCS_ONLY_STATE_PATH}"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            continue
+        try:
+            state = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(state, dict)
+            and state.get("slice") == slice_name
+            and state.get("phase") == "MERGED"
+            and state.get("active") is False
+        ):
+            return commit
+    return None
+
+
 def _docs_only_path_allowed(path: str) -> bool:
     return path == DOCS_ONLY_STATE_PATH or path.startswith("docs/")
 
@@ -262,6 +331,66 @@ def _evaluate_scope(
     finalization_changed_files: list[str] = []
     finalization_outside_allowed: list[str] = []
     docs_only_scope_violations: list[str] = []
+    policy_violations: list[str] = []
+    predecessor_evidence: list[dict[str, Any]] = []
+
+    policy_is_present_or_changed = (
+        (ROOT / WORKFLOW_POLICY_PATH).is_file()
+        or WORKFLOW_POLICY_PATH in control_changed_files
+    )
+    if state.get("active") is True and policy_is_present_or_changed:
+        policy, policy_hash = _load_workflow_policy()
+        if policy is None or policy_hash != EXPECTED_WORKFLOW_POLICY_HASH:
+            policy_violations.append("trusted workflow policy is missing or has the wrong hash")
+        else:
+            current_slice = str(state.get("slice") or "")
+            if current_slice != POLICY_SEED_SLICE:
+                if WORKFLOW_POLICY_PATH in control_changed_files:
+                    policy_violations.append(
+                        "workflow policy changed outside the separate policy-seed slice"
+                    )
+                if any(_matches(WORKFLOW_POLICY_PATH, [pattern]) for pattern in allowed):
+                    policy_violations.append(
+                        "ordinary active scope must not allow workflow-policy changes"
+                    )
+            configured = policy.get("slice_predecessors") or {}
+            predecessors = (
+                configured.get(current_slice, []) if isinstance(configured, dict) else []
+            )
+            if not isinstance(predecessors, list):
+                policy_violations.append("workflow predecessor contract is invalid")
+            elif predecessors:
+                trusted_main = _trusted_main_ref()
+                base_sha = str((state.get("base") or {}).get("sha") or "")
+                if trusted_main is None:
+                    policy_violations.append("trusted main ref is unavailable")
+                else:
+                    for predecessor in predecessors:
+                        if not isinstance(predecessor, str):
+                            policy_violations.append("workflow predecessor name is invalid")
+                            continue
+                        completion = _completion_commit(predecessor, trusted_main)
+                        base_ancestor = bool(
+                            completion and base_sha and _git_is_ancestor(completion, base_sha)
+                        )
+                        head_ancestor = bool(
+                            completion and _git_is_ancestor(completion, control_head)
+                        )
+                        passed = bool(completion and base_ancestor and head_ancestor)
+                        predecessor_evidence.append(
+                            {
+                                "slice": predecessor,
+                                "completion_commit": completion,
+                                "base_ancestor": base_ancestor,
+                                "head_ancestor": head_ancestor,
+                                "pass": passed,
+                            }
+                        )
+                        if not passed:
+                            policy_violations.append(
+                                "required predecessor is not completed in base/main ancestry: "
+                                + predecessor
+                            )
 
     if candidate_kind == "docs-only":
         if fixed_head not in (None, ""):
@@ -454,6 +583,9 @@ def _evaluate_scope(
             f"candidate branch does not match work_branch {expected_branch!r}; "
             f"checkout={evidence.branch!r}, pr_head={github_context.get('pr_head_ref')!r}"
         )
+    if phase in {"FINAL_REVIEW", "MERGE_AUTHORIZED"} and not evidence.working_tree_clean:
+        violations.append(f"{phase} requires a clean working tree")
+    violations.extend(policy_violations)
 
     return {
         "candidate_kind": candidate_kind,
@@ -463,6 +595,8 @@ def _evaluate_scope(
         "outside_allowed": outside_allowed,
         "control_changed_files": control_changed_files,
         "docs_only_scope_violations": docs_only_scope_violations,
+        "policy_violations": policy_violations,
+        "predecessor_evidence": predecessor_evidence,
         "missing_gate_docs": missing_gate_docs,
         "fixed_head_matches": fixed_head_matches,
         "fixed_head": fixed_head,
