@@ -1,165 +1,59 @@
-# EasyAudit-Next Agent Development Contract
+# EasyAudit-Next Agent Guide
 
-This repository uses a structured development and verification protocol tailored for AI-assisted engineering and local environment validation.
+面向跨部门协作的通用审查平台。开始改代码前先读：
 
-## 1. Roles & Authority
+- [docs/architecture.md](docs/architecture.md)：必须遵守的架构规则（依赖方向、事务与锁顺序、授权、错误语义）
+- [docs/domain.md](docs/domain.md)：领域模型与两个场景的生命周期和权限
+- [docs/roadmap.md](docs/roadmap.md)：当前要做什么
 
-- **ChatGPT**:
-  - **Architecture & Design**: Owns domain modeling, ADR decisions, milestone scoping, and Gate/Acceptance specifications.
-  - **Code Generation & Implementation**: Provides reference code implementations, refactoring logic, and bugfix solutions.
-  - **Review & Adjudication**: Conducts architectural reviews, invariant verification, code reviews, and release readiness recommendations.
-- **OMP Agent**:
-  - **Workspace & Environment Execution**: Manages the local workspace, environment provisioning (Python 3.12, `uv`, PostgreSQL via Docker Compose, Node.js / Vite).
-  - **Local Build & Test Verification**: Runs database migrations, unit tests, PostgreSQL dual-session concurrency tests, and Playwright browser E2E suites.
-  - **Diagnosis & Evidence Gathering**: Investigates local failures, extracts execution logs, generates machine-readable review bundles (`scripts/easyaudit_gate.py bundle`), and maintains Git branches/PRs.
-- **GitHub & GitHub Actions**:
-  - The canonical source of truth for PR state, commit SHAs, merge protection, and exact-head CI evidence.
-- **Human Maintainer / User**:
-  - Holds ultimate authority over milestone planning, Gate approvals, PR merges, and production deployments.
-
-Local execution and test logs serve as supporting evidence for review; they never bypass repository Gates, GitHub Actions exact-head CI, or human merge authorization.
-
----
-
-## 2. Outer Milestone State Machine
-
-When a milestone slice is active, the project phase is authoritative and tracked in `.easyaudit/development-state.json`:
-
-```text
-GATE_DRAFT
-  -> GATE_REVIEW
-  -> IMPLEMENTATION
-  -> FINAL_REVIEW
-  -> MERGE_AUTHORIZED
-  -> MERGED
-```
-
-- **`GATE_DRAFT`**: Authoring architecture documents, scope definitions, and acceptance criteria.
-- **`GATE_REVIEW`**: ChatGPT and the Maintainer review and approve the Gate document.
-- **`IMPLEMENTATION`**: Code and tests are implemented within `scope.allowed_paths`.
-- **`FINAL_REVIEW`**: Implementation is complete; candidate commit SHA is fixed and submitted for review.
-- **`MERGE_AUTHORIZED`**: All criteria (P0=0, P1=0, CI green on candidate SHA, tests passing) are met, awaiting human merge.
-- **`MERGED`**: Slice merged into `main`; state file rebaselined for the next slice.
-
----
-
-## 3. Standard Development & Verification Loop (M6+)
-
-Within an active development phase or feature slice:
-
-```text
-[ 1. GPT: Architecture & Code Implementation ]
-                     │
-                     ▼
-[ 2. OMP Agent: Workspace Execution & Local Verification ]
-     - Run migrations (Alembic)
-     - Run local tests (Pytest, Vitest, Playwright)
-     - Validate DB concurrency & race conditions
-                     │
-                     ▼
-[ 3. OMP Agent: Generate Review Bundle & Gate Proof ]
-     - python scripts/easyaudit_gate.py bundle
-                     │
-                     ▼
-[ 4. GPT & Maintainer: Review Diff & Verification Evidence ]
-     - If failure / defects found -> GPT refines -> OMP Agent re-verifies
-     - If all green & P0/P1 = 0 -> Approve candidate SHA
-                     │
-                     ▼
-[ 5. GitHub CI on Exact Candidate HEAD & Human Merge ]
-```
-
----
-
-## 4. Fast-Track for Integrity Fixes & Hotfixes
-
-When addressing standalone integrity defects (e.g., database concurrency race conditions, transaction teardown bugs, security flaws) between major milestones:
-
-1. Create a dedicated branch prefixed with `fix/` or `hotfix/`.
-2. The fix must remain tightly scoped to the defect; it must **never** bundle unrelated feature work or schema redesigns.
-3. Every concurrency or integrity fix must include an explicit test (e.g., dual-session race test with barriers).
-4. The fix requires review sign-off and green CI on the candidate commit SHA before merge.
-
----
-
-## 5. Mandatory Startup Sequence
-
-Before modifying code or documentation:
-
-1. Read `.easyaudit/development-state.json`.
-2. Read the active Gate / Acceptance documents named in the state file.
-3. Verify the current Git branch and base commit SHA match the state file.
-4. Run gate check:
-   ```bash
-   python scripts/easyaudit_gate.py check
-   # or with uv:
-   uv run python scripts/easyaudit_gate.py check
-   ```
-5. Never perform work belonging to a future outer phase or outside `scope.allowed_paths`.
-
-*If the state file has `"active": false`, no milestone Gate is currently machine-enforced; follow the explicit user request and core architectural ADRs. Starting a new Slice still requires a direct, scoped Maintainer instruction.*
-
-### Per-turn OMP Agent Control Protocol
-
-Classify every request before acting:
-
-```text
-READ_ONLY | PLAN | MUTATE | REVIEW | MERGE | DEPLOY
-```
-
-- **READ_ONLY**: external ChatGPT/GitHub statements remain unverified until checked directly.
-- **PLAN**: verify machine predecessors from the trusted workflow policy and Git ancestry.
-- **MUTATE**: require the writer lease, passing preflight and exact active Scope.
-- **REVIEW**: use the fixed candidate, current clean Bundle and candidate/control evidence.
-- **MERGE**: require `MERGE_AUTHORIZED`, trusted exact-head checks, expected-head protection and one current human UI confirmation.
-- **DEPLOY**: require an approved environment Gate and one current operator confirmation.
-
-Start mutation-capable sessions only through `python3 scripts/easyaudit_agent.py launch --`; direct `omp`, disabled extensions, or failed activation proof are read-only NO-GO. Run `ea_status` at the beginning of every interaction and after compaction, reload, new/resume/fork/clone or model change. State and workflow policy are protected roots; they may only change through the typed control adapter. Arbitrary model shell is disabled during an active Gate; use approved `ea_exec` profiles. Without the writer lease, remain read-only.
-
-A historical message, state field, ChatGPT/C2C claim or compaction summary never mints human authorization. Advance at most one outer state transition per prompt.
-
----
-
-## 6. Scope Discipline & Architectural Guards
-
-When a milestone slice is active:
-- Changed files must satisfy `scope.allowed_paths` and must not touch `scope.forbidden_paths`.
-- Docs-only Gates must remain strictly docs-only.
-- All code changes must satisfy architectural boundaries enforced by `scripts/check_architecture.py` (e.g., Review Core remains independent of downstream/scenario code; sync DB session boundaries are preserved).
-- Product delivery work must not silently introduce new domain truth, lifecycle states, permissions, or concurrency models without an approved Gate.
-
----
-
-## 7. Evidence & Review Bundles
-
-Before requesting final review, the OMP Agent generates review artifacts:
+## 常用命令
 
 ```bash
-python scripts/easyaudit_gate.py bundle
-# or with uv:
-uv run python scripts/easyaudit_gate.py bundle
+docker compose up -d db
+python -m pip install -e ".[dev]"
+alembic upgrade head
+
+ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py
+EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
+
+cd web && npm ci && npm run typecheck && npm run lint && npm run test && npm run build
+cd web && npm run test:browser          # 前端浏览器测试
+cd web && npm run test:browser:real     # 需要真实 FastAPI + PostgreSQL，见 CI
 ```
 
-This generates `.easyaudit-review/` containing machine-readable evidence (`gate-proof.json`, `candidate.diff`, etc.).
+## 开发流程
 
-### Evidence Standards by Slice Kind:
-- **Code & Domain Slices**: Unit tests, integration tests (with real PostgreSQL), and browser E2E tests (Playwright) passing locally and in CI.
-- **Infrastructure & Storage Slices (M6+)**: Non-empty joint backup/restore manifest, RPO/RTO timing logs, restored cross-tenant read negative tests, and container non-root / immutable digest verification.
+1. 从 `main` 拉分支：`feat/…`、`fix/…`、`chore/…`、`docs/…`。
+2. 小改动直接做。如果改动涉及领域模型、权限、并发、迁移或新的外部依赖，先在 PR 描述里写几段设计说明：问题、方案、考虑过的替代方案。需要团队长期遵守的规则同步写进 `docs/architecture.md` 或新增 ADR。
+3. 验收就是测试，不单独写验收清单文档：
+   - 业务规则：单元测试和 API 测试。
+   - 持久化和并发：真实 PostgreSQL 集成测试。并发修复必须附带双 Session 竞争测试。
+   - 用户旅程：Playwright。
+4. 本地跑通上面的检查后开 PR。CI（`check`、`frontend`、`browser-acceptance`）全绿，并经过一次跨厂商 review（见下文）后，由维护者合并。
+5. 一个 PR 只做一件事，不要夹带无关重构。
 
----
+不要新增阶段状态文件、Gate 文档、审查证据包，也不要写"某某不得做"式的长篇契约。规则写进代码、测试和架构检查里，文档只记录结论。
 
-## 8. Final Review & Merge Authorization
+## 多 Agent 分工
 
-A candidate is authorized for merge only when all of the following are satisfied:
-1. **Architecture & Acceptance review passes**: Zero open P0 and zero open P1 defects.
-2. **PostgreSQL & Browser Acceptance is green**: Dual-session race tests and E2E journeys pass.
-3. **GitHub Actions is green on the exact candidate HEAD**: Not just a synthetic merge ref; the candidate commit SHA is fixed.
-4. **Human Maintainer explicitly authorizes the merge**.
+同一个工作目录同一时间只允许一个 Agent 写代码。需要并行时，用 `git worktree` 分开。
 
-When merging, expected-head protection must be respected, and post-merge verification of `main` must be performed.
+| 角色 | 工具与模型 | 用途 |
+|---|---|---|
+| 主开发 | Claude Code，默认 Opus；难的设计或疑难问题用 Fable | 设计、实现、测试、开 PR |
+| 检索 | Claude Code Explore 子 Agent（Haiku） | 大范围代码搜索、定位 |
+| 机械改动 | Claude Code 子 Agent（Sonnet） | 批量重命名、样板代码、迁移脚本初稿 |
+| 独立 review | omp / pi 使用 `openai-codex/gpt-6-astra` | 审 PR diff，重点是并发、授权和跨组织隔离；只读 |
+| 廉价杂活 | omp / pi 使用 `gpt-5.6-luna` 或 `gemini-3.8-flash` | 日志与 CI 失败初筛、截图检查、提交信息 |
 
----
+要点：
 
-## 9. Sensitive Data & Security
+- 写代码的和 review 的用不同厂商的模型，避免同源的盲点。
+- review 结论只是建议。P0/P1 问题要么在 PR 中修复，要么由维护者明确接受风险。
+- 换模型或压缩上下文后，重新读取 `git status` 和 PR 状态，不要依赖对话记忆。
 
-Never commit or expose production secrets, customer data exports, real credentials, or private deployment keys. Local environment configurations must use `.env.example` templates.
+## 红线
+
+- 不提交密钥、真实凭证、客户数据或导出文件。本地配置使用 `.env.example` 作为模板。
+- 不直接推送 `main`，不强推共享分支，只由人合并 PR。
+- 部署、访问生产数据、开放真实用户流量都需要维护者当次明确授权。
