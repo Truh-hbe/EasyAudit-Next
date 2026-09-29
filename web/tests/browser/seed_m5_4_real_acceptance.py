@@ -123,7 +123,7 @@ def main() -> None:
                     title="M5.4 Browser Manager Case",
                     lifecycle="in_progress",
                     planned_start_at=BASE_TIME,
-                    planned_end_at=datetime(2026, 9, 30, tzinfo=UTC),
+                    planned_end_at=datetime(2099, 12, 31, tzinfo=UTC),
                     started_at=BASE_TIME,
                     fieldwork_completed_at=None,
                     closed_at=None,
