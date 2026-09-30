@@ -2,6 +2,7 @@
 
 import asyncio
 import struct
+import threading
 import time
 from collections.abc import Awaitable, Callable
 
@@ -10,6 +11,7 @@ import pytest
 
 from easyaudit_next.api import health
 from easyaudit_next.infrastructure import readiness
+from easyaudit_next.infrastructure.readiness import DatabaseState
 from easyaudit_next.main import create_app
 from easyaudit_next.platform.settings import Settings
 
@@ -100,7 +102,7 @@ def test_ready_returns_503_by_the_deadline_and_releases_the_connection(
         hole = BlackHole(handler)
         port = await hole.start()
         monkeypatch.setattr(health, "get_settings", lambda: settings_for(port))
-        monkeypatch.setattr(health, "get_expected_head", lambda: "head1")
+        monkeypatch.setattr(health, "current_expected_head", lambda: "head1")
         try:
             async with async_client() as client:
                 response, elapsed = await ready(client)
@@ -129,7 +131,7 @@ def test_concurrent_probes_share_one_database_connection(
         hole = BlackHole(silent)
         port = await hole.start()
         monkeypatch.setattr(health, "get_settings", lambda: settings_for(port))
-        monkeypatch.setattr(health, "get_expected_head", lambda: "head1")
+        monkeypatch.setattr(health, "current_expected_head", lambda: "head1")
         try:
             async with async_client() as client:
                 results = await asyncio.gather(*(ready(client) for _ in range(6)))
@@ -147,7 +149,7 @@ def test_live_is_not_blocked_by_a_hung_readiness_probe(monkeypatch: pytest.Monke
         hole = BlackHole(silent)
         port = await hole.start()
         monkeypatch.setattr(health, "get_settings", lambda: settings_for(port))
-        monkeypatch.setattr(health, "get_expected_head", lambda: "head1")
+        monkeypatch.setattr(health, "current_expected_head", lambda: "head1")
         try:
             async with async_client() as client:
                 slow = asyncio.create_task(ready(client))
@@ -159,5 +161,163 @@ def test_live_is_not_blocked_by_a_hung_readiness_probe(monkeypatch: pytest.Monke
                 await slow
         finally:
             await hole.stop()
+
+    asyncio.run(scenario())
+
+
+async def refuses_tls(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Server without TLS: answer the SSLRequest with 'N'."""
+    length = struct.unpack("!I", await reader.readexactly(4))[0]
+    await reader.readexactly(length - 4)
+    writer.write(b"N")
+    await writer.drain()
+
+
+@pytest.mark.parametrize("sslmode", ["require", "verify-full"])
+def test_probe_never_downgrades_tls_and_never_sends_the_password(sslmode: str) -> None:
+    async def scenario() -> None:
+        hole = BlackHole(refuses_tls)
+        port = await hole.start()
+        settings = Settings(
+            database_url=(
+                f"postgresql+psycopg://probe-user:pw-needle-4471@127.0.0.1:{port}/db"
+                f"?sslmode={sslmode}"
+            ),
+            readiness_timeout_seconds=TIMEOUT,
+        )
+        try:
+            state = await readiness.fetch_database_state(settings)
+            await asyncio.sleep(0.1)
+        finally:
+            await hole.stop()
+        assert state.reachable is False
+        assert hole.accepted == 1
+        assert b"pw-needle-4471" not in hole.received
+        assert b"probe-user" not in hole.received  # not even the startup packet was sent
+        assert hole.received == b""
+
+    asyncio.run(scenario())
+
+
+def test_plain_url_still_proceeds_with_startup_after_tls_is_declined() -> None:
+    async def scenario() -> None:
+        hole = BlackHole(refuses_tls)
+        port = await hole.start()
+        try:
+            await readiness.fetch_database_state(settings_for(port))
+            await asyncio.sleep(0.1)
+        finally:
+            await hole.stop()
+        assert b"user" in hole.received  # default sslmode=prefer: behaviour unchanged
+
+    asyncio.run(scenario())
+
+
+def test_cancelling_the_shared_evaluation_closes_the_connection_without_a_cancel_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        hole = BlackHole(authenticated_then_silent)
+        port = await hole.start()
+        settings = Settings(
+            database_url=f"postgresql+psycopg://u:p@127.0.0.1:{port}/db",
+            readiness_timeout_seconds=5,  # long: only the cancellation may end this
+        )
+        caller = asyncio.create_task(readiness.run_readiness(settings, lambda: "head1"))
+        try:
+            for _ in range(100):
+                if b"SELECT 1" in hole.received:
+                    break
+                await asyncio.sleep(0.02)
+            assert b"SELECT 1" in hole.received
+            shared = readiness._inflight
+            assert shared is not None
+            started = time.perf_counter()
+            shared.cancel()
+            await asyncio.wait({shared}, timeout=2)
+            assert time.perf_counter() - started < 1.0
+            await asyncio.sleep(0.2)
+            assert hole.closed_by_client == 1
+            assert hole.accepted == 1  # no extra connection for a server-side cancel request
+            caller.cancel()
+            await asyncio.wait({caller}, timeout=1)
+        finally:
+            await hole.stop()
+        assert [t for t in asyncio.all_tasks() if t is not asyncio.current_task()] == []
+
+    asyncio.run(scenario())
+
+
+def test_total_evaluation_budget_holds_even_if_a_step_ignores_its_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def never_returns(_: Settings) -> DatabaseState:
+        await asyncio.sleep(3600)
+        raise AssertionError
+
+    monkeypatch.setattr(readiness, "fetch_database_state", never_returns)
+    monkeypatch.setattr(health, "get_settings", lambda: settings_for(1))
+    monkeypatch.setattr(health, "current_expected_head", lambda: "head1")
+
+    async def scenario() -> None:
+        async with async_client() as client:
+            response, elapsed = await ready(client)
+        assert response.status_code == 503
+        assert elapsed < TIMEOUT + readiness.EVALUATION_GRACE_SECONDS + MARGIN
+
+    asyncio.run(scenario())
+
+
+def test_head_is_never_read_on_the_event_loop_and_recovers_after_a_failed_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    outcomes = iter([RuntimeError("scripts missing"), "head1"])
+
+    def compute() -> str:
+        calls.append(threading.get_ident())
+        time.sleep(0.3)  # slow file system
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def healthy(_: Settings) -> DatabaseState:
+        return DatabaseState(True, ("head1",))
+
+    monkeypatch.setattr(readiness, "_compute_head", compute)
+    monkeypatch.setattr(readiness, "_head", readiness._HeadState())
+    monkeypatch.setattr(readiness, "HEAD_RETRY_SECONDS", 0.2)
+    monkeypatch.setattr(readiness, "fetch_database_state", healthy)
+    monkeypatch.setattr(health, "get_settings", lambda: Settings())
+    monkeypatch.setattr(health, "current_expected_head", readiness.current_expected_head)
+
+    async def scenario() -> None:
+        gaps: list[float] = []
+
+        async def heartbeat() -> None:  # measures how long the loop is ever blocked
+            while True:
+                before = time.perf_counter()
+                await asyncio.sleep(0.01)
+                gaps.append(time.perf_counter() - before)
+
+        beat = asyncio.create_task(heartbeat())
+        try:
+            async with async_client() as client:
+                await readiness.load_expected_head()  # startup: fails, state "unavailable"
+                first, _ = await ready(client)
+                assert first.status_code == 503
+                assert first.json()["checks"]["migrations"] == "fail"
+                live = await client.get("/health/live")
+                assert live.status_code == 200
+                await asyncio.sleep(0.25)  # retry window opens
+                await ready(client)  # schedules the background retry, reports current state
+                await asyncio.sleep(0.5)  # retry finishes off-loop
+                final, _ = await ready(client)
+                assert final.status_code == 200
+        finally:
+            beat.cancel()
+        assert max(gaps) < 0.2  # never blocked for the 0.3s file read
+        assert calls and all(ident != threading.get_ident() for ident in calls)
 
     asyncio.run(scenario())

@@ -343,3 +343,27 @@ def test_exception_chain_logs_types_never_messages(log_output: CapturedLogs) -> 
     assert error["exception_type"].endswith("UnsafeError")
     assert error["exception_chain"] == ["builtins.ValueError"]
     assert "9917" not in log_output.text()
+
+
+def test_fields_outside_the_allow_list_are_dropped_at_runtime(log_output: CapturedLogs) -> None:
+    observability.APP_LOGGER.error(
+        "event",
+        extra={
+            "fields": {
+                "route": "/ok/{id}",
+                "exception_message": "SELECT secret-needle-2291",
+                "body": "body-needle-2291",
+                "status_code": {"nested": "value-needle-2291"},
+                "reason": "x" * 1000,
+            },
+            "exception_details": {"exception_message": "forged-needle-2291"},
+        },
+    )
+
+    [entry] = [line for line in lines(log_output) if line["message"] == "event"]
+    assert "needle-2291" not in log_output.text()
+    assert entry["route"] == "/ok/{id}"
+    assert entry["status_code"] == "[dropped]"
+    assert len(entry["reason"]) == 200
+    assert entry["dropped_fields"] == ["body", "exception_message"]
+    assert "exception_message" not in entry

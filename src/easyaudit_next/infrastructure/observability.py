@@ -14,6 +14,7 @@ import time
 import traceback
 from collections.abc import MutableMapping
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -51,6 +52,48 @@ def allow_exception_message(exception_type: type[BaseException]) -> None:
     _SAFE_MESSAGE_EXCEPTIONS.add(exception_type)
 
 
+# Runtime backstop for the "no sensitive data in logs" rule: only these keys from
+# `extra={"fields": ...}` are ever rendered. Anything else is dropped (its key is reported in
+# `dropped_fields`, its value never is). Exception details do not go through this list; they
+# come from `ExceptionDetails`, which `describe_exception` alone builds.
+ALLOWED_FIELDS = frozenset(
+    {
+        "method",
+        "route",
+        "status_code",
+        "latency_ms",
+        "error",
+        "organization_id",
+        "actor_user_id",
+        "component",
+        "reason",
+        "current_revision",
+        "expected_revision",
+    }
+)
+_MAX_VALUE_CHARS = 200
+_MAX_LIST_ITEMS = 20
+_DROPPED = "[dropped]"
+
+
+def _bound_value(value: object) -> object:
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if isinstance(value, str):
+        return value[:_MAX_VALUE_CHARS]
+    if isinstance(value, list | tuple) and all(isinstance(item, str) for item in value):
+        return [item[:_MAX_VALUE_CHARS] for item in value[:_MAX_LIST_ITEMS]]
+    return _DROPPED
+
+
+@dataclass(frozen=True, slots=True)
+class ExceptionDetails:
+    exception_type: str
+    exception_chain: tuple[str, ...]
+    stack: tuple[str, ...]
+    exception_message: str | None = None
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -62,26 +105,36 @@ class JsonFormatter(logging.Formatter):
         }
         fields = getattr(record, "fields", None)
         if isinstance(fields, dict):
-            payload.update(fields)
+            dropped = sorted(str(key) for key in fields if key not in ALLOWED_FIELDS)
+            payload.update(
+                {key: _bound_value(value) for key, value in fields.items() if key in ALLOWED_FIELDS}
+            )
+            if dropped:
+                payload["dropped_fields"] = dropped[:_MAX_LIST_ITEMS]
+        details = getattr(record, "exception_details", None)
         if record.exc_info and record.exc_info[1] is not None:
-            payload.update(describe_exception(record.exc_info[1]))
+            details = describe_exception(record.exc_info[1])
+        if isinstance(details, ExceptionDetails):
+            payload["exception_type"] = details.exception_type
+            payload["exception_chain"] = list(details.exception_chain)
+            payload["stack"] = list(details.stack)
+            if details.exception_message is not None:
+                payload["exception_message"] = details.exception_message
         return json.dumps(payload, default=str, ensure_ascii=False)
 
 
-def describe_exception(exc: BaseException) -> dict[str, Any]:
+def describe_exception(exc: BaseException) -> ExceptionDetails:
     """Type and frames only. ``str(exc)`` can embed SQL statements and bound parameters."""
     exception_type = type(exc)
-    described: dict[str, Any] = {
-        "exception_type": f"{exception_type.__module__}.{exception_type.__qualname__}",
-        "exception_chain": _chain_types(exc),
-        "stack": [
+    return ExceptionDetails(
+        exception_type=f"{exception_type.__module__}.{exception_type.__qualname__}",
+        exception_chain=tuple(_chain_types(exc)),
+        stack=tuple(
             f"{frame.filename}:{frame.lineno}:{frame.name}"
             for frame in traceback.extract_tb(exc.__traceback__)[-_MAX_STACK_FRAMES:]
-        ],
-    }
-    if exception_type in _SAFE_MESSAGE_EXCEPTIONS:
-        described["exception_message"] = str(exc)
-    return described
+        ),
+        exception_message=str(exc) if exception_type in _SAFE_MESSAGE_EXCEPTIONS else None,
+    )
 
 
 def _chain_types(exc: BaseException) -> list[str]:

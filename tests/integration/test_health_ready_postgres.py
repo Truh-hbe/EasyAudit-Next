@@ -14,7 +14,8 @@ def require_postgres() -> None:
 
 
 def test_ready_is_ok_on_a_database_migrated_to_head() -> None:
-    response = TestClient(create_app()).get("/health/ready")
+    with TestClient(create_app()) as client:  # runs lifespan: loads the expected head
+        response = client.get("/health/ready")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -24,9 +25,10 @@ def test_ready_is_ok_on_a_database_migrated_to_head() -> None:
 
 
 def test_ready_fails_when_the_expected_head_differs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(health, "get_expected_head", lambda: "not-the-real-head")
+    monkeypatch.setattr(health, "current_expected_head", lambda: "not-the-real-head")
 
-    response = TestClient(create_app()).get("/health/ready")
+    with TestClient(create_app()) as client:
+        response = client.get("/health/ready")
 
     assert response.status_code == 503
     assert response.json()["checks"] == {

@@ -19,7 +19,7 @@ def client_with(
     head: str = "head1",
 ) -> TestClient:
     monkeypatch.setattr(health, "get_settings", lambda: settings or Settings())
-    monkeypatch.setattr(health, "get_expected_head", lambda: head)
+    monkeypatch.setattr(health, "current_expected_head", lambda: head)
     if state is not None:
 
         async def fake_state(_: Settings) -> DatabaseState:
