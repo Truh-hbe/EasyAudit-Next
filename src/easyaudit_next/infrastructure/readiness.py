@@ -21,9 +21,9 @@ import psycopg
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from psycopg import AsyncConnection
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import Engine, make_url
 
-from easyaudit_next.infrastructure.database import libpq_connect_kwargs
+from easyaudit_next.infrastructure.database import libpq_connect_kwargs, verify_server_settings
 from easyaudit_next.infrastructure.observability import (
     APP_LOGGER,
     ExceptionDetails,
@@ -85,6 +85,39 @@ async def load_expected_head() -> str | None:
             "expected_head_unavailable", extra={"exception_details": describe_exception(exc)}
         )
         return None
+
+
+DB_SETTINGS_RETRY_SECONDS = 5.0
+
+
+async def verify_db_settings(state: Any, engine: Engine, settings: Settings) -> None:
+    """Check that business connections carry the configured timeouts; publish on `state`.
+
+    `state.db_settings_failures` stays None (readiness fails as unverified) until the database
+    could be asked; an unreachable database is retried, a mismatch is definitive (logged at
+    ERROR, readiness fails until the process is restarted with consistent settings). Never
+    raises, so it cannot crash the process.
+    """
+    state.db_settings_failures = None
+    while True:
+        try:
+            mismatches = await asyncio.to_thread(verify_server_settings, engine, settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            APP_LOGGER.warning(
+                "db_settings_unverified", extra={"exception_details": describe_exception(exc)}
+            )
+            await asyncio.sleep(DB_SETTINGS_RETRY_SECONDS)
+            continue
+        failures = tuple(
+            Failure("db_settings", "mismatch", {"setting": name, "expected": want, "actual": got})
+            for name, (want, got) in sorted(mismatches.items())
+        )
+        for failure in failures:
+            APP_LOGGER.error("db_settings_mismatch", extra={"fields": failure.fields})
+        state.db_settings_failures = failures
+        return
 
 
 def log_failure(failure: Failure) -> None:
@@ -172,8 +205,16 @@ async def fetch_database_state(settings: Settings) -> DatabaseState:
             await asyncio.wait({probe}, timeout=CLEANUP_GRACE_SECONDS)
 
 
-async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessResult:
+async def _evaluate(
+    settings: Settings,
+    expected_head: str | None,
+    db_settings_failures: tuple[Failure, ...] | None,
+) -> ReadinessResult:
     failures: list[Failure] = []
+    if db_settings_failures is None:
+        failures.append(Failure("db_settings", "unverified"))
+    else:
+        failures.extend(db_settings_failures)
     config_failure = check_configuration(settings)
     if config_failure is not None:
         failures.append(config_failure)
@@ -200,6 +241,7 @@ async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessR
         "configuration": "fail" if config_failure else "ok",
         "database": "ok" if state.reachable else "fail",
         "migrations": "ok" if migrations_ok else "fail",
+        "db_settings": "ok" if db_settings_failures == () else "fail",
     }
     return ReadinessResult(checks, tuple(failures))
 
@@ -207,15 +249,24 @@ async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessR
 EVALUATION_GRACE_SECONDS = 1.0
 
 
-async def _bounded(settings: Settings, expected_head: str | None) -> ReadinessResult:
+async def _bounded(
+    settings: Settings,
+    expected_head: str | None,
+    db_settings_failures: tuple[Failure, ...] | None,
+) -> ReadinessResult:
     """Overall budget for the whole evaluation, independent of the per-step deadlines."""
     try:
         async with asyncio.timeout(settings.readiness_timeout_seconds + EVALUATION_GRACE_SECONDS):
-            return await _evaluate(settings, expected_head)
+            return await _evaluate(settings, expected_head, db_settings_failures)
     except TimeoutError:
         configuration: CheckStatus = "fail" if check_configuration(settings) else "ok"
         return ReadinessResult(
-            {"configuration": configuration, "database": "fail", "migrations": "fail"},
+            {
+                "configuration": configuration,
+                "database": "fail",
+                "migrations": "fail",
+                "db_settings": "ok" if db_settings_failures == () else "fail",
+            },
             (Failure("readiness", "evaluation_deadline_exceeded"),),
         )
 
@@ -231,7 +282,9 @@ async def run_readiness(
     loop = asyncio.get_running_loop()
     task: asyncio.Task[ReadinessResult] | None = getattr(state, "readiness_inflight", None)
     if task is None or task.done() or task.get_loop() is not loop:
-        task = loop.create_task(_bounded(settings, expected_head))
+        task = loop.create_task(
+            _bounded(settings, expected_head, getattr(state, "db_settings_failures", None))
+        )
         state.readiness_inflight = task
     # shield: a caller that disconnects must not cancel the evaluation other callers wait on.
     return await asyncio.shield(task)

@@ -44,6 +44,24 @@ src/easyaudit_next/
 - 锁后发现生命周期已变化，按并发冲突（409）处理，而不是按业务校验失败（422）处理。
 - 每个并发修复都要有 PostgreSQL 双 Session 竞争测试（`tests/integration/*race*`、`*concurrency*`）。
 
+## 数据库预算
+
+业务 engine（`create_database_engine`）的连接池和服务端超时都显式配置（`platform/settings.py`，模板见 `.env.example`）：
+
+| 配置 | 默认 | 作用 |
+|---|---|---|
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | 10 / 5 | 每个 worker 进程最多 15 条连接 |
+| `DB_POOL_TIMEOUT_SECONDS` | 10 | 等池超时；超时是 500（池耗尽说明预算或泄漏有问题） |
+| `DB_POOL_RECYCLE_SECONDS` | 1800 | 连接最长存活 |
+| `DB_STATEMENT_TIMEOUT_MS` | 15000 | 单条语句上限 |
+| `DB_LOCK_TIMEOUT_MS` | 5000 | 等行锁/表锁上限（低于 statement_timeout，锁等待先于语句超时暴露） |
+| `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 30000 | 事务里空闲超过此值，服务端终止连接 |
+
+- 三个超时通过业务 engine 的连接参数 `options=-c ...` 下发，与 URL 里已有的 `options` **合并**（追加在后，同名以我们为准）。只作用于业务 engine：`alembic/env.py` 自建 NullPool engine，迁移不受 statement_timeout 限制；CLI 用业务 engine，同样受限。
+- **连接预算公式**：`workers × (pool_size + max_overflow) + readiness 探针 + 运维工具 < max_connections`。当前 compose：1 个 uvicorn worker × 15 + readiness 探针 1（single-flight，同一时间最多一条）+ 运维工具（`migrate`、备份 `pg_dump`、CLI，各按 1 条，预留 5）≈ 21，远低于 PostgreSQL 默认 `max_connections=100`（另有 superuser 预留 3）。增加 worker 或调大池之前先按公式核对。
+- **超时的 HTTP 语义**：`statement_timeout`、`lock_timeout` 到期（SQLSTATE 57014 / 55P03）映射为 **503 + `Retry-After: 1`**，body 只有 `detail` 与 `request_id`，由 `RequestContextMiddleware` 统一处理并记 WARNING `database_timeout`。不用 409：409 的含义是"数据已过期，刷新后重试"，而超时并没有发现生命周期变化，只是暂时拿不到资源；前端对 409 会刷新数据，对 503 才是正确的"稍后重试同一个请求"。死锁（40P01）与 idle-in-transaction 终止不在此列，仍是 500（说明代码违反了加锁顺序或持有了空闲事务）。
+- **启动校验**：lifespan 在后台用业务 engine 读 `pg_settings`，与配置比对。不一致写 ERROR（`db_settings_mismatch`，字段 `setting/expected/actual`）并让 `/health/ready` 的 `db_settings` 为 `fail`，进程不退出；数据库暂时不可达则每 5 秒重试，期间 `db_settings` 为 `fail`（未验证）。
+
 ## 授权
 
 - 授权完全由 Case 固定的精确 Scenario 版本判断（`ScenarioPolicy.authorization.allows`），不能写成 `role_key == "lead"`，也不能给 `system_admin` 业务捷径。
@@ -120,7 +138,7 @@ src/easyaudit_next/
 ## 可观测性
 
 - **Health 不对外。** `/health/live`、`/health/ready` 挂在根路径，不在 `/api/v1` 下；网关只转发 `/api/v1/*`，所以外部访问不到（`deploy/smoke.sh` 断言）。旧的 `/health` 已删除。
-- `live` 只表示进程能响应，不访问数据库或任何外部依赖。`ready` 检查三项，全部通过才 200，否则 503：数据库 `SELECT 1`（连接和语句超时各 2 秒，用独立、不池化的 engine）、Alembic 当前 revision 等于镜像内脚本的 head、必需配置存在。响应体只有各项的 `ok`/`fail`，不带 DSN、revision、错误消息；细节写日志。
+- `live` 只表示进程能响应，不访问数据库或任何外部依赖。`ready` 检查四项（`configuration`、`database`、`migrations`、`db_settings`），全部通过才 200，否则 503：数据库 `SELECT 1`（连接和语句超时各 2 秒，用独立、不池化的 engine）、Alembic 当前 revision 等于镜像内脚本的 head、必需配置存在。响应体只有各项的 `ok`/`fail`，不带 DSN、revision、错误消息；细节写日志。
 - 对象存储暂不纳入 `ready`，因为应用尚未使用它；Pilot-4A 接入 Evidence 上传时再加进去。
 - `ready` 的数据库探针是全 async 的（psycopg `AsyncConnection`，不走业务连接池、不占线程池），连接、查询、关闭共用一个 2 秒（`READINESS_TIMEOUT_SECONDS`）的客户端截止时间，超时后立即关闭 socket 并返回 503。探针连接参数由与业务 engine 相同的 SQLAlchemy dialect 转换（`libpq_connect_kwargs`），`sslmode`、`sslrootcert`、Unix socket、已有 `options` 原样保留（`options` 追加 statement_timeout 而不是覆盖），所以不会在业务要求 TLS 时明文探测。整个评估另有兜底总预算（超时 + 1 秒）；评估被取消同样立即关闭 socket。期望的 alembic head 只在 lifespan 启动时用 `asyncio.to_thread` 读一次，存进 `app.state`（不用模块级全局状态，多个 app 实例互不影响）；读取失败会写 ERROR 日志，该进程在重启之前 `ready` 一直报 migrations fail，`live` 不受影响。镜像里的脚本读不出来说明镜像本身坏了，应由运维重启或回滚，应用不自愈，也绝不在事件循环里同步读文件。并发探针采用 single-flight（in-flight 任务存在 `app.state`）：已有探针在跑时，后来者等待同一次结果，不再另开连接。`/health/live` 也是 `async def`。
 - **request_id 由服务端生成**（UUID4），通过 `X-Request-ID` 响应头返回；忽略客户端传来的同名请求头。未处理异常的 500 响应体带 `request_id`。
