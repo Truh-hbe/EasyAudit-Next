@@ -36,7 +36,7 @@ flowchart TD
 ## 不变量
 
 1. 所有业务对象与关系属于同一 Organization，由组合外键在数据库层保证。
-2. 每个 ReviewCase 按 `(scenario_key, scenario_version)` 精确解释；新建 Case 才使用最新发布版本。
+2. 每个 ReviewCase 按 `(scenario_key, scenario_version)` 精确解释；新建 Case 时显式选择一个已发布的精确版本，已有 Case 永远保持创建时绑定的版本，不自动升级。
 3. Finding 只属于一个 ReviewCase；ActionItem 只属于一个 Finding。
 4. FindingParticipant / ActionAssignee 是 User 或 Department 二选一（数据库 XOR 约束）。
 5. Activity、Submission、Evidence 是 append-only，由数据库触发器保证；更正只能追加新事实。
@@ -104,8 +104,9 @@ done --reopen--> in_progress
 | `view_case` / `view_finding` | 任一 Case 角色、Finding owner/collaborator、责任部门成员、Action primary/collaborator |
 | `manage_case_members` / `transition_case` | `lead` |
 | `create_finding` / `issue_finding` / `manage_finding_participants` | `lead`、`auditor` |
-| `create_action` / `submit_rectification` | Finding `owner` |
+| `create_action` / `manage_action_assignees` / `submit_rectification` | Finding `owner` |
 | `update_assigned_action` | Action `primary`、`collaborator` |
+| `add_rectification_evidence` | Finding `owner`、Action `primary`、`collaborator` |
 | `verify_finding` | `reviewer` |
 | `reopen_finding` | `lead`、`auditor`、`reviewer` |
 
@@ -121,7 +122,6 @@ done --reopen--> in_progress
   - `nonconformity` 走整改 → 验证的完整路径。
   - `observation` 通过 `accept_observation` 直接 `open → closed`，不需要 ActionItem 或整改提交。
 - `accept_observation` 权限授予 `reviewer`。
-- `add_rectification_evidence` 授予 Finding `owner` 与 Action `primary`/`collaborator`。
 - scenario_data：Case 需要 `standard_reference`、`scope_summary`；Finding 需要 `criterion_reference`、`finding_type`。
 
 ## 提醒收件人
