@@ -6,7 +6,7 @@ Private Network → gateway (Caddy, 仅 :443) → { web (nginx, SPA), api (FastA
 ```
 
 - 只有 `gateway` 发布端口，且只有 443（无 80，不做 HTTP 跳转）。
-- `backend` 网络是 `internal: true`：postgres、object-storage 不可从宿主机访问，也没有出网。
+- 除 gateway 外没有任何宿主机端口发布；`backend` 网络是 `internal: true`，禁止容器外联。注意 `internal` 并不阻止 Linux 宿主机直接访问容器 IP，宿主机本身应视为可信，并靠宿主机防火墙限制访问。
 - 所有容器以非 root 运行，所有镜像固定到具体版本（`tests/unit/test_deploy_compose.py` 强制）。
 - 开发用的根目录 `compose.yaml` 与本目录无关，不要混用。
 
@@ -15,7 +15,7 @@ Private Network → gateway (Caddy, 仅 :443) → { web (nginx, SPA), api (FastA
 ## 1. 准备 secrets 和证书（不提交）
 
 ```bash
-mkdir -p deploy/secrets deploy/certs && chmod 700 deploy/secrets
+install -d -m 700 deploy/secrets deploy/certs
 openssl rand -hex 24 | tr -d '\n' > deploy/secrets/postgres_password
 openssl rand -hex 32 | tr -d '\n' > deploy/secrets/garage_rpc_secret
 printf 'GK%s' "$(openssl rand -hex 12)" > deploy/secrets/s3_access_key_id   # 必须是 GK + 24 位十六进制
@@ -23,9 +23,9 @@ openssl rand -hex 32 | tr -d '\n' > deploy/secrets/s3_secret_access_key      # 6
 chmod 444 deploy/secrets/*
 ```
 
-容器以非 root uid 读取这些文件，所以文件本身为 0444，靠 `deploy/secrets` 目录 0700 限制宿主机上的其他用户。`deploy/secrets/`、`deploy/certs/`、`deploy/.env` 已在 `.gitignore` 中。
+容器以非 root uid 读取这些文件，所以文件本身为 0444，靠 `deploy/secrets`、`deploy/certs` 目录 0700 限制宿主机上的其他用户（compose 按文件挂载 secrets，所以父目录不需要对容器可读）。**不要**把这两个目录放宽，也不要把私钥单独设成 0444 放在可遍历目录里。`deploy/secrets/`、`deploy/certs/`、`deploy/.env` 已在 `.gitignore` 中。
 
-**TLS 证书**：网关读取 `deploy/certs/tls.crt`（含中间证书链）和 `tls.key`。会话 Cookie 是 `__Host-` 前缀且 Secure，浏览器必须通过 HTTPS 访问，且证书对访问所用的主机名有效。
+**TLS 证书**：网关以 Docker secrets 方式读取 `deploy/certs/tls.crt`（含中间证书链）和 `tls.key`。网关 uid 是 10002，读不了运维用户 0600 的文件，所以 CA 给的文件要复制成 0444（目录 0700 已保护）：`install -m 444 <ca-issued.key> deploy/certs/tls.key`，证书同理。也可以在有 root 的情况下改用 `chgrp 10002` 加 0440。会话 Cookie 是 `__Host-` 前缀且 Secure，浏览器必须通过 HTTPS 访问，且证书对访问所用的主机名有效。
 
 - 内部 CA：让 CA 为服务的内网域名签发证书，放入上述文件；客户端需信任该 CA。
 - 自签（仅试用）：
@@ -34,7 +34,7 @@ chmod 444 deploy/secrets/*
   openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=easyaudit.internal" \
     -addext "subjectAltName=DNS:easyaudit.internal" \
     -keyout deploy/certs/tls.key -out deploy/certs/tls.crt
-  chmod 444 deploy/certs/*
+  chmod 444 deploy/certs/*   # 目录为 0700，见上
   ```
 
   然后把 `tls.crt` 分发给客户端并加入信任。
@@ -60,7 +60,7 @@ $DC run --rm api easyaudit-next bootstrap-admin \
 
 ## 冒烟测试
 
-`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → migrate → up → HTTPS 验证 → 内部端口不可达 → down -v）。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
+`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → migrate → up → HTTPS 验证 → 无非网关端口发布 → down -v）。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
 
 ## 说明
 

@@ -8,7 +8,7 @@
 
 # Listens on 8443 inside the container (no privileged port needed); compose publishes it as 443.
 :8443 {
-	tls /run/certs/tls.crt /run/certs/tls.key
+	tls /run/secrets/tls_cert /run/secrets/tls_key
 
 	encode zstd gzip
 

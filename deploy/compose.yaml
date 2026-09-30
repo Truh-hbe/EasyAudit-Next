@@ -36,7 +36,9 @@ services:
         protocol: tcp
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${EASYAUDIT_CERTS_DIR:-./certs}:/run/certs:ro
+    # TLS material is mounted per file as secrets (never a whole directory) so the host
+    # directory can stay 0700.
+    secrets: [tls_cert, tls_key]
     environment:
       XDG_DATA_HOME: /tmp/caddy-data
       XDG_CONFIG_HOME: /tmp/caddy-config
@@ -92,6 +94,8 @@ services:
     image: easyaudit/api:local
     user: "10001:10001"
     profiles: ["migrate"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     command: ["alembic", "upgrade", "head"]
     environment: *api-env
     secrets: [postgres_password]
@@ -150,6 +154,10 @@ networks:
     internal: true
 
 secrets:
+  tls_cert:
+    file: ${EASYAUDIT_CERTS_DIR:-./certs}/tls.crt
+  tls_key:
+    file: ${EASYAUDIT_CERTS_DIR:-./certs}/tls.key
   postgres_password:
     file: ${EASYAUDIT_SECRETS_DIR:-./secrets}/postgres_password
   garage_rpc_secret:

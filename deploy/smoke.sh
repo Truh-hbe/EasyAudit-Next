@@ -27,7 +27,7 @@ step() { echo "==> $*"; }
 
 step "generating temporary certificate and secrets"
 mkdir -p "$EASYAUDIT_SECRETS_DIR" "$EASYAUDIT_CERTS_DIR"
-chmod 700 "$EASYAUDIT_SECRETS_DIR"
+chmod 700 "$EASYAUDIT_SECRETS_DIR" "$EASYAUDIT_CERTS_DIR"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
   -keyout "$EASYAUDIT_CERTS_DIR/tls.key" -out "$EASYAUDIT_CERTS_DIR/tls.crt" 2>/dev/null
@@ -35,7 +35,7 @@ openssl rand -hex 24 | tr -d '\n' > "$EASYAUDIT_SECRETS_DIR/postgres_password"
 openssl rand -hex 32 | tr -d '\n' > "$EASYAUDIT_SECRETS_DIR/garage_rpc_secret"
 printf 'GK%s' "$(openssl rand -hex 12)" > "$EASYAUDIT_SECRETS_DIR/s3_access_key_id"
 openssl rand -hex 32 | tr -d '\n' > "$EASYAUDIT_SECRETS_DIR/s3_secret_access_key"
-# Containers run as non-root uids; the directory (0700) is what protects these on the host.
+# Containers run as non-root uids; the 0700 directories protect these files on the host.
 chmod 444 "$EASYAUDIT_SECRETS_DIR"/* "$EASYAUDIT_CERTS_DIR"/*
 
 step "build"
@@ -67,13 +67,20 @@ if curl --silent --max-time 3 --output /dev/null "http://localhost:80/" 2>/dev/n
   fail "port 80 answered"
 fi
 
-step "internal ports are not reachable from the host"
+step "no host port publishing besides the gateway"
 for port in 5432 3900 3901 8000 8080; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then fail "host port $port is open"; fi
 done
-published="$("${DC[@]}" ps --format '{{.Service}} {{.Publishers}}' | grep -v '^gateway ' \
-  | grep -E '[0-9]+->' || true)"
-[ -z "$published" ] || fail "non-gateway services publish ports: $published"
+"${DC[@]}" ps --format json | python3 -c '
+import json, sys
+raw = sys.stdin.read().strip()
+rows = json.loads(raw) if raw.startswith("[") else [json.loads(l) for l in raw.splitlines() if l]
+port = int(sys.argv[1])
+published = {r["Service"]: sorted({p["PublishedPort"] for p in r.get("Publishers") or [] if p.get("PublishedPort")}) for r in rows}
+assert published.get("gateway") == [port], f"gateway must publish only {port}: {published}"
+others = {s: v for s, v in published.items() if s != "gateway" and v}
+assert not others, f"non-gateway services publish ports: {others}"
+' "$EASYAUDIT_HTTPS_PORT" || fail "unexpected published ports"
 
 step "object storage bucket bootstrapped"
 "${DC[@]}" exec -T object-storage garage -c /etc/garage.toml bucket info easyaudit-evidence >/dev/null \

@@ -30,10 +30,10 @@ def _services(compose: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _is_pinned(reference: str) -> bool:
     if "@sha256:" in reference:
         return True
-    name, sep, tag = reference.rpartition(":")
-    if not sep or "/" in tag:
+    _, sep, tag = reference.rpartition(":")
+    if not sep or "/" in tag or not tag:
         return False
-    return bool(tag) and tag != "latest" and not re.fullmatch(r"(latest|stable|alpine|slim)", tag)
+    return "latest" not in tag.lower() and tag.lower() not in {"stable", "alpine", "slim"}
 
 
 def _dockerfile_bases(dockerfile: Path) -> list[str]:
@@ -69,6 +69,7 @@ def test_only_gateway_publishes_only_443(compose: dict[str, Any]) -> None:
 def test_all_images_pinned(compose: dict[str, Any]) -> None:
     for name, service in _services(compose).items():
         if "build" in service:
+            assert _is_pinned(service["image"]), f"{name}: built image {service.get('image')}"
             build = service["build"]
             context = COMPOSE_PATH.parent / build["context"]
             dockerfile = context / build.get("dockerfile", "Dockerfile")
@@ -100,6 +101,22 @@ def test_every_service_is_non_root(compose: dict[str, Any]) -> None:
         assert user.split(":")[0] not in {"0", "root"}, f"{name} runs as root"
 
 
+def test_every_service_drops_capabilities_and_privileges(compose: dict[str, Any]) -> None:
+    for name, service in _services(compose).items():
+        assert service.get("cap_drop") == ["ALL"], f"{name}: cap_drop ALL required"
+        assert "no-new-privileges:true" in service.get("security_opt", []), name
+
+
+def test_tls_key_is_mounted_as_a_file_secret(compose: dict[str, Any]) -> None:
+    gateway = _services(compose)["gateway"]
+    assert {"tls_cert", "tls_key"} <= set(gateway["secrets"])
+    for volume in gateway.get("volumes", []):
+        assert "certs" not in str(volume), "mount TLS files as secrets, not a directory"
+    for name in ("tls_cert", "tls_key"):
+        assert compose["secrets"][name]["file"].startswith("${EASYAUDIT_CERTS_DIR:-./certs}/")
+    assert "/run/secrets/tls_key" in (COMPOSE_PATH.parent / "Caddyfile").read_text()
+
+
 def test_dockerfiles_drop_root() -> None:
     for dockerfile in (
         ROOT / "Dockerfile",
@@ -122,7 +139,9 @@ def test_no_inline_plaintext_secrets(compose: dict[str, Any]) -> None:
             assert not re.search(r"://[^/\s:@]+:[^/\s@]+@", str(value)), f"{name}: {key} has creds"
     for secret in compose["secrets"].values():
         assert "file" in secret and "environment" not in secret
-        assert "${EASYAUDIT_SECRETS_DIR:-./secrets}/" in secret["file"]
+        assert secret["file"].startswith(
+            ("${EASYAUDIT_SECRETS_DIR:-./secrets}/", "${EASYAUDIT_CERTS_DIR:-./certs}/")
+        )
 
 
 def test_api_trusts_only_the_gateway_for_proxy_headers(compose: dict[str, Any]) -> None:
