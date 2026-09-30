@@ -8,7 +8,7 @@ import {
 } from '@playwright/test'
 
 const COOKIE_NAME = '__Host-easyaudit_session'
-const BASE_URL = 'https://127.0.0.1:4173'
+const BASE_URL = `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`
 
 const ADMIN_LOGIN_NAME = 'browser-system-admin'
 const ADMIN_PASSWORD = 'admin-password-000'

@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const webPort = process.env.EASYAUDIT_WEB_PORT ?? '4173'
+const webURL = `https://127.0.0.1:${webPort}`
+
 export default defineConfig({
   testDir: './tests/browser',
   fullyParallel: true,
@@ -8,7 +11,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'line' : 'list',
   use: {
-    baseURL: 'https://127.0.0.1:4173',
+    baseURL: webURL,
     ignoreHTTPSErrors: true,
     trace: 'on-first-retry',
   },
@@ -19,8 +22,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev -- --port 4173 --strictPort',
-    url: 'https://127.0.0.1:4173',
+    command: `npm run dev -- --port ${webPort} --strictPort`,
+    url: webURL,
     ignoreHTTPSErrors: true,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

@@ -1,0 +1,48 @@
+{
+  "worktree": {
+    "setup": [
+      "cp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env 2>/dev/null || cp .env.example .env",
+      "python -m venv .venv",
+      "source .venv/bin/activate && python -m pip install -e '.[dev]' --quiet",
+      "source .venv/bin/activate && alembic upgrade head || echo '⚠️  Shared DB not reachable; run docker compose up -d db in the main checkout'",
+      "cd web && npm ci --silent"
+    ],
+    "teardown": "rm -rf .venv web/node_modules"
+  },
+  "metadataGeneration": {
+    "branchName": {
+      "instructions": "Use the format <type>/<short-slug>, where type is feat, fix, chore, or docs. Example: feat/evidence-upload."
+    },
+    "commitMessage": {
+      "instructions": "Follow Conventional Commits. Scope is the module name: review-core, platform, api, web, scenarios, etc. Example: feat(review-core): add finding reopen reason."
+    },
+    "pullRequest": {
+      "instructions": "Title follows Conventional Commits. Body has sections: ## Why, ## Changes, ## Testing. For changes to the domain model, permissions, concurrency, migrations or new external dependencies, the Why section also covers the problem, the approach and the alternatives considered."
+    }
+  },
+  "scripts": {
+    "check-backend": {
+      "command": "source .venv/bin/activate && ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py"
+    },
+    "check-frontend": {
+      "command": "cd web && npm run typecheck && npm run lint && npm run test"
+    },
+    "test-backend": {
+      "command": "source .venv/bin/activate && EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest"
+    },
+    "test-browser": {
+      "command": "cd web && EASYAUDIT_WEB_PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind((\"127.0.0.1\", 0)); print(s.getsockname()[1])') npm run test:browser"
+    },
+    "check-all": {
+      "command": "source .venv/bin/activate && ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py && EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest && cd web && npm run typecheck && npm run lint && npm run test"
+    },
+    "api": {
+      "type": "service",
+      "command": "source .venv/bin/activate && uvicorn easyaudit_next.main:app --reload --host 127.0.0.1 --port $PASEO_PORT"
+    },
+    "web": {
+      "type": "service",
+      "command": "cd web && EASYAUDIT_API_URL=http://127.0.0.1:$PASEO_SERVICE_API_PORT npm run dev -- --port $PASEO_PORT --strictPort"
+    }
+  }
+}
