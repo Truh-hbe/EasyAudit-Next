@@ -1,0 +1,162 @@
+# Production topology (private network):
+#   client -> gateway:443 -> { web, api }      api -> { postgres, object-storage }
+# Only the gateway publishes a port. `backend` is internal: no host access, no egress.
+# Every service sets `user:` explicitly; there are no root exceptions.
+# Rules are enforced by tests/unit/test_deploy_compose.py.
+
+name: easyaudit
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+
+x-api-build: &api-build
+  context: ..
+  dockerfile: Dockerfile
+
+x-api-env: &api-env
+  POSTGRES_HOST: postgres
+  POSTGRES_DB: easyaudit
+  POSTGRES_USER: easyaudit
+  POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+
+services:
+  gateway:
+    <<: *hardening
+    image: caddy:2.11.4-alpine
+    user: "10002:10002"
+    ports:
+      # Only 443 is published. EASYAUDIT_HTTPS_PORT exists for local smoke runs only.
+      - target: 8443
+        published: "${EASYAUDIT_HTTPS_PORT:-443}"
+        protocol: tcp
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${EASYAUDIT_CERTS_DIR:-./certs}:/run/certs:ro
+    environment:
+      XDG_DATA_HOME: /tmp/caddy-data
+      XDG_CONFIG_HOME: /tmp/caddy-config
+    tmpfs: ["/tmp"]
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks:
+      edge:
+        ipv4_address: 172.30.10.10
+
+  web:
+    <<: *hardening
+    build:
+      context: ../web
+    image: easyaudit/web:local
+    user: "101:101"
+    networks: [edge]
+
+  api:
+    <<: *hardening
+    build: *api-build
+    image: easyaudit/api:local
+    user: "10001:10001"
+    environment:
+      <<: *api-env
+      # Trust proxy headers from the gateway only (fixed address on the edge network).
+      FORWARDED_ALLOW_IPS: 172.30.10.10
+    secrets: [postgres_password]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+    networks: [edge, backend]
+
+  # One-shot: `docker compose -f deploy/compose.yaml run --rm migrate`.
+  # The API never migrates on startup.
+  migrate:
+    build: *api-build
+    image: easyaudit/api:local
+    user: "10001:10001"
+    profiles: ["migrate"]
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-env
+    secrets: [postgres_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
+  postgres:
+    <<: *hardening
+    image: postgres:17.11-alpine3.24
+    user: "70:70"
+    environment:
+      POSTGRES_DB: easyaudit
+      POSTGRES_USER: easyaudit
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easyaudit -d easyaudit"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [backend]
+
+  object-storage:
+    <<: *hardening
+    # Garage (S3-compatible); wrapped in deploy/object-storage/Dockerfile for a non-root user.
+    build:
+      context: ..
+      dockerfile: deploy/object-storage/Dockerfile
+    image: easyaudit/object-storage:local
+    user: "10001:10001"
+    environment:
+      S3_BUCKET: easyaudit-evidence
+    secrets: [garage_rpc_secret, s3_access_key_id, s3_secret_access_key]
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
+      - object_meta:/var/lib/garage/meta
+      - object_data:/var/lib/garage/data
+    healthcheck:
+      # Healthy only after layout, bucket and key bootstrap have finished.
+      test: ["CMD-SHELL", "garage -c /etc/garage.toml bucket info easyaudit-evidence >/dev/null && garage -c /etc/garage.toml key info \"$$(cat /run/secrets/s3_access_key_id)\" >/dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    networks: [backend]
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  backend:
+    internal: true
+
+secrets:
+  postgres_password:
+    file: ${EASYAUDIT_SECRETS_DIR:-./secrets}/postgres_password
+  garage_rpc_secret:
+    file: ${EASYAUDIT_SECRETS_DIR:-./secrets}/garage_rpc_secret
+  s3_access_key_id:
+    file: ${EASYAUDIT_SECRETS_DIR:-./secrets}/s3_access_key_id
+  s3_secret_access_key:
+    file: ${EASYAUDIT_SECRETS_DIR:-./secrets}/s3_secret_access_key
+
+volumes:
+  postgres_data:
+  object_meta:
+  object_data:

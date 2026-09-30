@@ -1,0 +1,15 @@
+# Single-node Garage (S3-compatible). The RPC port is only used by the local CLI
+# inside the container; only the S3 API (3900) is reachable on the backend network.
+replication_factor = 1
+consistency_mode = "consistent"
+db_engine = "lmdb"
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+
+rpc_secret_file = "/run/secrets/garage_rpc_secret"
+rpc_bind_addr = "127.0.0.1:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+api_bind_addr = "[::]:3900"
+s3_region = "garage"

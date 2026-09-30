@@ -1,0 +1,30 @@
+{
+	admin off
+	auto_https off
+	servers {
+		protocols h1 h2
+	}
+}
+
+# Listens on 8443 inside the container (no privileged port needed); compose publishes it as 443.
+:8443 {
+	tls /run/certs/tls.crt /run/certs/tls.key
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	handle /api/v1/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:8080
+	}
+}

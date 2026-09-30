@@ -16,3 +16,8 @@ node_modules/
 .DS_Store
 *.log
 uv.lock
+
+# Production deployment: never commit real config, secrets or certificates
+deploy/.env
+deploy/secrets/
+deploy/certs/
