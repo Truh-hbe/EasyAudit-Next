@@ -117,6 +117,18 @@ src/easyaudit_next/
 - secrets 和 TLS 证书不进备份包；和数据同盘的备份不算备份，异地拷贝由运维负责。
 - 恢复演练（`deploy/backup/drill.sh`，CI job `backup-restore-drill`）是备份恢复的验收；Pilot-4B 上线下载端点后，必须把"通过 API 下载 Evidence"加进演练。
 
+## 可观测性
+
+- **Health 不对外。** `/health/live`、`/health/ready` 挂在根路径，不在 `/api/v1` 下；网关只转发 `/api/v1/*`，所以外部访问不到（`deploy/smoke.sh` 断言）。旧的 `/health` 已删除。
+- `live` 只表示进程能响应，不访问数据库或任何外部依赖。`ready` 检查三项，全部通过才 200，否则 503：数据库 `SELECT 1`（连接和语句超时各 2 秒，用独立、不池化的 engine）、Alembic 当前 revision 等于镜像内脚本的 head、必需配置存在。响应体只有各项的 `ok`/`fail`，不带 DSN、revision、错误消息；细节写日志。
+- 对象存储暂不纳入 `ready`，因为应用尚未使用它；Pilot-4A 接入 Evidence 上传时再加进去。
+- **request_id 由服务端生成**（UUID4），通过 `X-Request-ID` 响应头返回；忽略客户端传来的同名请求头。未处理异常的 500 响应体带 `request_id`。
+- 日志是 stdout 上一行一个 JSON，只用标准库（`infrastructure/observability.py`），级别由 `LOG_LEVEL` 控制（默认 INFO）。uvicorn 通过 `python -m easyaudit_next.serve` 启动，使用同一个 formatter，自带 access log 关闭。
+- 每个请求结束写一条 access 日志：`timestamp`（UTC）、`level`、`request_id`、`method`、`route`（路由模板，匹配不到为 `null`，不含 query string）、`status_code`、`latency_ms`、`organization_id`、`actor_user_id`（在认证依赖里写入，未认证为 `null`）。
+- **禁止记录**：密码、Cookie、session token/id、Authorization、secret、请求体、Evidence 内容；任何请求头和请求体都不写日志。
+- 异常只记录 `exception_type` 和 `file:line:function` 堆栈，**不记录 `str(exc)`**（SQLAlchemy 异常的 message 带 SQL 和参数）。只有通过 `allow_exception_message` 显式登记的领域异常类型才会记录 message。
+- `observability`、`readiness` 只能被 `api/`、`main.py`、`serve.py` 使用，Review Core 与 Platform 不依赖它们（`scripts/check_architecture.py` 强制）。
+
 ## 明确不做
 
 微服务、分布式事务、消息总线、以 Redis 作为业务真相、通用分布式锁、BPMN 或流程设计器、通用表单构建器、运行时实体设计器、自定义仪表盘、匿名责任令牌、督办实体、原生移动端、由 AI 生成业务真相。

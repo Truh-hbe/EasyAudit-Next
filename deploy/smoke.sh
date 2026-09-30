@@ -64,6 +64,12 @@ case "$code" in 4??) ;; *) fail "login returned $code, expected 4xx" ;; esac
 ctype="$("${CURL[@]}" --output /dev/null --write-out '%{content_type}' "$BASE/api/v1/does-not-exist")"
 case "$ctype" in application/json*) ;; *) fail "/api/v1 fell through to web ($ctype)" ;; esac
 
+step "health endpoints are not exposed through the gateway"
+ctype="$("${CURL[@]}" --output /dev/null --write-out '%{content_type}' "$BASE/health/ready")"
+case "$ctype" in application/json*) fail "/health/ready reached the API through the gateway" ;; esac
+body="$("${CURL[@]}" "$BASE/health/live")"
+case "$body" in *'"status"'*) fail "/health/live reached the API through the gateway" ;; esac
+
 step "plain HTTP is not served"
 if curl --silent --max-time 3 --output /dev/null "http://localhost:80/" 2>/dev/null; then
   fail "port 80 answered"

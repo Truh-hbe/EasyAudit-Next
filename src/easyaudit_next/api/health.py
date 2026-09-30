@@ -1,0 +1,39 @@
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from sqlalchemy import Engine
+
+from easyaudit_next.api.contracts import LiveResponse, ReadyChecks, ReadyResponse
+from easyaudit_next.infrastructure.readiness import (
+    get_expected_head,
+    get_readiness_engine,
+    run_readiness,
+)
+from easyaudit_next.platform.settings import get_settings
+
+# Mounted at the root, not under /api/v1: the gateway only forwards /api/v1/* to the API,
+# so these endpoints are not reachable from outside.
+health_router = APIRouter(prefix="/health", tags=["system"])
+
+ReadinessEngine = Annotated[Engine, Depends(get_readiness_engine)]
+
+
+@health_router.get("/live", response_model=LiveResponse, operation_id="getHealthLive")
+def get_health_live() -> LiveResponse:
+    """Process is up. Touches neither the database nor any external dependency."""
+    return LiveResponse(status="ok")
+
+
+@health_router.get(
+    "/ready",
+    response_model=ReadyResponse,
+    responses={503: {"model": ReadyResponse}},
+    operation_id="getHealthReady",
+)
+def get_health_ready(engine: ReadinessEngine) -> JSONResponse:
+    """Database reachable, alembic at head, required configuration present."""
+    checks = run_readiness(get_settings(), engine, get_expected_head)
+    ready = all(value == "ok" for value in checks.values())
+    body = ReadyResponse(status="ok" if ready else "fail", checks=ReadyChecks(**checks))
+    return JSONResponse(body.model_dump(), status_code=200 if ready else 503)

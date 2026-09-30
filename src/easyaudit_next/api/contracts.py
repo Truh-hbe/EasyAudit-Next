@@ -7,11 +7,25 @@ from pydantic import BaseModel, ConfigDict, Field
 from easyaudit_next.platform.domain.models import PlatformRole
 
 
-class HealthResponse(BaseModel):
+class LiveResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     status: Literal["ok"]
-    stage: Literal["M1.4"]
+
+
+class ReadyChecks(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    configuration: Literal["ok", "fail"]
+    database: Literal["ok", "fail"]
+    migrations: Literal["ok", "fail"]
+
+
+class ReadyResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["ok", "fail"]
+    checks: ReadyChecks
 
 
 class DomainModelResponse(BaseModel):

@@ -20,4 +20,4 @@ USER 10001:10001
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["uvicorn", "easyaudit_next.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "easyaudit_next.serve"]

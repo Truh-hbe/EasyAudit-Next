@@ -5,13 +5,6 @@ from easyaudit_next.main import create_app
 client = TestClient(create_app())
 
 
-def test_health_endpoint_reports_m14() -> None:
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok", "stage": "M1.4"}
-
-
 def test_domain_metadata_exposes_corrected_boundaries() -> None:
     response = client.get("/api/v1/meta/domain-model")
     payload = response.json()
@@ -27,7 +20,7 @@ def test_domain_metadata_exposes_corrected_boundaries() -> None:
 def test_openapi_contract_has_stable_operation_ids() -> None:
     schema = client.get("/openapi.json").json()
 
-    assert schema["paths"]["/health"]["get"]["operationId"] == "getHealth"
+    assert schema["paths"]["/health/live"]["get"]["operationId"] == "getHealthLive"
     assert schema["paths"]["/api/v1/meta/domain-model"]["get"]["operationId"] == "getDomainModel"
     assert schema["paths"]["/api/v1/auth/login"]["post"]["operationId"] == "login"
     assert schema["paths"]["/api/v1/admin/users"]["post"]["operationId"] == "createAdminUser"
