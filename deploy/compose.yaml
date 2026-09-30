@@ -5,6 +5,8 @@
 # container IPs directly; treat the host as trusted.
 # Every service sets `user:` explicitly; there are no root exceptions.
 # Rules are enforced by tests/unit/test_deploy_compose.py.
+# Every command needs EASYAUDIT_RELEASE (the git commit SHA of this checkout): built images are
+# tagged with it and carry it as the org.opencontainers.image.revision label.
 
 name: easyaudit
 
@@ -13,9 +15,13 @@ x-hardening: &hardening
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
 
+x-release-labels: &release-labels
+  - "org.opencontainers.image.revision=${EASYAUDIT_RELEASE:?EASYAUDIT_RELEASE must be the git commit SHA}"
+
 x-api-build: &api-build
   context: ..
   dockerfile: Dockerfile
+  labels: *release-labels
 
 x-api-env: &api-env
   POSTGRES_HOST: postgres
@@ -58,14 +64,15 @@ services:
     <<: *hardening
     build:
       context: ../web
-    image: easyaudit/web:local
+      labels: *release-labels
+    image: "easyaudit/web:${EASYAUDIT_RELEASE:?EASYAUDIT_RELEASE must be the git commit SHA}"
     user: "101:101"
     networks: [edge]
 
   api:
     <<: *hardening
     build: *api-build
-    image: easyaudit/api:local
+    image: "easyaudit/api:${EASYAUDIT_RELEASE:?EASYAUDIT_RELEASE must be the git commit SHA}"
     user: "10001:10001"
     environment:
       <<: *api-env
@@ -93,7 +100,7 @@ services:
   # The API never migrates on startup.
   migrate:
     build: *api-build
-    image: easyaudit/api:local
+    image: "easyaudit/api:${EASYAUDIT_RELEASE:?EASYAUDIT_RELEASE must be the git commit SHA}"
     user: "10001:10001"
     profiles: ["migrate"]
     security_opt: ["no-new-privileges:true"]
@@ -108,7 +115,7 @@ services:
 
   postgres:
     <<: *hardening
-    image: postgres:17.11-alpine3.24
+    image: &postgres-image postgres:17.11-alpine3.24
     user: "70:70"
     environment:
       POSTGRES_DB: easyaudit
@@ -130,7 +137,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/object-storage/Dockerfile
-    image: easyaudit/object-storage:local
+      labels: *release-labels
+    image: "easyaudit/object-storage:${EASYAUDIT_RELEASE:?EASYAUDIT_RELEASE must be the git commit SHA}"
     user: "10001:10001"
     environment:
       S3_BUCKET: easyaudit-evidence
@@ -145,6 +153,50 @@ services:
       interval: 5s
       timeout: 10s
       retries: 30
+    networks: [backend]
+
+  # One-shot backup/restore tools (deploy/backup/*.sh run them with `docker compose run --rm -T`).
+  # They join only the internal backend network and publish nothing. The scripts override
+  # `user` with the invoking operator's uid so they can write the 0700 backup directory.
+  db-tool:
+    profiles: ["backup"]
+    image: *postgres-image  # same version as the server: pg_dump/pg_restore must match it
+    user: "70:70"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment:
+      PGHOST: postgres
+      PGUSER: easyaudit
+      PGDATABASE: easyaudit
+    secrets: [postgres_password]
+    # libpq has no password-file variable, so the secret is read here instead of being
+    # written into compose or the container environment listing.
+    entrypoint: ["/bin/sh", "-c", 'PGPASSWORD="$$(cat /run/secrets/postgres_password)" exec "$$@"', "sh"]
+    networks: [backend]
+
+  # rclone speaks S3 only, so backups do not depend on Garage internals.
+  object-tool:
+    profiles: ["backup"]
+    image: rclone/rclone:1.75.1
+    user: "10003:10003"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment:
+      HOME: /tmp
+      RCLONE_CONFIG_EA_TYPE: s3
+      RCLONE_CONFIG_EA_PROVIDER: Other
+      RCLONE_CONFIG_EA_ENDPOINT: http://object-storage:3900
+      RCLONE_CONFIG_EA_REGION: garage
+      RCLONE_CONFIG_EA_FORCE_PATH_STYLE: "true"
+      # The app key cannot create buckets; never try.
+      RCLONE_CONFIG_EA_NO_CHECK_BUCKET: "true"
+    secrets: [s3_access_key_id, s3_secret_access_key]
+    tmpfs: ["/tmp"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'export RCLONE_CONFIG_EA_ACCESS_KEY_ID="$$(cat /run/secrets/s3_access_key_id)" RCLONE_CONFIG_EA_SECRET_ACCESS_KEY="$$(cat /run/secrets/s3_secret_access_key)"; exec rclone "$$@"'
+      - rclone
     networks: [backend]
 
 networks:

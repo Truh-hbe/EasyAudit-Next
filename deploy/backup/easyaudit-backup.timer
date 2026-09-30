@@ -1,0 +1,13 @@
+# Example unit: install next to easyaudit-backup.service, then
+#   systemctl enable --now easyaudit-backup.timer
+# One backup per day keeps RPO within 24h; check `systemctl list-timers` and the service journal.
+[Unit]
+Description=Daily EasyAudit backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

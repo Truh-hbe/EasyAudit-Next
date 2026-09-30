@@ -10,7 +10,11 @@ Private Network → gateway (Caddy, 仅 :443) → { web (nginx, SPA), api (FastA
 - 所有容器以非 root 运行，所有镜像固定到具体版本（`tests/unit/test_deploy_compose.py` 强制）。
 - 开发用的根目录 `compose.yaml` 与本目录无关，不要混用。
 
-以下命令都在仓库根目录执行，`DC="docker compose -f deploy/compose.yaml"`。
+以下命令都在仓库根目录执行，`DC="docker compose -f deploy/compose.yaml"`。**每条 compose 命令都需要 `EASYAUDIT_RELEASE`**（没有默认值）：自建镜像用它打 tag（`easyaudit/api:<sha>`），并写入 OCI label `org.opencontainers.image.revision`，这样运行中的容器能对应到具体的 release。
+
+```bash
+export EASYAUDIT_RELEASE=$(git rev-parse HEAD)
+```
 
 ## 1. 准备 secrets 和证书（不提交）
 
@@ -56,14 +60,63 @@ $DC run --rm api easyaudit-next bootstrap-admin \
 
 ## 升级
 
-`git pull` → `$DC build` → `$DC run --rm migrate` → `$DC up -d`。迁移始终在新 API 启动前手动执行。
+`git pull` → `export EASYAUDIT_RELEASE=$(git rev-parse HEAD)` → `$DC build` → `$DC run --rm migrate` → `$DC up -d`。迁移始终在新 API 启动前手动执行。升级要一次做完：`git pull` 之后、`up -d` 之前，备份会因"运行中的镜像与检出版本不一致"而拒绝执行。
+
+## 备份
+
+目标：RPO ≤ 24h，RTO ≤ 4h。工具在 `deploy/backup/`，全部通过一次性容器（`db-tool`、`object-tool`，只接入 `backend` 网络，不发布端口，非 root，`cap_drop: ALL`）访问数据库和对象存储。前置条件：docker compose、python3、flock，且用**非 root** 的运维账号（在 docker 组内，且拥有 0700 的 `deploy/secrets`）执行，容器以该账号的 uid 写备份目录。
+
+```bash
+export EASYAUDIT_RELEASE=$(git rev-parse HEAD)
+EASYAUDIT_BACKUP_DIR=/srv/easyaudit-backups deploy/backup/backup.sh
+```
+
+- 备份目录**权限必须是 0700**（脚本会检查，不满足就拒绝）。每次备份生成 `easyaudit-backup-<UTC 时间戳>/`，内含 `database.dump`（`pg_dump -Fc`）、`objects/`（bucket 的 S3 镜像，用固定版本的 rclone 经 S3 协议拷贝，不依赖 Garage 内部卷）和 `manifest.json`。备份先写到 `.partial` 目录，成功后才改名，因此看到的完整目录一定是成功的备份。
+- **一致性**：先 `pg_dump`，再镜像对象。对象由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守），所以 dump 之后拷贝的对象集合一定是 DB 引用集合的超集。多出来的是孤儿对象，由 Pilot-4B 的孤儿清理处理。备份时会核对"dump 中 Evidence 引用的 storage_key ⊆ 已备份对象"，缺失就整体失败，不产出备份。Evidence 的 sha256/size 与对象不一致只给出警告（写入 manifest 的 `warnings`），`verify` 会把它当作不一致。
+- **manifest**：`backup_timestamp`（UTC，dump 开始时刻）、`release_sha`（读运行中 api 镜像的 revision label，不信任环境变量；api/web/object-storage 三个镜像的 label 必须一致且等于当前检出）、`alembic_revision`（取自 dump 内的 `alembic_version`）、dump 的 sha256、每个对象的 key/size/sha256、各服务的镜像 tag、开始时间与耗时。
+- **保留策略**：默认保留 14 天，`EASYAUDIT_BACKUP_RETENTION_DAYS` 可改。新备份成功之后才清理过期备份。
+- **每天一次**：`easyaudit-backup.service` / `easyaudit-backup.timer` 是 systemd 示例（改路径和账号后安装并 `systemctl enable --now easyaudit-backup.timer`）。
+- **不进备份包**：secrets 和 TLS 证书。新环境生成新的即可，用户密码哈希在数据库里，不受影响；TLS 证书由运维单独保管。
+
+### 已知限制
+
+- **和数据在同一块盘上的备份不算备份。** 备份目录必须在另一块盘或另一台机器上；异地拷贝由运维负责，本仓库不做异地同步。
+- 备份包未加密，只靠目录 0700 保护，包含全部业务数据和证据文件。加密与异地同步不在 Pilot-1B 范围内。
+- 备份在线进行，不停服务：DB 是 `pg_dump` 的一致快照，对象是 dump 之后的镜像（见上文）。
+- 恢复演练的 RTO 是在小数据量、CI 镜像缓存较热的条件下测得的下限；真实 RTO 主要由数据量、镜像构建/拉取和磁盘速度决定，上线前应在目标机器上按实际数据量再演练一次。
+
+## 恢复
+
+恢复**只写入空目标**：数据库里已有表，或 bucket 非空，一律拒绝，没有 `--force`。要恢复就用全新的环境（`down -v`）。
+
+```bash
+deploy/backup/verify.sh BACKUP_DIR                 # 备份包自检，加 --bundle-only 则只查备份包
+deploy/backup/restore.sh database    BACKUP_DIR    # pg_restore 到空库
+deploy/backup/restore.sh objects     BACKUP_DIR    # 对象拷回空 bucket
+deploy/backup/restore.sh environment BACKUP_DIR    # 整个新环境，见下
+```
+
+`restore.sh environment` 的步骤：
+
+1. 检查当前检出是否等于 manifest 里的 `release_sha`（且无未提交改动），不一致就拒绝，并提示 `git checkout <sha>`。
+2. 用**新的** secrets 和证书（按第 1 节准备好）构建镜像，起 postgres 和 object-storage。
+3. 恢复数据库，恢复对象。
+4. 校验 `alembic current` 等于 manifest 的 revision，并且等于该 release 的 head；否则不启动应用。
+5. 启动 api、web、gateway，并运行 `verify.sh`。
+
+`verify.sh` 做三件事：重新计算每个对象的 sha256 并与 manifest 比对；检查数据库里每条 Evidence 的 storage_key 对应对象存在，且 sha256、size 一致；列出全部不一致，有任何不一致就以非零状态退出。恢复后的检查和平时的故障诊断都用它。
+
+### 恢复演练
+
+`deploy/backup/drill.sh` 走完整流程：临时证书和 secrets 部署 → migrate、`bootstrap-admin`（用 stdin 传密码，`getpass` 在没有 TTY 时读 stdin）→ 通过网关的真实 API 建 ReviewPlan、Case、Finding、Action，并往 bucket 放测试对象、登记 Evidence 元数据 → `backup.sh` → `down -v` → 生成新 secrets 和证书 → `restore.sh environment` → 验证（`alembic current` 等于 head、原账号登录、打开原 Case 和 Finding、Evidence 元数据、`verify.sh`），并确认恢复会拒绝非空目标和不匹配的 release。输出 `restore-drill-record.json`（`restore_started_at`、`restore_completed_at`、`actual_rto_seconds`、`backup_timestamp`、`release_sha`、`result`）。CI 对应 `backup-restore-drill` job（不是 required check），记录作为 artifact 上传并打印在日志里。
+
+"通过 API 下载 Evidence"要等 Pilot-4B 的下载端点；`drill_api.py` 的 `check` 里留了扩展点，Pilot-4B 必须把它加进演练。在此之前用对象级 sha256 校验代替。
 
 ## 冒烟测试
 
-`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → migrate → up → HTTPS 验证 → 无非网关端口发布 → down -v）。前置条件：docker compose、openssl、curl、python3。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
+`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → 镜像 label → migrate → up → HTTPS 验证 → 无非网关端口发布 → down -v）。前置条件：docker compose、git、openssl、curl、python3。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
 
 ## 说明
 
 - 对象存储为 Garage（单节点）。应用目前不使用它；证据文件功能（Pilot-4A）接入时使用 `s3_access_key_id`/`s3_secret_access_key` 和 bucket `easyaudit-evidence`，内部端点 `http://object-storage:3900`，region `garage`。
 - API 只信任来自网关固定地址（`172.30.10.10`）的代理头。若该网段与内网冲突，同时修改 `compose.yaml` 中 `edge` 网段、网关 `ipv4_address` 和 `FORWARDED_ALLOW_IPS`（测试会检查后两项一致）。
-- 备份与恢复见 Pilot-1B，本目录尚未覆盖。

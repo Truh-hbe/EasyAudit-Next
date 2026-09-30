@@ -1,6 +1,7 @@
 """Static guardrails for the production topology in deploy/compose.yaml."""
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,10 @@ COMPOSE_PATH = ROOT / "deploy" / "compose.yaml"
 
 # Services allowed to run as root, with the reason. Currently none.
 ROOT_EXCEPTIONS: dict[str, str] = {}
+RELEASE_IMAGE = re.compile(r"^easyaudit/[a-z-]+:\$\{EASYAUDIT_RELEASE:\?[^}]+\}$")
+RELEASE_LABEL = "org.opencontainers.image.revision=${EASYAUDIT_RELEASE:?"
+BUILT_SERVICES = ("web", "api", "migrate", "object-storage")
+TOOL_SERVICES = ("db-tool", "object-tool")
 SECRET_KEY = re.compile(r"(PASSWORD|SECRET|TOKEN|KEY)", re.IGNORECASE)
 
 
@@ -50,9 +55,15 @@ def _dockerfile_bases(dockerfile: Path) -> list[str]:
 
 
 def test_expected_services_exist(compose: dict[str, Any]) -> None:
-    assert {"gateway", "web", "api", "postgres", "object-storage", "migrate"} <= set(
-        _services(compose)
-    )
+    assert {
+        "gateway",
+        "web",
+        "api",
+        "postgres",
+        "object-storage",
+        "migrate",
+        *TOOL_SERVICES,
+    } <= set(_services(compose))
 
 
 def test_only_gateway_publishes_only_443(compose: dict[str, Any]) -> None:
@@ -69,7 +80,8 @@ def test_only_gateway_publishes_only_443(compose: dict[str, Any]) -> None:
 def test_all_images_pinned(compose: dict[str, Any]) -> None:
     for name, service in _services(compose).items():
         if "build" in service:
-            assert _is_pinned(service["image"]), f"{name}: built image {service.get('image')}"
+            # Self-built images are tagged by release SHA (never latest/local); see below.
+            assert RELEASE_IMAGE.match(service["image"]), f"{name}: built image {service['image']}"
             build = service["build"]
             context = COMPOSE_PATH.parent / build["context"]
             dockerfile = context / build.get("dockerfile", "Dockerfile")
@@ -81,11 +93,38 @@ def test_all_images_pinned(compose: dict[str, Any]) -> None:
             assert _is_pinned(service["image"]), f"{name}: {service['image']} is not pinned"
 
 
+def test_built_images_are_tagged_and_labelled_with_the_release(compose: dict[str, Any]) -> None:
+    services = _services(compose)
+    assert {name for name, service in services.items() if "build" in service} == set(BUILT_SERVICES)
+    for name in BUILT_SERVICES:
+        image = services[name]["image"]
+        assert "latest" not in image and ":local" not in image, name
+        assert "${EASYAUDIT_RELEASE:?" in image, f"{name}: tag must require EASYAUDIT_RELEASE"
+        labels = services[name]["build"].get("labels", [])
+        assert any(label.startswith(RELEASE_LABEL) for label in labels), f"{name}: no label"
+
+
+def test_tool_services_are_one_shot_and_isolated(compose: dict[str, Any]) -> None:
+    services = _services(compose)
+    for name in TOOL_SERVICES:
+        service = services[name]
+        assert service["profiles"] == ["backup"], f"{name}: must not start with the stack"
+        assert "ports" not in service, f"{name} must not publish ports"
+        assert "build" not in service and "restart" not in service, name
+        assert set(service["networks"]) == {"backend"}, name
+        assert "depends_on" not in service, name
+        assert not service.get("volumes"), f"{name}: mounts are given per run by the scripts"
+    assert services["db-tool"]["image"] == services["postgres"]["image"]
+    assert services["object-tool"]["image"].startswith("rclone/rclone:")
+    assert set(services["db-tool"]["secrets"]) == {"postgres_password"}
+    assert set(services["object-tool"]["secrets"]) == {"s3_access_key_id", "s3_secret_access_key"}
+
+
 def test_data_services_only_on_internal_network(compose: dict[str, Any]) -> None:
     assert compose["networks"]["backend"]["internal"] is True
     assert not compose["networks"]["edge"].get("internal", False)
     services = _services(compose)
-    for name in ("postgres", "object-storage", "migrate"):
+    for name in ("postgres", "object-storage", "migrate", *TOOL_SERVICES):
         assert set(services[name]["networks"]) == {"backend"}, name
     assert set(services["api"]["networks"]) == {"edge", "backend"}
     assert set(services["gateway"]["networks"]) == {"edge"}
@@ -157,3 +196,17 @@ def test_api_does_not_migrate_on_startup(compose: dict[str, Any]) -> None:
     assert "alembic" not in str(api.get("command", ""))
     assert _services(compose)["migrate"]["command"][:2] == ["alembic", "upgrade"]
     assert "migrate" in _services(compose)["migrate"]["profiles"]
+
+
+def test_operator_scripts_parse() -> None:
+    scripts = sorted([*(ROOT / "deploy").glob("*.sh"), *(ROOT / "deploy" / "backup").glob("*.sh")])
+    assert {path.name for path in scripts} >= {"backup.sh", "restore.sh", "verify.sh", "drill.sh"}
+    for script in scripts:
+        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        assert result.returncode == 0, f"{script}: {result.stderr}"
+
+
+def test_restore_checks_emptiness_before_writing() -> None:
+    text = (ROOT / "deploy" / "backup" / "restore.sh").read_text()
+    assert text.index("require_empty_database") < text.index("db_tool pg_restore")
+    assert text.index("require_empty_bucket") < text.index("copy /data")

@@ -1,0 +1,17 @@
+# Example unit: install as /etc/systemd/system/easyaudit-backup.service and adjust the paths.
+# User must be the operator account that owns deploy/secrets (0700), is in the docker group and
+# is NOT root: the tool containers run under that uid. If the stack is configured through
+# environment variables rather than deploy/.env, set the same EASYAUDIT_SECRETS_DIR /
+# EASYAUDIT_CERTS_DIR here.
+[Unit]
+Description=EasyAudit backup (pg_dump + object mirror)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=easyaudit
+WorkingDirectory=/opt/easyaudit
+Environment=EASYAUDIT_BACKUP_DIR=/srv/easyaudit-backups
+Environment=EASYAUDIT_BACKUP_RETENTION_DAYS=14
+ExecStart=/bin/bash -c 'EASYAUDIT_RELEASE="$(git -C /opt/easyaudit rev-parse HEAD)" exec /opt/easyaudit/deploy/backup/backup.sh'

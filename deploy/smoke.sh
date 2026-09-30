@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of deploy/compose.yaml with throwaway certs and secrets.
-# Usage: deploy/smoke.sh   (needs docker compose, openssl, curl, python3; port 443 or EASYAUDIT_HTTPS_PORT free)
+# Usage: deploy/smoke.sh   (needs docker compose, git, openssl, curl, python3; port 443 or EASYAUDIT_HTTPS_PORT free)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deploy/testenv.sh
+source "$HERE/testenv.sh"
 WORK="$(mktemp -d)"
+# Built images are tagged with, and labelled by, the release SHA of this checkout.
+export EASYAUDIT_RELEASE="${EASYAUDIT_RELEASE:-$(git -C "$HERE" rev-parse HEAD)}"
 export EASYAUDIT_SECRETS_DIR="$WORK/secrets"
 export EASYAUDIT_CERTS_DIR="$WORK/certs"
 export EASYAUDIT_HTTPS_PORT="${EASYAUDIT_HTTPS_PORT:-443}"
@@ -26,20 +30,18 @@ fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 step() { echo "==> $*"; }
 
 step "generating temporary certificate and secrets"
-mkdir -p "$EASYAUDIT_SECRETS_DIR" "$EASYAUDIT_CERTS_DIR"
-chmod 700 "$EASYAUDIT_SECRETS_DIR" "$EASYAUDIT_CERTS_DIR"
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
-  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
-  -keyout "$EASYAUDIT_CERTS_DIR/tls.key" -out "$EASYAUDIT_CERTS_DIR/tls.crt" 2>/dev/null
-openssl rand -hex 24 | tr -d '\n' > "$EASYAUDIT_SECRETS_DIR/postgres_password"
-openssl rand -hex 32 | tr -d '\n' > "$EASYAUDIT_SECRETS_DIR/garage_rpc_secret"
-printf 'GK%s' "$(openssl rand -hex 12)" > "$EASYAUDIT_SECRETS_DIR/s3_access_key_id"
-openssl rand -hex 32 | tr -d '\n' > "$EASYAUDIT_SECRETS_DIR/s3_secret_access_key"
-# Containers run as non-root uids; the 0700 directories protect these files on the host.
-chmod 444 "$EASYAUDIT_SECRETS_DIR"/* "$EASYAUDIT_CERTS_DIR"/*
+make_test_certs "$EASYAUDIT_CERTS_DIR"
+make_test_secrets "$EASYAUDIT_SECRETS_DIR"
 
 step "build"
 "${DC[@]}" --profile migrate build
+
+step "built images carry the release revision label"
+for image in api web object-storage; do
+  revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "easyaudit/$image:$EASYAUDIT_RELEASE")" || fail "image easyaudit/$image:$EASYAUDIT_RELEASE missing"
+  [ "$revision" = "$EASYAUDIT_RELEASE" ] || fail "easyaudit/$image revision label is '$revision'"
+done
 
 step "start postgres and object-storage"
 "${DC[@]}" up -d --wait postgres object-storage
