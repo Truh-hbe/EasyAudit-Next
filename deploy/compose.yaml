@@ -26,6 +26,9 @@ services:
     <<: *hardening
     image: caddy:2.11.4-alpine
     user: "10002:10002"
+    # The caddy binary carries file capability cap_net_bind_service; exec fails if that is
+    # missing from the bounding set, even though we only listen on 8443.
+    cap_add: ["NET_BIND_SERVICE"]
     ports:
       # Only 443 is published. EASYAUDIT_HTTPS_PORT exists for local smoke runs only.
       - target: 8443
