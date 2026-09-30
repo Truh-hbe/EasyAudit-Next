@@ -36,7 +36,7 @@ cd web && npm run test:browser:real     # 需要真实 FastAPI + PostgreSQL，�
 
 ## 多 Agent 分工（Paseo Profile）
 
-同一个工作目录同一时间只允许一个 Agent 写代码。需要并行时，用 `git worktree` 分开。
+同一个工作目录同一时间只允许一个 Agent 写代码。需要并行时，用 `git worktree` 分开。Paseo worktree 按 `paseo.json` 初始化，共用主检出里 `docker compose up -d db` 启动的 PostgreSQL，因此某个分支的迁移会作用到所有 worktree。
 
 | Profile | 模型 | 模式 | 用途 |
 |---|---|---|---|

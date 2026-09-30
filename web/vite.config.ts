@@ -11,7 +11,7 @@ export default defineConfig({
     https: {},
     proxy: {
       '/api/v1': {
-        target: 'http://127.0.0.1:8000',
+        target: process.env.EASYAUDIT_API_URL ?? 'http://127.0.0.1:8000',
         changeOrigin: false,
       },
     },
