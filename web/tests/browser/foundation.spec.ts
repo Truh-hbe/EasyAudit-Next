@@ -238,14 +238,10 @@ test('Workbench renders only server-projected categories and links to original r
 test('ReviewCase collection uses the server envelope for pagination and never renders hidden candidates', async ({ page }) => {
   await stubReadySession(page)
   const firstPageGate = createDeferred()
-  let isFirstRequest = true
   await page.route((url) => url.pathname === '/api/v1/review-cases', async (route) => {
+    await firstPageGate.promise
     const url = new URL(route.request().url())
     const offset = Number(url.searchParams.get('offset') ?? '0')
-    if (isFirstRequest) {
-      isFirstRequest = false
-      await firstPageGate.promise
-    }
     const items = offset === 0
       ? [caseResponse('case-a', { title: 'Visible A' }), caseResponse('case-b', { title: 'Visible B' })]
       : [caseResponse('case-c', { title: 'Visible C' })]
