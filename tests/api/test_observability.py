@@ -268,3 +268,29 @@ def test_organization_and_actor_ids_are_uuids(log_output: io.StringIO) -> None:
     UUID(entry["organization_id"])
     UUID(entry["actor_user_id"])
     assert uuid4() != UUID(entry["actor_user_id"])
+
+
+def test_successful_probes_are_not_logged_at_info_but_failures_are(
+    log_output: io.StringIO,
+) -> None:
+    from sqlalchemy import create_engine
+
+    from easyaudit_next.infrastructure.readiness import get_readiness_engine
+
+    app = build_app(AuthStub())
+    client = TestClient(app)
+
+    assert client.get("/health/live").status_code == 200
+    assert access_lines(log_output) == []
+
+    app.dependency_overrides[get_readiness_engine] = lambda: create_engine(
+        "postgresql+psycopg://u:p@127.0.0.1:1/db", connect_args={"connect_timeout": 1}
+    )
+    assert client.get("/health/ready").status_code == 503
+
+    [entry] = access_lines(log_output)
+    assert entry["route"] == "/health/ready"
+    assert entry["status_code"] == 503
+    warnings = [line for line in lines(log_output) if line["level"] == "WARNING"]
+    assert warnings and warnings[0]["message"] == "readiness_check_failed"
+    assert warnings[0]["request_id"] == entry["request_id"]

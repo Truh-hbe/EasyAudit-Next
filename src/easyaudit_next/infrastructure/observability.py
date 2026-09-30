@@ -22,6 +22,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "X-Request-ID"
 ACCESS_LOGGER = logging.getLogger("easyaudit.access")
+PROBE_ROUTES = frozenset({"/health/live", "/health/ready"})
 APP_LOGGER = logging.getLogger("easyaudit.app")
 
 _MAX_STACK_FRAMES = 40
@@ -140,12 +141,16 @@ class RequestContextMiddleware:
                 await _send_internal_error(send, request_id)
         finally:
             route = scope.get("route")
-            ACCESS_LOGGER.info(
+            route_path = getattr(route, "path", None)
+            # Successful orchestrator probes run every few seconds; keep them out of INFO.
+            probe_ok = route_path in PROBE_ROUTES and 200 <= status_code < 300
+            ACCESS_LOGGER.log(
+                logging.DEBUG if probe_ok else logging.INFO,
                 "request",
                 extra={
                     "fields": {
                         "method": scope["method"],
-                        "route": getattr(route, "path", None),
+                        "route": route_path,
                         "status_code": status_code,
                         "latency_ms": round((time.perf_counter() - started) * 1000, 2),
                         **actor,

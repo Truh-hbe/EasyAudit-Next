@@ -125,6 +125,8 @@ src/easyaudit_next/
 - **request_id 由服务端生成**（UUID4），通过 `X-Request-ID` 响应头返回；忽略客户端传来的同名请求头。未处理异常的 500 响应体带 `request_id`。
 - 日志是 stdout 上一行一个 JSON，只用标准库（`infrastructure/observability.py`），级别由 `LOG_LEVEL` 控制（默认 INFO）。uvicorn 通过 `python -m easyaudit_next.serve` 启动，使用同一个 formatter，自带 access log 关闭。
 - 每个请求结束写一条 access 日志：`timestamp`（UTC）、`level`、`request_id`、`method`、`route`（路由模板，匹配不到为 `null`，不含 query string）、`status_code`、`latency_ms`、`organization_id`、`actor_user_id`（在认证依赖里写入，未认证为 `null`）。
+- 探针（`/health/live`、`/health/ready`）返回 2xx 时 access 日志级别为 DEBUG，默认 INFO 下不输出；非 2xx（如 ready 的 503）照常 INFO，ready 失败的细节仍以 WARNING 记录。
+- "必需配置"的定义：`DATABASE_URL` 非空且可解析；`APP_ENV` 不是 `development` 时，`DATABASE_URL` 不能等于内置的开发默认值（说明密钥没有注入）。
 - **禁止记录**：密码、Cookie、session token/id、Authorization、secret、请求体、Evidence 内容；任何请求头和请求体都不写日志。
 - 异常只记录 `exception_type` 和 `file:line:function` 堆栈，**不记录 `str(exc)`**（SQLAlchemy 异常的 message 带 SQL 和参数）。只有通过 `allow_exception_message` 显式登记的领域异常类型才会记录 message。
 - `observability`、`readiness` 只能被 `api/`、`main.py`、`serve.py` 使用，Review Core 与 Platform 不依赖它们（`scripts/check_architecture.py` 强制）。
