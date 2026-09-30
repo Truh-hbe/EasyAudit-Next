@@ -68,6 +68,7 @@ class AuthenticationService:
         audit: PlatformAuditRepository,
         *,
         session_ttl: timedelta = timedelta(hours=12),
+        touch_interval: timedelta = timedelta(0),
         password_hash: PasswordHash | None = None,
     ) -> None:
         self._credentials = credentials
@@ -75,6 +76,7 @@ class AuthenticationService:
         self._users = users
         self._audit = audit
         self._session_ttl = session_ttl
+        self._touch_interval = touch_interval
         self._password_hash = password_hash or _DEFAULT_PASSWORD_HASH
         self._dummy_hash = _DUMMY_PASSWORD_HASH
 
@@ -150,10 +152,14 @@ class AuthenticationService:
 
     def touch(self, auth_session: AuthSession, *, now: datetime | None = None) -> None:
         current_time = now or datetime.now(UTC)
+        seen = auth_session.last_seen_at
+        if seen is not None and seen >= current_time - self._touch_interval:
+            return  # touched recently: no statement at all. The SQL guard covers stale snapshots.
         self._sessions.touch_if_active(
             auth_session.id,
             auth_session.token_hash,
             current_time,
+            min_interval=self._touch_interval,
         )
 
     def logout(self, auth_session: AuthSession, user: User, *, now: datetime | None = None) -> None:

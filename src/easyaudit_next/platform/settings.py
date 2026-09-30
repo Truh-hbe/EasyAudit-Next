@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     database_url: str = DEFAULT_DATABASE_URL
     session_cookie_name: Literal["__Host-easyaudit_session"] = "__Host-easyaudit_session"
     session_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
+    session_touch_interval_seconds: int = Field(default=300, ge=0, le=3600)
     db_pool_size: int = Field(default=10, ge=1, le=100)
     db_max_overflow: int = Field(default=5, ge=0, le=100)
     db_pool_timeout_seconds: float = Field(default=10.0, gt=0, le=120)

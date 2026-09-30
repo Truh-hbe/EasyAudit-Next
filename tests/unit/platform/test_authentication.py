@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -70,6 +70,8 @@ class SessionRepository:
         session_id: AuthSessionId,
         expected_token_hash: str,
         touched_at: datetime,
+        *,
+        min_interval: timedelta = timedelta(0),
     ) -> AuthSession | None:
         current = self.items.get(session_id)
         if (

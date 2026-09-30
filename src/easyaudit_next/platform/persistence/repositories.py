@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
@@ -330,7 +330,11 @@ class SqlAlchemyAuthSessionRepository:
         session_id: AuthSessionId,
         expected_token_hash: str,
         touched_at: datetime,
+        *,
+        min_interval: timedelta = timedelta(0),
     ) -> AuthSession | None:
+        """Record activity; None when nothing was written (inactive, or touched within
+        `min_interval` already: then no UPDATE takes place at all)."""
         result = self._session.execute(
             sa_update(AuthSessionRecord)
             .where(
@@ -338,6 +342,10 @@ class SqlAlchemyAuthSessionRepository:
                 AuthSessionRecord.token_hash == expected_token_hash,
                 AuthSessionRecord.revoked_at.is_(None),
                 AuthSessionRecord.expires_at > touched_at,
+                or_(
+                    AuthSessionRecord.last_seen_at.is_(None),
+                    AuthSessionRecord.last_seen_at < touched_at - min_interval,
+                ),
             )
             .values(last_seen_at=touched_at)
             .returning(AuthSessionRecord.id),

@@ -60,6 +60,7 @@ def get_authentication_service(
         SqlAlchemyUserRepository(session),
         SqlAlchemyPlatformAuditRepository(session),
         session_ttl=timedelta(seconds=settings.session_ttl_seconds),
+        touch_interval=timedelta(seconds=settings.session_touch_interval_seconds),
     )
 
 

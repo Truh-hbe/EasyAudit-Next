@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, OrganizationId, UserId
@@ -78,6 +78,8 @@ class AuthSessionRepository(Protocol):
         session_id: AuthSessionId,
         expected_token_hash: str,
         touched_at: datetime,
+        *,
+        min_interval: timedelta = timedelta(0),
     ) -> AuthSession | None: ...
 
     def revoke_if_active(self, session_id: AuthSessionId, revoked_at: datetime) -> bool: ...

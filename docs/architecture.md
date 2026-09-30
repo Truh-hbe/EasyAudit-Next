@@ -62,6 +62,11 @@ src/easyaudit_next/
 - **超时的 HTTP 语义**：`statement_timeout`、`lock_timeout` 到期（SQLSTATE 57014 / 55P03）映射为 **503 + `Retry-After: 1`**，body 只有 `detail` 与 `request_id`，由 `RequestContextMiddleware` 统一处理并记 WARNING `database_timeout`。不用 409：409 的含义是"数据已过期，刷新后重试"，而超时并没有发现生命周期变化，只是暂时拿不到资源；前端对 409 会刷新数据，对 503 才是正确的"稍后重试同一个请求"。死锁（40P01）与 idle-in-transaction 终止不在此列，仍是 500（说明代码违反了加锁顺序或持有了空闲事务）。
 - **启动校验**：lifespan 在后台用业务 engine 读 `pg_settings`，与配置比对。不一致写 ERROR（`db_settings_mismatch`，字段 `setting/expected/actual`）并让 `/health/ready` 的 `db_settings` 为 `fail`，进程不退出；数据库暂时不可达则每 5 秒重试，期间 `db_settings` 为 `fail`（未验证）。
 
+## Session 活动时间
+
+- `auth_sessions.last_seen_at` 最多每 `SESSION_TOUCH_INTERVAL_SECONDS`（默认 300）写一次。`AuthenticationService.touch` 在已加载的快照显示间隔内已写过时不发任何 SQL；UPDATE 自带 `last_seen_at IS NULL OR last_seen_at < touched_at - interval`，过期快照不会把时间往回写，也不会在已撤销/已过期的 Session 上写入。
+- `last_seen_at` 只是运维信息，精度就是这个间隔；它不参与授权，`expires_at` 才决定 Session 是否可用。
+
 ## 授权
 
 - 授权完全由 Case 固定的精确 Scenario 版本判断（`ScenarioPolicy.authorization.allows`），不能写成 `role_key == "lead"`，也不能给 `system_admin` 业务捷径。
