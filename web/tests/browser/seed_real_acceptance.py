@@ -96,7 +96,7 @@ def _case(
         title=title,
         lifecycle="in_progress",
         planned_start_at=datetime(2026, 8, 20, tzinfo=UTC),
-        planned_end_at=datetime(2026, 9, 15, tzinfo=UTC),
+        planned_end_at=datetime(2099, 12, 31, tzinfo=UTC),
         started_at=datetime(2026, 8, 21, tzinfo=UTC),
         fieldwork_completed_at=None,
         closed_at=None,

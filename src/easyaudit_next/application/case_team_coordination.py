@@ -191,7 +191,7 @@ class CaseTeamUserCoordinator:
         target_user_id: UserId,
     ) -> User:
         # The Organization lock is held before this enumeration. Every Case lock and
-        # User lock below follows the Gate's deterministic order.
+        # User lock below follows the documented Organization -> Case -> User order.
         affected_cases = self._review_repository.list_cases_for_member(
             organization_id,
             target_user_id,

@@ -10,10 +10,9 @@ dist/
 build/
 *.egg-info/
 node_modules/
-.easyaudit/runtime/
 .env
 .env.*
 !.env.example
 .DS_Store
 *.log
-.easyaudit-review/
+uv.lock
