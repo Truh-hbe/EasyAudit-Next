@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of deploy/compose.yaml with throwaway certs and secrets.
-# Usage: deploy/smoke.sh   (needs docker compose, openssl, curl; port 443 or EASYAUDIT_HTTPS_PORT free)
+# Usage: deploy/smoke.sh   (needs docker compose, openssl, curl, python3; port 443 or EASYAUDIT_HTTPS_PORT free)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

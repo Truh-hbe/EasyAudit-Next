@@ -60,7 +60,7 @@ $DC run --rm api easyaudit-next bootstrap-admin \
 
 ## 冒烟测试
 
-`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → migrate → up → HTTPS 验证 → 无非网关端口发布 → down -v）。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
+`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → migrate → up → HTTPS 验证 → 无非网关端口发布 → down -v）。前置条件：docker compose、openssl、curl、python3。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
 
 ## 说明
 

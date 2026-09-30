@@ -1,6 +1,8 @@
 # Production topology (private network):
 #   client -> gateway:443 -> { web, api }      api -> { postgres, object-storage }
-# Only the gateway publishes a port. `backend` is internal: no host access, no egress.
+# Only the gateway publishes a port. `backend` is internal: no egress.
+# There is no host port publishing besides the gateway, but a Linux host can still reach
+# container IPs directly; treat the host as trusted.
 # Every service sets `user:` explicitly; there are no root exceptions.
 # Rules are enforced by tests/unit/test_deploy_compose.py.
 

@@ -30,10 +30,11 @@ if g status | grep -q "NO ROLE ASSIGNED"; then
   g layout assign -z dc1 -c 10G "$node_id"
   g layout apply --version 1
 fi
-# Accepted risk: `key import` takes the secret as an argv element, visible in /proc/*/cmdline
-# for the few milliseconds it runs. This container is single-purpose, has no exec surface
-# and runs only this script; Garage v2.4.1 offers no file/stdin variant, and the admin-API
-# alternative would need an extra token secret and listener.
+# Accepted risk: `key import` takes the secret as an argv element. While the import process
+# runs, it is visible to users or collection tools that can read process arguments, inside
+# the container and on the host. Mitigate on the host with the `hidepid` mount option on
+# /proc. Garage v2.4.1 offers no file/stdin variant, and the admin-API alternative would
+# need an extra token secret and listener.
 g bucket info "$BUCKET" >/dev/null 2>&1 || g bucket create "$BUCKET"
 g key info "$KEY_ID" >/dev/null 2>&1 || g key import --yes -n easyaudit-app "$KEY_ID" "$KEY_SECRET"
 g bucket allow --read --write --owner "$BUCKET" --key "$KEY_ID"
