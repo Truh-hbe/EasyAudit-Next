@@ -30,6 +30,16 @@ DOWNSTREAM_IMPORT_PREFIXES = (
     "easyaudit_next.notifications",
     "easyaudit_next.workbench",
 )
+OBSERVABILITY_IMPORT_PREFIXES = (
+    "easyaudit_next.infrastructure.observability",
+    "easyaudit_next.infrastructure.readiness",
+)
+OBSERVABILITY_CONSUMERS = (
+    SOURCE_ROOT / "api",
+    SOURCE_ROOT / "infrastructure",
+    SOURCE_ROOT / "main.py",
+    SOURCE_ROOT / "serve.py",
+)
 FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS = {
     "submit_rectification",
     "update_assigned_action",
@@ -89,6 +99,14 @@ def main() -> None:
             ):
                 raise SystemExit(
                     "Scenario modules may only be imported by the composition root: "
+                    f"{path}: {module}"
+                )
+            if module.startswith(OBSERVABILITY_IMPORT_PREFIXES) and not any(
+                path == allowed or path.is_relative_to(allowed)
+                for allowed in OBSERVABILITY_CONSUMERS
+            ):
+                raise SystemExit(
+                    "Observability/readiness infrastructure may only be used by the API edge: "
                     f"{path}: {module}"
                 )
             if path.is_relative_to(REVIEW_CORE_ROOT) and module.startswith(

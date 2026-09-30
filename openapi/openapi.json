@@ -5,9 +5,15 @@
     "version": "0.0.0"
   },
   "paths": {
-    "/health": {
+    "/health/live": {
       "get": {
-        "operationId": "getHealth",
+        "operationId": "getHealthLive",
+        "tags": ["system"]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "getHealthReady",
         "tags": ["system"]
       }
     },

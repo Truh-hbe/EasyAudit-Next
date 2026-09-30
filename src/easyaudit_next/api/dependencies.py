@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from easyaudit_next.infrastructure.database import create_database_engine, create_session_factory
+from easyaudit_next.infrastructure.observability import bind_actor
 from easyaudit_next.platform.application.authentication import (
     AuthenticationService,
     InvalidSessionError,
@@ -83,6 +84,7 @@ def get_current_identity(
             detail="Authentication required",
         ) from exc
 
+    bind_actor(user.organization_id, user.id)
     try:
         yield CurrentIdentity(auth_session=auth_session, user=user)
     finally:

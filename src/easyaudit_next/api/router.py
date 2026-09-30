@@ -14,7 +14,6 @@ from easyaudit_next.api.contracts import (
     DepartmentPatchRequest,
     DepartmentResponse,
     DomainModelResponse,
-    HealthResponse,
     LoginRequest,
     LoginResponse,
     OrganizationResponse,
@@ -79,16 +78,6 @@ CORE_CONCEPTS = (
     "Activity",
     "Submission",
 )
-
-
-@api_router.get(
-    "/health",
-    response_model=HealthResponse,
-    operation_id="getHealth",
-    tags=["system"],
-)
-def get_health() -> HealthResponse:
-    return HealthResponse(status="ok", stage="M1.4")
 
 
 @api_router.get(
