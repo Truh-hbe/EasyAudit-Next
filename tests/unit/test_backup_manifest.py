@@ -93,12 +93,52 @@ def test_manifest_records_release_revision_timestamps_and_hashes(tmp_path: Path)
     assert manifest.verify_bundle(directory) == []
 
 
-def test_backup_fails_when_the_database_references_a_missing_object(tmp_path: Path) -> None:
+def test_missing_referenced_object_degrades_the_backup_but_keeps_it(tmp_path: Path) -> None:
     directory = _bundle(tmp_path, {"present": b"x"})
     dump = _dump_data(evidences=[("present", b"x"), ("missing/key", b"y")])
-    with pytest.raises(manifest.BackupIncomplete, match="missing/key"):
-        _build(directory, dump)
-    assert not (directory / "manifest.json").exists()
+    result = _build(directory, dump)
+    assert result["integrity"] == "degraded"
+    assert any("missing/key" in p for p in result["integrity_problems"])
+    assert manifest.verify_bundle(directory) == []  # the bundle itself is consistent
+    assert any("missing/key" in p for p in manifest.verify_bundle(directory, fail_degraded=True))
+
+
+def test_healthy_backup_is_marked_ok(tmp_path: Path) -> None:
+    directory = _bundle(tmp_path, {"k": b"v"})
+    result = _build(directory, _dump_data(evidences=[("k", b"v")]))
+    assert result["integrity"] == "ok" and result["integrity_problems"] == []
+    assert manifest.verify_bundle(directory, fail_degraded=True) == []
+
+
+def test_build_exits_3_for_degraded_and_0_for_ok(tmp_path: Path) -> None:
+    def run(name: str, evidences: list[tuple[str, bytes]]) -> int:
+        (tmp_path / name).mkdir()
+        directory = _bundle(tmp_path / name, {"k": b"v"})
+        data = tmp_path / f"{name}.sql"
+        data.write_text(_dump_data(evidences=evidences))
+        images = tmp_path / f"{name}.json"
+        images.write_text(json.dumps({"release_sha": RELEASE, "images": {}}))
+        return int(
+            manifest.main(
+                [
+                    "build",
+                    "--dir",
+                    str(directory),
+                    "--started-at",
+                    "2026-09-30T02:00:00Z",
+                    "--images",
+                    str(images),
+                    "--bucket",
+                    "b",
+                    "--dump-data",
+                    str(data),
+                ]
+            )
+        )
+
+    assert run("ok", [("k", b"v")]) == 0
+    assert run("bad", [("k", b"v"), ("gone", b"g")]) == manifest.EXIT_DEGRADED == 3
+    assert json.loads((tmp_path / "bad" / "manifest.json").read_text())["integrity"] == "degraded"
 
 
 def test_extra_objects_are_orphans_not_failures(tmp_path: Path) -> None:
@@ -107,12 +147,13 @@ def test_extra_objects_are_orphans_not_failures(tmp_path: Path) -> None:
     assert result["orphan_object_count"] == 1
 
 
-def test_sha_or_size_mismatch_against_the_database_is_a_warning(tmp_path: Path) -> None:
+def test_sha_or_size_mismatch_against_the_database_degrades_the_backup(tmp_path: Path) -> None:
     directory = _bundle(tmp_path, {"k": b"actual"})
     result = _build(directory, _dump_data(evidences=[("k", b"claimed")]))
-    assert len(result["warnings"]) == 2
-    assert any("size" in w for w in result["warnings"])
-    assert any("sha256" in w for w in result["warnings"])
+    assert result["integrity"] == "degraded"
+    assert len(result["integrity_problems"]) == 2
+    assert any("size" in w for w in result["integrity_problems"])
+    assert any("sha256" in w for w in result["integrity_problems"])
 
 
 def test_dump_without_exactly_one_alembic_revision_is_rejected(tmp_path: Path) -> None:

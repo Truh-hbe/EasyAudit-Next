@@ -6,8 +6,12 @@
 # Result: $EASYAUDIT_BACKUP_DIR/easyaudit-backup-<UTC timestamp>/{database.dump,objects/,manifest.json}
 # Order matters: pg_dump first, then mirror the objects. Objects are written once under
 # server-generated keys and never overwritten, so the objects copied after the dump are a
-# superset of what the dump references. Anything the dump references but the copy lacks fails
-# the backup. Extra objects are orphans (cleaned up by the orphan sweep, roadmap 1.4).
+# superset of what the dump references. Extra objects are orphans (orphan sweep, Pilot-4B).
+#
+# Exit status: 0 ok; 1 failed, nothing produced; 3 backup produced but DEGRADED: the dump
+# references objects that are missing from the bucket or whose size/sha256 differ from their
+# Evidence row. The backup is kept (manifest "integrity": "degraded" lists the problems) so the
+# current database is not lost, and the non-zero status makes a systemd timer show "failed".
 set -euo pipefail
 TOOL=backup
 # shellcheck source=deploy/backup/lib.sh
@@ -33,10 +37,11 @@ require_running postgres object-storage api web gateway
 NAME="easyaudit-backup-$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE="$ROOT/$NAME.partial"
 TMP="$(mktemp -d)"
+PRODUCED=false
 cleanup() {
   status=$?
   rm -rf "$TMP"
-  if [ "$status" -ne 0 ]; then
+  if [ "$PRODUCED" != true ] && [ "$status" -ne 0 ]; then
     rm -rf "$STAGE"
     echo "backup: FAILED, no backup was produced" >&2
   fi
@@ -73,11 +78,14 @@ object_tool "$STAGE/objects" rw copy "$S3_REMOTE" /data
 step "manifest"
 db_tool pg_restore --data-only --table=evidences --table=alembic_version --file=- \
   < "$STAGE/database.dump" > "$TMP/dump-data.txt"
+build_status=0
 python3 "$MANIFEST_PY" build --dir "$STAGE" --started-at "$STARTED_AT" \
-  --images "$TMP/images.json" --bucket "$BUCKET" --dump-data "$TMP/dump-data.txt"
+  --images "$TMP/images.json" --bucket "$BUCKET" --dump-data "$TMP/dump-data.txt" || build_status=$?
+[ "$build_status" -eq 0 ] || [ "$build_status" -eq 3 ] || fail "could not write the manifest"
 
 chmod -R go-rwx "$STAGE"
 mv "$STAGE" "$ROOT/$NAME"
+PRODUCED=true
 
 step "retention: removing backups older than $RETENTION_DAYS days"
 CUTOFF="$(date -u -d "$RETENTION_DAYS days ago" +%Y%m%dT%H%M%SZ)"
@@ -91,5 +99,10 @@ for old in "$ROOT"/easyaudit-backup-*; do
   fi
 done
 
-echo "BACKUP OK: $ROOT/$NAME ($((SECONDS - T0))s)"
-echo "  release=$(manifest_field "$ROOT/$NAME" release_sha) alembic=$(manifest_field "$ROOT/$NAME" alembic_revision)"
+SUMMARY="$ROOT/$NAME ($((SECONDS - T0))s) release=$(manifest_field "$ROOT/$NAME" release_sha) alembic=$(manifest_field "$ROOT/$NAME" alembic_revision)"
+if [ "$build_status" -eq 3 ]; then
+  echo "BACKUP DEGRADED: $SUMMARY" >&2
+  echo "backup: kept; see integrity_problems in its manifest.json (exit status 3)" >&2
+  exit 3
+fi
+echo "BACKUP OK: $SUMMARY"

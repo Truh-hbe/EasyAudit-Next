@@ -3,7 +3,8 @@
 #
 #   deploy/backup/verify.sh BACKUP_DIR [--bundle-only]
 #
-# 1. bundle: recompute the sha256 of database.dump and every object file and compare with manifest.json
+# 1. bundle: recompute the sha256 of database.dump and every object file and compare with manifest.json;
+#            a backup marked integrity "degraded" fails here too
 # 2. live:   recompute the sha256 of every object in the bucket, compare with the manifest, and
 #            check every Evidence row in the database (object exists, sha256 and size match);
 #            also that the database is at the manifest's alembic revision.
@@ -20,7 +21,7 @@ BUNDLE_ONLY=false
 
 require_commands python3
 step "bundle: $BACKUP"
-python3 "$MANIFEST_PY" verify-bundle "$BACKUP" || fail "bundle does not match its manifest"
+python3 "$MANIFEST_PY" verify-bundle "$BACKUP" --fail-degraded || fail "bundle does not match its manifest"
 $BUNDLE_ONLY && { echo "VERIFY OK (bundle only)"; exit 0; }
 
 require_commands docker

@@ -135,5 +135,17 @@ json.dump(manifest, open(path, "w"))
 PY
 if "$BACKUP_DIR_SRC/restore.sh" environment "$WORK/other-release"; then fail "restore environment ignored a release mismatch"; fi
 
+step "8. degraded backup: a registered object is lost, the backup is still kept"
+LOST_KEY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidences"][0]["storage_key"])' "$WORK/state.json")"
+object_tool_net deletefile "$S3_REMOTE/$LOST_KEY"
+degraded_status=0
+EASYAUDIT_BACKUP_DIR="$WORK/backups" "$BACKUP_DIR_SRC/backup.sh" || degraded_status=$?
+[ "$degraded_status" -eq 3 ] || fail "backup exit status $degraded_status, expected 3 (degraded)"
+DEGRADED="$(echo "$WORK"/backups/easyaudit-backup-* | tr ' ' '\n' | grep -v -F "$BACKUP" | sort | tail -1)"
+[ -f "$DEGRADED/database.dump" ] && [ -f "$DEGRADED/manifest.json" ] || fail "degraded backup was not kept"
+[ "$(manifest_field "$DEGRADED" integrity)" = "degraded" ] || fail "manifest is not marked degraded"
+grep -q "$LOST_KEY" "$DEGRADED/manifest.json" || fail "manifest does not name the lost object"
+if "$BACKUP_DIR_SRC/verify.sh" "$DEGRADED"; then fail "verify passed a degraded backup"; fi
+
 RESULT="pass"
 echo "DRILL OK: RTO ${RTO_SECONDS}s (small dataset, warm image cache; see deploy/README.md)"

@@ -26,6 +26,8 @@ check_bundle() {
   step "checking the bundle against its manifest"
   BUNDLE_CHECKED=true
   python3 "$MANIFEST_PY" verify-bundle "$BACKUP" || fail "bundle does not match its manifest; not restoring"
+  # A degraded backup may be restored (it is the best data there is); its problems are shown first.
+  python3 "$MANIFEST_PY" show-integrity "$BACKUP"
 }
 
 restore_database() {

@@ -72,9 +72,10 @@ EASYAUDIT_BACKUP_DIR=/srv/easyaudit-backups deploy/backup/backup.sh
 ```
 
 - 备份目录**权限必须是 0700**（脚本会检查，不满足就拒绝）。每次备份生成 `easyaudit-backup-<UTC 时间戳>/`，内含 `database.dump`（`pg_dump -Fc`）、`objects/`（bucket 的 S3 镜像，用固定版本的 rclone 经 S3 协议拷贝，不依赖 Garage 内部卷）和 `manifest.json`。备份先写到 `.partial` 目录，成功后才改名，因此看到的完整目录一定是成功的备份。
-- **一致性**：先 `pg_dump`，再镜像对象。对象由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守），所以 dump 之后拷贝的对象集合一定是 DB 引用集合的超集。多出来的是孤儿对象，由 Pilot-4B 的孤儿清理处理。备份时会核对"dump 中 Evidence 引用的 storage_key ⊆ 已备份对象"，缺失就整体失败，不产出备份。Evidence 的 sha256/size 与对象不一致只给出警告（写入 manifest 的 `warnings`），`verify` 会把它当作不一致。
+- **一致性**：先 `pg_dump`，再镜像对象。对象由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守），所以 dump 之后拷贝的对象集合一定是 DB 引用集合的超集。多出来的是孤儿对象，由 Pilot-4B 的孤儿清理处理。备份时会核对 dump 里 Evidence 引用的对象：key 在存储里**不存在**，或 size/sha256 与对象**不一致**，都算完整性问题。备份**照常完成并保留**（不能因为个别坏数据让 RPO 失守），manifest 记 `"integrity": "degraded"` 并列出 `integrity_problems`，脚本以**退出码 3**结束（普通失败是 1，成功是 0），systemd 会显示 failed，运维能发现。`verify` 对 degraded 备份判失败；`restore` 允许恢复 degraded 备份，但开始前会醒目打印问题清单。
 - **manifest**：`backup_timestamp`（UTC，dump 开始时刻）、`release_sha`（读运行中 api 镜像的 revision label，不信任环境变量；api/web/object-storage 三个镜像的 label 必须一致且等于当前检出）、`alembic_revision`（取自 dump 内的 `alembic_version`）、dump 的 sha256、每个对象的 key/size/sha256、各服务的镜像 tag、开始时间与耗时。
 - **保留策略**：默认保留 14 天，`EASYAUDIT_BACKUP_RETENTION_DAYS` 可改。新备份成功之后才清理过期备份。
+- **退出码**：`backup.sh` 0=成功；1=失败、没有产出备份；3=备份已产出但完整性 degraded（见上）。timer 对非零都会显示 failed，需要处理 degraded 时看备份里的 `manifest.json`。
 - **每天一次**：`easyaudit-backup.service` / `easyaudit-backup.timer` 是 systemd 示例（改路径和账号后安装并 `systemctl enable --now easyaudit-backup.timer`）。
 - **不进备份包**：secrets 和 TLS 证书。新环境生成新的即可，用户密码哈希在数据库里，不受影响；TLS 证书由运维单独保管。
 
@@ -108,7 +109,7 @@ deploy/backup/restore.sh environment BACKUP_DIR    # 整个新环境，见下
 
 ### 恢复演练
 
-`deploy/backup/drill.sh` 走完整流程：临时证书和 secrets 部署 → migrate、`bootstrap-admin`（用 stdin 传密码，`getpass` 在没有 TTY 时读 stdin）→ 通过网关的真实 API 建 ReviewPlan、Case、Finding、Action，并往 bucket 放测试对象、登记 Evidence 元数据 → `backup.sh` → `down -v` → 生成新 secrets 和证书 → `restore.sh environment` → 验证（`alembic current` 等于 head、原账号登录、打开原 Case 和 Finding、Evidence 元数据、`verify.sh`），并确认恢复会拒绝非空目标和不匹配的 release。输出 `restore-drill-record.json`（`restore_started_at`、`restore_completed_at`、`actual_rto_seconds`、`backup_timestamp`、`release_sha`、`result`）。CI 对应 `backup-restore-drill` job（不是 required check），记录作为 artifact 上传并打印在日志里。
+`deploy/backup/drill.sh` 走完整流程：临时证书和 secrets 部署 → migrate、`bootstrap-admin`（用 stdin 传密码，`getpass` 在没有 TTY 时读 stdin）→ 通过网关的真实 API 建 ReviewPlan、Case、Finding、Action，并往 bucket 放测试对象、登记 Evidence 元数据 → `backup.sh` → `down -v` → 生成新 secrets 和证书 → `restore.sh environment` → 验证（`alembic current` 等于 head、原账号登录、打开原 Case 和 Finding、Evidence 元数据、`verify.sh`），并确认恢复会拒绝非空目标和不匹配的 release；最后故意删掉一个已登记的对象再备份，断言退出码为 3、备份被保留、manifest 标记 degraded、`verify` 判失败。输出 `restore-drill-record.json`（`restore_started_at`、`restore_completed_at`、`actual_rto_seconds`、`backup_timestamp`、`release_sha`、`result`）。CI 对应 `backup-restore-drill` job（不是 required check），记录作为 artifact 上传并打印在日志里。
 
 "通过 API 下载 Evidence"要等 Pilot-4B 的下载端点；`drill_api.py` 的 `check` 里留了扩展点，Pilot-4B 必须把它加进演练。在此之前用对象级 sha256 校验代替。
 

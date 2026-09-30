@@ -7,10 +7,14 @@ tests/unit/test_backup_manifest.py.
   manifest.py build          --dir D --started-at T --images FILE --bucket B \
                              --dump-data FILE     (pg_restore -a -t evidences -t alembic_version)
   manifest.py collect-images --release SHA FILE   (TSV: service, tag, image id, revision label)
-  manifest.py verify-bundle  DIR
+  manifest.py verify-bundle  DIR [--fail-degraded]
+  manifest.py show-integrity DIR   (print a degraded backup's problem list, exit 0)
   manifest.py verify-live    DIR --lsjson FILE --hashsum FILE --evidences FILE
 
 Exit status is non-zero when anything is inconsistent; every problem is listed on stderr.
+`build` exits 3 (EXIT_DEGRADED) after writing a manifest with integrity "degraded": the bundle
+is complete as far as the source allowed, but the database references objects that are missing
+or differ from their Evidence row.
 """
 
 import argparse
@@ -175,8 +179,7 @@ def images_from_tsv(text: str, expected_release: str) -> tuple[str, dict[str, di
     return release, images
 
 
-class BackupIncomplete(Exception):
-    """The database references objects that are not in the backup."""
+EXIT_DEGRADED = 3
 
 
 def build_manifest(
@@ -197,11 +200,8 @@ def build_manifest(
     objects = scan_objects(directory / OBJECTS_DIR)
     by_key = {o["key"]: o for o in objects}
     missing, mismatched = evidence_problems(evidences, by_key)
-    if missing:
-        raise BackupIncomplete(
-            "database references objects that are missing from the backup:\n  "
-            + "\n  ".join(missing)
-        )
+    # Missing or mismatching objects never discard the backup (RPO): it is kept and marked.
+    integrity_problems = missing + mismatched
     referenced = {row["storage_key"] for row in evidences}
     dump = directory / DUMP_NAME
     return {
@@ -219,7 +219,8 @@ def build_manifest(
         "bucket": bucket,
         "objects": objects,
         "orphan_object_count": len(set(by_key) - referenced),
-        "warnings": mismatched,
+        "integrity": "degraded" if integrity_problems else "ok",
+        "integrity_problems": integrity_problems,
         "images": dict(images),
     }
 
@@ -231,10 +232,16 @@ def load_manifest(directory: Path) -> dict[str, Any]:
     return dict(manifest)
 
 
-def verify_bundle(directory: Path) -> list[str]:
-    """Recompute the dump and every object file and compare them with the manifest."""
+def verify_bundle(directory: Path, *, fail_degraded: bool = False) -> list[str]:
+    """Recompute the dump and every object file and compare them with the manifest.
+
+    A degraded backup is still a consistent bundle; with `fail_degraded` its recorded
+    integrity problems are reported as well.
+    """
     manifest = load_manifest(directory)
     problems: list[str] = []
+    if fail_degraded:
+        problems += [f"degraded backup: {p}" for p in manifest.get("integrity_problems", [])]
     dump = directory / manifest["database"]["file"]
     if not dump.is_file():
         problems.append(f"{dump.name}: missing")
@@ -297,6 +304,17 @@ def _report(problems: list[str]) -> int:
     return 0
 
 
+def _print_degraded(problems: list[str]) -> None:
+    print("!" * 72, file=sys.stderr)
+    print(
+        f"DEGRADED BACKUP: {len(problems)} integrity problem(s) in the source data:",
+        file=sys.stderr,
+    )
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
+    print("!" * 72, file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -311,6 +329,9 @@ def main(argv: list[str] | None = None) -> int:
     collect.add_argument("--release", required=True)
     bundle = sub.add_parser("verify-bundle")
     bundle.add_argument("dir", type=Path)
+    bundle.add_argument("--fail-degraded", action="store_true")
+    show = sub.add_parser("show-integrity")
+    show.add_argument("dir", type=Path)
     live = sub.add_parser("verify-live")
     live.add_argument("dir", type=Path)
     live.add_argument("--lsjson", type=Path, required=True)
@@ -321,22 +342,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build":
         started = datetime.strptime(args.started_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
         collected = json.loads(args.images.read_text())
-        try:
-            manifest = build_manifest(
-                args.dir,
-                started_at=started,
-                finished_at=utc_now(),
-                release_sha=collected["release_sha"],
-                images=collected["images"],
-                bucket=args.bucket,
-                dump_data=args.dump_data.read_text(),
-            )
-        except BackupIncomplete as exc:
-            print(f"BACKUP FAILED: {exc}", file=sys.stderr)
-            return 1
+        manifest = build_manifest(
+            args.dir,
+            started_at=started,
+            finished_at=utc_now(),
+            release_sha=collected["release_sha"],
+            images=collected["images"],
+            bucket=args.bucket,
+            dump_data=args.dump_data.read_text(),
+        )
         (args.dir / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n")
-        for warning in manifest["warnings"]:
-            print(f"WARNING: {warning}", file=sys.stderr)
+        if manifest["integrity"] != "ok":
+            _print_degraded(manifest["integrity_problems"])
+            return EXIT_DEGRADED
         return 0
     if args.command == "collect-images":
         try:
@@ -347,7 +365,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"release_sha": release, "images": images}))
         return 0
     if args.command == "verify-bundle":
-        return _report(verify_bundle(args.dir))
+        return _report(verify_bundle(args.dir, fail_degraded=args.fail_degraded))
+    if args.command == "show-integrity":
+        problems = load_manifest(args.dir).get("integrity_problems", [])
+        if problems:
+            _print_degraded(problems)
+        return 0
     live_objects = parse_live_objects(args.lsjson.read_text(), args.hashsum.read_text())
     evidences = json.loads(args.evidences.read_text() or "[]")
     return _report(verify_live(load_manifest(args.dir), live_objects, evidences))

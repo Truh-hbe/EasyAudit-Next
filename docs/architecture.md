@@ -109,7 +109,7 @@ src/easyaudit_next/
 
 工具在 `deploy/backup/`，操作见 [deploy/README.md](../deploy/README.md)。规则：
 
-- 备份先 `pg_dump`，再经 S3 协议镜像对象（不打包 Garage 内部卷）。对象必须由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守）；因此 dump 之后拷贝的对象集合一定是 DB 引用集合的超集，多出来的是孤儿，由孤儿清理处理。备份时 DB 引用的 storage_key 缺失就判定备份失败，不产出。
+- 备份先 `pg_dump`，再经 S3 协议镜像对象（不打包 Garage 内部卷）。对象必须由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守）；因此 dump 之后拷贝的对象集合一定是 DB 引用集合的超集，多出来的是孤儿，由孤儿清理处理。备份时 DB 引用的对象缺失，或 size/sha256 不一致，备份照常保留并在 manifest 标记 `integrity: degraded`，脚本以退出码 3 结束（不产出就丢了当前 DB，RPO 失守）；`verify` 对 degraded 判失败，`restore` 允许但先打印问题清单。
 - 一个备份包 = `database.dump` + `objects/` + `manifest.json`，manifest 记录 release SHA（取自运行中镜像的 label）、alembic revision、各文件 sha256 和镜像 tag，保证同一 release、同一时间点。
 - 恢复只写入空目标（DB 无表、bucket 为空），不提供覆盖开关；恢复整个环境要求检出的 release 等于 manifest 的 release，且 `alembic current` 等于 manifest revision 和该 release 的 head。
 - 备份/恢复工具是接入 `backend` 网络的一次性容器（非 root、`cap_drop: ALL`、不发布端口），不在长驻容器里写文件，也不给 postgres 发布端口。
