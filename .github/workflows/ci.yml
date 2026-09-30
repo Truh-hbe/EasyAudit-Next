@@ -154,8 +154,10 @@ jobs:
         env:
           DRILL_RECORD: ${{ runner.temp }}/restore-drill-record.json
         run: deploy/backup/drill.sh
+      # The record is also printed in the job log; a full artifact quota must not fail the drill.
       - name: Upload drill record
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: restore-drill-record
