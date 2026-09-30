@@ -1,0 +1,13 @@
+# Example unit: install next to easyaudit-backup.service, then
+#   systemctl enable --now easyaudit-backup.timer
+# Twice a day, no random delay, so one failed run still leaves a backup younger than 24h.
+# RPO <= 24h holds only while check-freshness.sh (easyaudit-backup-freshness.*) stays green.
+[Unit]
+Description=EasyAudit backup, every 12 hours
+
+[Timer]
+OnCalendar=*-*-* 02,14:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
