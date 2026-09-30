@@ -19,10 +19,10 @@ from easyaudit_next.workbench.api import workbench_router
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    # Read the expected alembic head once at startup, off the event loop. Failure is not
-    # fatal: /health/ready reports migrations as failed and a background retry follows.
-    await load_expected_head()
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Read the expected alembic head once at startup, off the event loop. If it cannot be read
+    # (logged at ERROR), /health/ready reports migrations as failed until the process restarts.
+    app.state.expected_head = await load_expected_head()
     yield
 
 

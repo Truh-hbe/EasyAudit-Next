@@ -33,6 +33,13 @@ def _interpolates(node: ast.AST) -> bool:
     return False
 
 
+def _extra_is_safe(value: ast.expr) -> bool:
+    """A dict literal whose every key is an allowed string constant (no dynamic keys, no **)."""
+    return isinstance(value, ast.Dict) and all(
+        isinstance(key, ast.Constant) and key.value in ALLOWED_EXTRA_KEYS for key in value.keys
+    )
+
+
 def find_violations(source: str) -> list[int]:
     lines: list[int] = []
     for node in ast.walk(ast.parse(source)):
@@ -42,22 +49,20 @@ def find_violations(source: str) -> list[int]:
             and node.func.attr in LOG_METHODS
         ):
             continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
         message_index = 1 if node.func.attr == "log" else 0
-        if len(node.args) <= message_index:
-            continue  # not a logging call shape (e.g. a method without a message)
-        message = node.args[message_index]
-        bad = not (isinstance(message, ast.Constant) and isinstance(message.value, str))
+        message = (
+            node.args[message_index] if len(node.args) > message_index else keywords.get("msg")
+        )
+        expands = None in keywords  # **payload
+        if message is None and not expands:
+            continue  # not a logging call shape
+        bad = expands
+        bad = bad or not (isinstance(message, ast.Constant) and isinstance(message.value, str))
         bad = bad or len(node.args) > message_index + 1
         bad = bad or _interpolates(node)
-        for keyword in node.keywords:
-            if keyword.arg == "extra":
-                value = keyword.value
-                keys = (
-                    {k.value for k in value.keys if isinstance(k, ast.Constant)}
-                    if isinstance(value, ast.Dict) and None not in value.keys
-                    else None
-                )
-                bad = bad or keys is None or not keys <= ALLOWED_EXTRA_KEYS
+        if "extra" in keywords:
+            bad = bad or not _extra_is_safe(keywords["extra"])
         if bad:
             lines.append(node.lineno)
     return lines
@@ -87,6 +92,11 @@ def test_source_tree_follows_the_logging_conventions() -> None:
         'logger.info("event", extra={**payload})',
         'logger.log(20, f"x {y}")',
         "logger.info(message)",
+        'logger.error(msg=f"failed {exc}")',
+        'logger.log(level=40, msg=f"failed {exc}")',
+        'logger.info("event", extra={key: value})',
+        'logger.info("event", **payload)',
+        'logger.info("event", extra={"fields": {}, **more})',
     ],
 )
 def test_checker_flags_known_bypasses(source: str) -> None:
@@ -99,6 +109,7 @@ def test_checker_flags_known_bypasses(source: str) -> None:
         'APP_LOGGER.warning("event", extra={"fields": {"component": "db"}})',
         'self.log.error("event", exc_info=exc)',
         'logger.log(10, "event", extra={"fields": {"x": 1}, "exception_details": d})',
+        'logger.log(level=10, msg="event")',
     ],
 )
 def test_checker_accepts_constant_messages_with_structured_extra(source: str) -> None:

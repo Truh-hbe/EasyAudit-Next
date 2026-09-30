@@ -15,7 +15,11 @@ from easyaudit_next.api.dependencies import (
     get_database_session,
 )
 from easyaudit_next.infrastructure import observability
-from easyaudit_next.infrastructure.observability import JsonFormatter, build_log_config
+from easyaudit_next.infrastructure.observability import (
+    ExceptionDetails,
+    JsonFormatter,
+    build_log_config,
+)
 from easyaudit_next.main import create_app
 from easyaudit_next.platform.domain.models import PlatformRole
 from tests.api.conftest import CapturedLogs
@@ -40,10 +44,6 @@ REQUIRED_ACCESS_FIELDS = {
 
 
 class UnsafeError(Exception):
-    pass
-
-
-class SafeError(Exception):
     pass
 
 
@@ -93,10 +93,6 @@ def build_app(auth: AuthStub) -> FastAPI:
     @app.get("/test/boom")
     def boom() -> None:
         raise UnsafeError(SECRET_EXCEPTION_TEXT)
-
-    @app.get("/test/safe-boom")
-    def safe_boom() -> None:
-        raise SafeError("case is in a state that cannot be closed")
 
     return app
 
@@ -202,18 +198,19 @@ def test_unhandled_exception_logs_type_and_frames_but_not_message(
     assert entry["request_id"] == request_id
 
 
-def test_only_explicitly_allowed_exception_types_log_their_message(
-    log_output: CapturedLogs, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(observability, "_SAFE_MESSAGE_EXCEPTIONS", {SafeError})
-    client = TestClient(build_app(AuthStub()))
+def test_exception_details_have_no_place_for_a_message(log_output: CapturedLogs) -> None:
+    with pytest.raises(TypeError):
+        ExceptionDetails("x.Forged", (), (), "forged-needle-6613")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        ExceptionDetails("x.Forged", (), (), exception_message="forged-needle-6613")  # type: ignore[call-arg]
 
-    client.get("/test/safe-boom")
-    client.get("/test/boom")
+    forged = ExceptionDetails("x.Forged", (), ("f.py:1:f",))
+    observability.APP_LOGGER.error("event", extra={"exception_details": forged})
 
-    errors = [line for line in lines(log_output) if line["message"] == "unhandled_exception"]
-    assert errors[0]["exception_message"] == "case is in a state that cannot be closed"
-    assert "exception_message" not in errors[1]
+    [entry] = [line for line in lines(log_output) if line["message"] == "event"]
+    assert entry["exception_type"] == "x.Forged"
+    assert "exception_message" not in entry
+    assert "needle-6613" not in log_output.text()
 
 
 def test_formatter_never_emits_exception_message_for_other_loggers() -> None:

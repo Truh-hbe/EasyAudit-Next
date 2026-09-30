@@ -19,14 +19,15 @@ def client_with(
     head: str = "head1",
 ) -> TestClient:
     monkeypatch.setattr(health, "get_settings", lambda: settings or Settings())
-    monkeypatch.setattr(health, "current_expected_head", lambda: head)
     if state is not None:
 
         async def fake_state(_: Settings) -> DatabaseState:
             return state
 
         monkeypatch.setattr(readiness, "fetch_database_state", fake_state)
-    return TestClient(create_app())
+    app = create_app()
+    app.state.expected_head = head
+    return TestClient(app)
 
 
 def assert_opaque(response_text: str) -> None:

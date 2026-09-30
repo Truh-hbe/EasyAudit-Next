@@ -122,16 +122,16 @@ src/easyaudit_next/
 - **Health 不对外。** `/health/live`、`/health/ready` 挂在根路径，不在 `/api/v1` 下；网关只转发 `/api/v1/*`，所以外部访问不到（`deploy/smoke.sh` 断言）。旧的 `/health` 已删除。
 - `live` 只表示进程能响应，不访问数据库或任何外部依赖。`ready` 检查三项，全部通过才 200，否则 503：数据库 `SELECT 1`（连接和语句超时各 2 秒，用独立、不池化的 engine）、Alembic 当前 revision 等于镜像内脚本的 head、必需配置存在。响应体只有各项的 `ok`/`fail`，不带 DSN、revision、错误消息；细节写日志。
 - 对象存储暂不纳入 `ready`，因为应用尚未使用它；Pilot-4A 接入 Evidence 上传时再加进去。
-- `ready` 的数据库探针是全 async 的（psycopg `AsyncConnection`，不走业务连接池、不占线程池），连接、查询、关闭共用一个 2 秒（`READINESS_TIMEOUT_SECONDS`）的客户端截止时间，超时后立即关闭 socket 并返回 503。探针连接参数由与业务 engine 相同的 SQLAlchemy dialect 转换（`libpq_connect_kwargs`），`sslmode`、`sslrootcert`、Unix socket、已有 `options` 原样保留（`options` 追加 statement_timeout 而不是覆盖），所以不会在业务要求 TLS 时明文探测。整个评估另有兜底总预算（超时 + 1 秒）；评估被取消同样立即关闭 socket。期望的 alembic head 在启动时用 `asyncio.to_thread` 读一次；读取失败时 `ready` 只报 migrations fail，由后台线程最多每 30 秒重试，绝不在事件循环里同步读文件。并发探针采用 single-flight：已有探针在跑时，后来者等待同一次结果，不再另开连接。`/health/live` 也是 `async def`。
+- `ready` 的数据库探针是全 async 的（psycopg `AsyncConnection`，不走业务连接池、不占线程池），连接、查询、关闭共用一个 2 秒（`READINESS_TIMEOUT_SECONDS`）的客户端截止时间，超时后立即关闭 socket 并返回 503。探针连接参数由与业务 engine 相同的 SQLAlchemy dialect 转换（`libpq_connect_kwargs`），`sslmode`、`sslrootcert`、Unix socket、已有 `options` 原样保留（`options` 追加 statement_timeout 而不是覆盖），所以不会在业务要求 TLS 时明文探测。整个评估另有兜底总预算（超时 + 1 秒）；评估被取消同样立即关闭 socket。期望的 alembic head 只在 lifespan 启动时用 `asyncio.to_thread` 读一次，存进 `app.state`（不用模块级全局状态，多个 app 实例互不影响）；读取失败会写 ERROR 日志，该进程在重启之前 `ready` 一直报 migrations fail，`live` 不受影响。镜像里的脚本读不出来说明镜像本身坏了，应由运维重启或回滚，应用不自愈，也绝不在事件循环里同步读文件。并发探针采用 single-flight（in-flight 任务存在 `app.state`）：已有探针在跑时，后来者等待同一次结果，不再另开连接。`/health/live` 也是 `async def`。
 - **request_id 由服务端生成**（UUID4），通过 `X-Request-ID` 响应头返回；忽略客户端传来的同名请求头。未处理异常的 500 响应体带 `request_id`。
 - 日志是 stdout 上一行一个 JSON，只用标准库（`infrastructure/observability.py`），级别由 `LOG_LEVEL` 控制（默认 INFO）。uvicorn 通过 `python -m easyaudit_next.serve` 启动，使用同一个 formatter，自带 access log 关闭。
 - 每个请求结束写一条 access 日志：`timestamp`（UTC）、`level`、`request_id`、`method`、`route`（路由模板，匹配不到为 `null`，不含 query string）、`status_code`、`latency_ms`、`organization_id`、`actor_user_id`（在认证依赖里写入，未认证为 `null`）。
 - 探针（`/health/live`、`/health/ready`）返回 2xx 时 access 日志级别为 DEBUG，默认 INFO 下不输出；非 2xx（如 ready 的 503）照常 INFO，ready 失败的细节仍以 WARNING 记录。
 - "必需配置"的定义：`DATABASE_URL` 非空且可解析；`APP_ENV` 不是 `development` 时，`DATABASE_URL` 不能等于内置的开发默认值（说明密钥没有注入）。
-- formatter 对 `extra["fields"]` 做键白名单（`ALLOWED_FIELDS`），白名单外的键被丢弃并只在 `dropped_fields` 里报告键名；值限制类型和长度。异常细节只能来自 `describe_exception` 产出的 `ExceptionDetails`。静态规则按方法名（不按接收者名字）检查所有 `debug/info/warning/error/exception/critical/log` 调用：消息必须是常量字符串，不得插值，`extra` 只能是字面量字典且键限于 `fields`、`exception_details`。
+- formatter 对 `extra["fields"]` 做键白名单（`ALLOWED_FIELDS`），白名单外的键被丢弃并只在 `dropped_fields` 里报告键名；值限制类型和长度。异常细节只能来自 `describe_exception` 产出的 `ExceptionDetails`。静态规则按方法名（不按接收者名字）检查所有 `debug/info/warning/error/exception/critical/log` 调用：消息（位置参数或 `msg=`）必须是常量字符串，不得插值，不得有 `**` 展开，`extra` 只能是字面量字典且每个键都是 `fields`/`exception_details` 字符串常量。
 - 日志消息必须是常量事件名（`tests/unit/test_logging_conventions.py` 强制），变量数据放 `extra={"fields": ...}`，不用 `%s` 参数或 f-string，因为 formatter 会原样输出 message。我们不提供 WebSocket，`uvicorn.run(ws="none")`；uvicorn/第三方 logger 最低 INFO（即使 `LOG_LEVEL=DEBUG`），避免协议层 DEBUG 日志回显原始请求。响应已开始后才失败（后台任务、流式响应）时，access 日志保留已发送的状态码并置 `error: true`，异常另记一条。
 - **禁止记录**：密码、Cookie、session token/id、Authorization、secret、请求体、Evidence 内容；任何请求头和请求体都不写日志。
-- 异常只记录 `exception_type` 和 `file:line:function` 堆栈，**不记录 `str(exc)`**（SQLAlchemy 异常的 message 带 SQL 和参数）。只有通过 `allow_exception_message` 显式登记的领域异常类型才会记录 message。
+- 异常只记录 `exception_type` 和 `file:line:function` 堆栈，**不记录 `str(exc)`**（SQLAlchemy 异常的 message 带 SQL 和参数）。`ExceptionDetails` 里没有 message 字段，任何异常类型（包括领域异常）都不记录 message。
 - `observability`、`readiness` 只能被 `api/`、`main.py`、`serve.py` 使用，Review Core 与 Platform 不依赖它们（`scripts/check_architecture.py` 强制）。
 
 ## 明确不做

@@ -3,7 +3,6 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from easyaudit_next.api import health
 from easyaudit_next.main import create_app
 
 
@@ -24,10 +23,9 @@ def test_ready_is_ok_on_a_database_migrated_to_head() -> None:
     }
 
 
-def test_ready_fails_when_the_expected_head_differs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(health, "current_expected_head", lambda: "not-the-real-head")
-
+def test_ready_fails_when_the_expected_head_differs() -> None:
     with TestClient(create_app()) as client:
+        client.app.state.expected_head = "not-the-real-head"  # type: ignore[attr-defined]
         response = client.get("/health/ready")
 
     assert response.status_code == 503

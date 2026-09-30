@@ -1,9 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from easyaudit_next.api.contracts import LiveResponse, ReadyChecks, ReadyResponse
 from easyaudit_next.infrastructure.readiness import (
-    current_expected_head,
     log_failure,
     run_readiness,
 )
@@ -27,9 +26,13 @@ async def get_health_live() -> LiveResponse:
     responses={503: {"model": ReadyResponse}},
     operation_id="getHealthReady",
 )
-async def get_health_ready() -> JSONResponse:
+async def get_health_ready(request: Request) -> JSONResponse:
     """Database reachable, alembic at head, required configuration present."""
-    result = await run_readiness(get_settings(), current_expected_head)
+    result = await run_readiness(
+        get_settings(),
+        getattr(request.app.state, "expected_head", None),  # set by lifespan; None = unavailable
+        request.app.state,
+    )
     for failure in result.failures:
         log_failure(failure)  # logged in this request's context, so it carries its request_id
     ready = all(value == "ok" for value in result.checks.values())

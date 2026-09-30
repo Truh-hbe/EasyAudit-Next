@@ -14,8 +14,6 @@ it here together with Evidence upload.
 """
 
 import asyncio
-import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -66,17 +64,6 @@ class ReadinessResult:
     failures: tuple[Failure, ...]
 
 
-@dataclass
-class _HeadState:
-    value: str | None = None
-    last_attempt: float = float("-inf")
-    task: "asyncio.Task[None] | None" = None
-
-
-_head = _HeadState()
-HEAD_RETRY_SECONDS = 30.0
-
-
 def _compute_head() -> str:
     """Blocking file I/O; only ever called through `asyncio.to_thread`."""
     head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
@@ -85,29 +72,19 @@ def _compute_head() -> str:
     return head
 
 
-async def load_expected_head() -> None:
-    """Read the head of the alembic scripts in this image (cwd holds alembic.ini) off-loop."""
-    _head.last_attempt = time.monotonic()
+async def load_expected_head() -> str | None:
+    """Head of the alembic scripts in this image (cwd holds alembic.ini), read once at startup.
+
+    Failure returns None and is logged; there is no retry. Unreadable scripts mean the image
+    itself is broken, so readiness stays failed until the process is restarted or rolled back.
+    """
     try:
-        _head.value = await asyncio.to_thread(_compute_head)
+        return await asyncio.to_thread(_compute_head)
     except Exception as exc:
-        APP_LOGGER.warning(
+        APP_LOGGER.error(
             "expected_head_unavailable", extra={"exception_details": describe_exception(exc)}
         )
-
-
-def current_expected_head() -> str | None:
-    """Non-blocking. Never reads files on the event loop: if the head is unavailable, a
-    background retry (at most every HEAD_RETRY_SECONDS) runs in a thread and this call
-    reports the current state immediately."""
-    if _head.value is None:
-        loop = asyncio.get_running_loop()
-        task = _head.task
-        running = task is not None and not task.done() and task.get_loop() is loop
-        if not running and time.monotonic() - _head.last_attempt >= HEAD_RETRY_SECONDS:
-            _head.last_attempt = time.monotonic()
-            _head.task = loop.create_task(load_expected_head())
-    return _head.value
+        return None
 
 
 def log_failure(failure: Failure) -> None:
@@ -195,7 +172,7 @@ async def fetch_database_state(settings: Settings) -> DatabaseState:
             await asyncio.wait({probe}, timeout=CLEANUP_GRACE_SECONDS)
 
 
-async def _evaluate(settings: Settings, expected_head: Callable[[], str | None]) -> ReadinessResult:
+async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessResult:
     failures: list[Failure] = []
     config_failure = check_configuration(settings)
     if config_failure is not None:
@@ -205,7 +182,7 @@ async def _evaluate(settings: Settings, expected_head: Callable[[], str | None])
 
     migrations_ok = False
     if state.revisions is not None:
-        head = expected_head()
+        head = expected_head
         if head is None:
             failures.append(Failure("migrations", "expected_head_unavailable"))
         else:
@@ -230,7 +207,7 @@ async def _evaluate(settings: Settings, expected_head: Callable[[], str | None])
 EVALUATION_GRACE_SECONDS = 1.0
 
 
-async def _bounded(settings: Settings, expected_head: Callable[[], str | None]) -> ReadinessResult:
+async def _bounded(settings: Settings, expected_head: str | None) -> ReadinessResult:
     """Overall budget for the whole evaluation, independent of the per-step deadlines."""
     try:
         async with asyncio.timeout(settings.readiness_timeout_seconds + EVALUATION_GRACE_SECONDS):
@@ -243,18 +220,18 @@ async def _bounded(settings: Settings, expected_head: Callable[[], str | None]) 
         )
 
 
-_inflight: asyncio.Task[ReadinessResult] | None = None
-
-
 async def run_readiness(
-    settings: Settings, expected_head: Callable[[], str | None]
+    settings: Settings, expected_head: str | None, state: Any
 ) -> ReadinessResult:
-    """Single-flight: concurrent callers share one in-progress evaluation."""
-    global _inflight
+    """Single-flight: concurrent callers share one in-progress evaluation.
+
+    `state` is the application's `app.state`; the in-flight task lives there, not in module
+    globals, so separate app instances never share results or event loops.
+    """
     loop = asyncio.get_running_loop()
-    task = _inflight
+    task: asyncio.Task[ReadinessResult] | None = getattr(state, "readiness_inflight", None)
     if task is None or task.done() or task.get_loop() is not loop:
         task = loop.create_task(_bounded(settings, expected_head))
-        _inflight = task
+        state.readiness_inflight = task
     # shield: a caller that disconnects must not cancel the evaluation other callers wait on.
     return await asyncio.shield(task)
