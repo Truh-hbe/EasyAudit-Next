@@ -1,6 +1,6 @@
 # ADR-0003：以版本化 Scenario Policy 扩展业务场景
 
-- 状态：Accepted
+- 状态：Accepted（后果中"`get_latest(key)` 只服务于新 Case"一句已废止：新 Case 显式选择已发布的精确版本，见 [docs/domain.md](../domain.md) 不变量 2；`get_latest` 已删除）
 - 日期：2026-08-21
 
 ## 决策
