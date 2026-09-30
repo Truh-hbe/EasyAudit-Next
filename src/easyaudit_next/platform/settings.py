@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     database_url: str = DEFAULT_DATABASE_URL
     session_cookie_name: Literal["__Host-easyaudit_session"] = "__Host-easyaudit_session"
     session_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
+    readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @field_validator("log_level", mode="before")

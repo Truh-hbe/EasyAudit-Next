@@ -73,6 +73,7 @@ def describe_exception(exc: BaseException) -> dict[str, Any]:
     exception_type = type(exc)
     described: dict[str, Any] = {
         "exception_type": f"{exception_type.__module__}.{exception_type.__qualname__}",
+        "exception_chain": _chain_types(exc),
         "stack": [
             f"{frame.filename}:{frame.lineno}:{frame.name}"
             for frame in traceback.extract_tb(exc.__traceback__)[-_MAX_STACK_FRAMES:]
@@ -83,8 +84,21 @@ def describe_exception(exc: BaseException) -> dict[str, Any]:
     return described
 
 
+def _chain_types(exc: BaseException) -> list[str]:
+    """Types of ``__cause__``/``__context__`` ancestors; their messages are never logged."""
+    chain: list[str] = []
+    current = exc.__cause__ or exc.__context__
+    while current is not None and len(chain) < 5:
+        chain.append(f"{type(current).__module__}.{type(current).__qualname__}")
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def build_log_config(level: str) -> dict[str, Any]:
     """dictConfig for uvicorn's ``log_config``; uvicorn's own access log is disabled."""
+    # Third-party/protocol loggers never go below INFO: at DEBUG, libraries may log raw
+    # request data (query strings, Cookie, Authorization).
+    third_party_level = "INFO" if level == "DEBUG" else level
     handler = {"class": "logging.StreamHandler", "formatter": "json", "stream": "ext://sys.stdout"}
     return {
         "version": 1,
@@ -92,14 +106,14 @@ def build_log_config(level: str) -> dict[str, Any]:
         "formatters": {"json": {"()": f"{__name__}.JsonFormatter"}},
         "handlers": {"stdout": handler},
         "loggers": {
-            "uvicorn": {"handlers": ["stdout"], "level": level, "propagate": False},
-            "uvicorn.error": {"level": level},
+            "uvicorn": {"handlers": ["stdout"], "level": third_party_level, "propagate": False},
+            "uvicorn.error": {"level": third_party_level},
             "uvicorn.access": {"handlers": [], "level": "CRITICAL", "propagate": False},
             "easyaudit": {"handlers": ["stdout"], "level": level, "propagate": False},
             # MigrationContext logs at INFO on every readiness probe.
             "alembic": {"level": "WARNING"},
         },
-        "root": {"handlers": ["stdout"], "level": level},
+        "root": {"handlers": ["stdout"], "level": third_party_level},
     }
 
 
@@ -121,6 +135,7 @@ class RequestContextMiddleware:
         started = time.perf_counter()
         status_code = 500
         response_started = False
+        failed = False
 
         async def send_with_request_id(message: Message) -> None:
             nonlocal status_code, response_started
@@ -136,8 +151,11 @@ class RequestContextMiddleware:
             await self.app(scope, receive, send_with_request_id)
         except Exception as exc:
             APP_LOGGER.error("unhandled_exception", exc_info=exc)
-            status_code = 500
+            failed = True
+            # Once the response has started, the status line is already on the wire
+            # (e.g. a background task or a stream failed later); never rewrite it.
             if not response_started:
+                status_code = 500
                 await _send_internal_error(send, request_id)
         finally:
             route = scope.get("route")
@@ -152,6 +170,7 @@ class RequestContextMiddleware:
                         "method": scope["method"],
                         "route": route_path,
                         "status_code": status_code,
+                        "error": failed,
                         "latency_ms": round((time.perf_counter() - started) * 1000, 2),
                         **actor,
                     }

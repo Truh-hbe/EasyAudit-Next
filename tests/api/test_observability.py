@@ -1,4 +1,3 @@
-import io
 import json
 import logging
 from collections.abc import Iterator
@@ -6,7 +5,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from easyaudit_next.api.dependencies import (
@@ -18,6 +18,7 @@ from easyaudit_next.infrastructure import observability
 from easyaudit_next.infrastructure.observability import JsonFormatter, build_log_config
 from easyaudit_next.main import create_app
 from easyaudit_next.platform.domain.models import PlatformRole
+from tests.api.conftest import CapturedLogs
 from tests.api.test_auth_policy import identity
 
 PASSWORD = "Zx9-distinctive-Password-7731"
@@ -72,26 +73,12 @@ class SessionStub:
         pass
 
 
-@pytest.fixture
-def log_output() -> Iterator[io.StringIO]:
-    stream = io.StringIO()
-    handler = logging.StreamHandler(stream)
-    handler.setFormatter(JsonFormatter())
-    logger = logging.getLogger("easyaudit")
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    yield stream
-    logger.removeHandler(handler)
-    logger.setLevel(previous_level)
+def lines(logs: CapturedLogs) -> list[dict[str, Any]]:
+    return logs.lines()
 
 
-def lines(stream: io.StringIO) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in stream.getvalue().splitlines()]
-
-
-def access_lines(stream: io.StringIO) -> list[dict[str, Any]]:
-    return [line for line in lines(stream) if line["logger"] == "easyaudit.access"]
+def access_lines(logs: CapturedLogs) -> list[dict[str, Any]]:
+    return [line for line in logs.lines() if line["logger"] == "easyaudit.access"]
 
 
 def build_app(auth: AuthStub) -> FastAPI:
@@ -114,7 +101,7 @@ def build_app(auth: AuthStub) -> FastAPI:
     return app
 
 
-def test_every_response_has_a_server_generated_request_id(log_output: io.StringIO) -> None:
+def test_every_response_has_a_server_generated_request_id(log_output: CapturedLogs) -> None:
     client = TestClient(build_app(AuthStub()))
     client_supplied = "attacker-controlled\nvalue"
 
@@ -128,11 +115,11 @@ def test_every_response_has_a_server_generated_request_id(log_output: io.StringI
         )
     assert ok.headers["x-request-id"] != client_supplied
     assert ok.headers["x-request-id"] != missing.headers["x-request-id"]
-    assert client_supplied not in log_output.getvalue()
+    assert client_supplied not in log_output.text()
 
 
 def test_access_log_has_required_fields_and_matches_response_header(
-    log_output: io.StringIO,
+    log_output: CapturedLogs,
 ) -> None:
     auth = AuthStub()
     client = TestClient(build_app(auth))
@@ -154,7 +141,7 @@ def test_access_log_has_required_fields_and_matches_response_header(
 
 
 def test_unauthenticated_and_unmatched_requests_log_null_actor_and_route(
-    log_output: io.StringIO,
+    log_output: CapturedLogs,
 ) -> None:
     client = TestClient(build_app(AuthStub()))
 
@@ -170,7 +157,7 @@ def test_unauthenticated_and_unmatched_requests_log_null_actor_and_route(
     assert unmatched["route"] is None
 
 
-def test_login_then_authenticated_query_does_not_leak_secrets(log_output: io.StringIO) -> None:
+def test_login_then_authenticated_query_does_not_leak_secrets(log_output: CapturedLogs) -> None:
     client = TestClient(build_app(AuthStub()))
 
     login = client.post(
@@ -185,14 +172,14 @@ def test_login_then_authenticated_query_does_not_leak_secrets(log_output: io.Str
     )
     client.get("/test/boom")
 
-    output = log_output.getvalue()
+    output = log_output.text()
     assert len(lines(log_output)) >= 3
     for secret in (PASSWORD, SESSION_TOKEN, SECRET_QUERY, "bearer-secret-1187", "__Host-"):
         assert secret not in output
 
 
 def test_unhandled_exception_logs_type_and_frames_but_not_message(
-    log_output: io.StringIO,
+    log_output: CapturedLogs,
 ) -> None:
     client = TestClient(build_app(AuthStub()))
 
@@ -208,7 +195,7 @@ def test_unhandled_exception_logs_type_and_frames_but_not_message(
     assert error["exception_type"].endswith("UnsafeError")
     assert any(frame.endswith(":boom") for frame in error["stack"])
     assert all(frame.count(":") >= 2 for frame in error["stack"])
-    assert "sensitive-parameter-8842" not in log_output.getvalue()
+    assert "sensitive-parameter-8842" not in log_output.text()
     assert "exception_message" not in error
     [entry] = access_lines(log_output)
     assert entry["status_code"] == 500
@@ -216,7 +203,7 @@ def test_unhandled_exception_logs_type_and_frames_but_not_message(
 
 
 def test_only_explicitly_allowed_exception_types_log_their_message(
-    log_output: io.StringIO, monkeypatch: pytest.MonkeyPatch
+    log_output: CapturedLogs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(observability, "_SAFE_MESSAGE_EXCEPTIONS", {SafeError})
     client = TestClient(build_app(AuthStub()))
@@ -260,7 +247,7 @@ def test_log_config_uses_json_formatter_and_silences_uvicorn_access_log() -> Non
     assert config["loggers"]["easyaudit"]["level"] == "WARNING"
 
 
-def test_organization_and_actor_ids_are_uuids(log_output: io.StringIO) -> None:
+def test_organization_and_actor_ids_are_uuids(log_output: CapturedLogs) -> None:
     client = TestClient(build_app(AuthStub()))
     client.get("/test/cases/x", cookies={"__Host-easyaudit_session": SESSION_TOKEN})
 
@@ -271,20 +258,24 @@ def test_organization_and_actor_ids_are_uuids(log_output: io.StringIO) -> None:
 
 
 def test_successful_probes_are_not_logged_at_info_but_failures_are(
-    log_output: io.StringIO,
+    log_output: CapturedLogs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from sqlalchemy import create_engine
+    from easyaudit_next.api import health
+    from easyaudit_next.platform.settings import Settings
 
-    from easyaudit_next.infrastructure.readiness import get_readiness_engine
-
-    app = build_app(AuthStub())
-    client = TestClient(app)
+    client = TestClient(build_app(AuthStub()))
+    # Default INFO: successful probe output is suppressed.
+    logging.getLogger("easyaudit").setLevel(logging.INFO)
 
     assert client.get("/health/live").status_code == 200
     assert access_lines(log_output) == []
 
-    app.dependency_overrides[get_readiness_engine] = lambda: create_engine(
-        "postgresql+psycopg://u:p@127.0.0.1:1/db", connect_args={"connect_timeout": 1}
+    monkeypatch.setattr(
+        health,
+        "get_settings",
+        lambda: Settings(
+            database_url="postgresql+psycopg://u:p@127.0.0.1:1/db", readiness_timeout_seconds=1
+        ),
     )
     assert client.get("/health/ready").status_code == 503
 
@@ -294,3 +285,61 @@ def test_successful_probes_are_not_logged_at_info_but_failures_are(
     warnings = [line for line in lines(log_output) if line["level"] == "WARNING"]
     assert warnings and warnings[0]["message"] == "readiness_check_failed"
     assert warnings[0]["request_id"] == entry["request_id"]
+
+
+def test_failure_after_response_started_keeps_status_and_flags_error(
+    log_output: CapturedLogs,
+) -> None:
+    app = build_app(AuthStub())
+
+    def explode() -> None:
+        raise RuntimeError("background secret 5150")
+
+    @app.get("/test/background")
+    def background(tasks: BackgroundTasks) -> dict[str, str]:
+        tasks.add_task(explode)
+        return {"ok": "yes"}
+
+    @app.get("/test/stream")
+    def stream() -> StreamingResponse:
+        def chunks() -> Iterator[bytes]:
+            yield b"first"
+            raise RuntimeError("stream secret 5150")
+
+        return StreamingResponse(chunks())
+
+    client = TestClient(app)
+    client.get("/test/background")
+    client.get("/test/stream")
+
+    access = access_lines(log_output)
+    assert [(entry["route"], entry["status_code"], entry["error"]) for entry in access] == [
+        ("/test/background", 200, True),
+        ("/test/stream", 200, True),
+    ]
+    errors = [line for line in lines(log_output) if line["message"] == "unhandled_exception"]
+    assert len(errors) == 2
+    assert all(
+        error["request_id"] == entry["request_id"]
+        for error, entry in zip(errors, access, strict=True)
+    )
+    assert "5150" not in log_output.text()
+
+
+def test_exception_chain_logs_types_never_messages(log_output: CapturedLogs) -> None:
+    app = build_app(AuthStub())
+
+    @app.get("/test/chain")
+    def chain() -> None:
+        try:
+            raise ValueError("inner secret 9917")
+        except ValueError as inner:
+            raise UnsafeError("outer secret 9917") from inner
+
+    response = TestClient(app).get("/test/chain")
+
+    assert response.status_code == 500
+    error = next(line for line in lines(log_output) if line["message"] == "unhandled_exception")
+    assert error["exception_type"].endswith("UnsafeError")
+    assert error["exception_chain"] == ["builtins.ValueError"]
+    assert "9917" not in log_output.text()

@@ -14,6 +14,8 @@ def main() -> None:
         port=settings.app_port,
         log_config=build_log_config(settings.log_level),
         access_log=False,
+        # No WebSocket endpoints exist; uvicorn's protocol logs would echo raw upgrade requests.
+        ws="none",
     )
 
 
