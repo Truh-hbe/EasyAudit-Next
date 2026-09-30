@@ -94,6 +94,16 @@ src/easyaudit_next/
 - 409 表示数据已过期：刷新后让用户重试。禁止自动重放写请求，包括结果未知的创建请求。
 - 不在本地长期保存业务状态的影子副本，写操作成功后刷新相关查询。
 
+## 部署
+
+配置在 `deploy/`，规则由 `tests/unit/test_deploy_compose.py` 和 `deploy/smoke.sh` 强制：
+
+- 只有 HTTPS 网关对外，且只发布 443。数据库、API、对象存储只在网络内部可达；`backend` 网络是 `internal`。
+- 数据库迁移必须显式执行（`migrate` 服务），API 启动时不迁移。
+- 所有容器非 root 运行；镜像固定到具体版本，不使用 `latest`。
+- 密钥只通过未提交的文件（Docker secrets / `*_FILE`）注入，不写进 compose 或镜像。
+- API 只信任网关的代理头，不使用 `--forwarded-allow-ips='*'`。
+
 ## 明确不做
 
 微服务、分布式事务、消息总线、以 Redis 作为业务真相、通用分布式锁、BPMN 或流程设计器、通用表单构建器、运行时实体设计器、自定义仪表盘、匿名责任令牌、督办实体、原生移动端、由 AI 生成业务真相。
