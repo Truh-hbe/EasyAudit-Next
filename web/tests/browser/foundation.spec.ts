@@ -27,6 +27,14 @@ function fulfillJson(route: Route, status: number, body: unknown) {
   })
 }
 
+function createDeferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
 async function stubReadySession(page: Page, platformRole = 'ordinary_user') {
   await page.route('**/api/v1/me', (route) =>
     fulfillJson(route, 200, {
@@ -70,8 +78,9 @@ async function stubCaseSections(page: Page, caseId: string) {
 }
 
 test('resolves the server session before choosing anonymous UI', async ({ page }) => {
+  const sessionGate = createDeferred()
   await page.route('**/api/v1/me', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 250))
+    await sessionGate.promise
     await fulfillJson(route, 401, { detail: 'Authentication required' })
   })
 
@@ -79,6 +88,8 @@ test('resolves the server session before choosing anonymous UI', async ({ page }
   await expect(page.getByRole('heading', { name: '正在确认服务器会话' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '登录' })).not.toBeVisible()
   expect(new URL(page.url()).protocol).toBe('https:')
+
+  sessionGate.resolve()
 
   await expect(page).toHaveURL(/\/login\?next=%2Freview-cases$/)
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
@@ -226,14 +237,11 @@ test('Workbench renders only server-projected categories and links to original r
 
 test('ReviewCase collection uses the server envelope for pagination and never renders hidden candidates', async ({ page }) => {
   await stubReadySession(page)
-  let firstPageDelayed = false
+  const firstPageGate = createDeferred()
   await page.route((url) => url.pathname === '/api/v1/review-cases', async (route) => {
+    await firstPageGate.promise
     const url = new URL(route.request().url())
     const offset = Number(url.searchParams.get('offset') ?? '0')
-    if (!firstPageDelayed) {
-      firstPageDelayed = true
-      await new Promise((resolve) => setTimeout(resolve, 150))
-    }
     const items = offset === 0
       ? [caseResponse('case-a', { title: 'Visible A' }), caseResponse('case-b', { title: 'Visible B' })]
       : [caseResponse('case-c', { title: 'Visible C' })]
@@ -242,6 +250,7 @@ test('ReviewCase collection uses the server envelope for pagination and never re
 
   await page.goto('/review-cases?limit=2&offset=0')
   await expect(page.getByText('正在读取服务器授权后的 ReviewCase 页面…')).toBeVisible()
+  firstPageGate.resolve()
   await expect(page.getByText('Visible A')).toBeVisible()
   await expect(page.getByText('Visible B')).toBeVisible()
   await expect(page.getByText('Hidden H1')).toHaveCount(0)
@@ -257,6 +266,7 @@ test('ReviewCase collection uses the server envelope for pagination and never re
 test('ReviewCase primary authorization failure prevents all subordinate reads and stale detail rendering', async ({ page }) => {
   await stubReadySession(page)
   let subordinateRequests = 0
+  const caseGate = createDeferred()
   await page.route('**/api/v1/review-cases/blocked/**', async (route) => {
     subordinateRequests += 1
     await fulfillJson(route, 500, { detail: 'must not be called' })
@@ -266,12 +276,13 @@ test('ReviewCase primary authorization failure prevents all subordinate reads an
     await fulfillJson(route, 500, { detail: 'must not be called' })
   })
   await page.route('**/api/v1/review-cases/blocked', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await caseGate.promise
     await fulfillJson(route, 404, { detail: 'ReviewCase not found' })
   })
 
   await page.goto('/review-cases/blocked')
   await expect(page.getByText('正在确认当前 ReviewCase 授权…')).toBeVisible()
+  caseGate.resolve()
   await expect(page.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
   await expect(page.getByText('Foundation Case')).toHaveCount(0)
   expect(subordinateRequests).toBe(0)
@@ -309,8 +320,9 @@ test('ReviewCase route change binds rendered and subordinate state to the newly 
     blockedSubordinateRequests += 1
     await fulfillJson(route, 500, { detail: 'must not be called' })
   })
+  const caseBGate = createDeferred()
   await page.route('**/api/v1/review-cases/case-b', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 180))
+    await caseBGate.promise
     await fulfillJson(route, 404, { detail: 'ReviewCase not found' })
   })
 
@@ -327,6 +339,7 @@ test('ReviewCase route change binds rendered and subordinate state to the newly 
   await expect(page.getByText('正在确认当前 ReviewCase 授权…')).toBeVisible()
   await expect(page.getByText('Authorized Case A')).toHaveCount(0)
   await expect(page.getByText('Case A Member')).toHaveCount(0)
+  caseBGate.resolve()
   await expect(page.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
   expect(blockedSubordinateRequests).toBe(0)
 })
