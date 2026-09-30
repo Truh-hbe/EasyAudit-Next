@@ -34,17 +34,21 @@ cd web && npm run test:browser:real     # 需要真实 FastAPI + PostgreSQL，�
 
 不要新增阶段状态文件、Gate 文档、审查证据包，也不要写"某某不得做"式的长篇契约。规则写进代码、测试和架构检查里，文档只记录结论。
 
-## 多 Agent 分工
+## 多 Agent 分工（Paseo Profile）
 
 同一个工作目录同一时间只允许一个 Agent 写代码。需要并行时，用 `git worktree` 分开。
 
-| 角色 | 工具与模型 | 用途 |
-|---|---|---|
-| 主开发 | Claude Code，默认 Opus；难的设计或疑难问题用 Fable | 设计、实现、测试、开 PR |
-| 检索 | Claude Code Explore 子 Agent（Haiku） | 大范围代码搜索、定位 |
-| 机械改动 | Claude Code 子 Agent（Sonnet） | 批量重命名、样板代码、迁移脚本初稿 |
-| 独立 review | omp / pi 使用 `openai-codex/gpt-6-astra` | 审 PR diff，重点是并发、授权和跨组织隔离；只读 |
-| 廉价杂活 | omp / pi 使用 `gpt-5.6-luna` 或 `gemini-3.8-flash` | 日志与 CI 失败初筛、截图检查、提交信息 |
+| Profile | 模型 | 模式 | 用途 |
+|---|---|---|---|
+| 总指挥 | Claude Opus 5.5 / high | auto | 任务分解、分派、进度跟踪、最终决策。不直接写代码 |
+| 主力实现 | Claude Sonnet 5.5 / medium | auto | 功能实现、测试编写、bug 修复。大多数开发任务 |
+| 辅助实现 | Gemini 3.8 Flash High (pi) / high | default | 批量重命名、样板代码、迁移脚本初稿、简单修复。跨厂商 |
+| 代码审查 | Codex（GPT）/ high | 只读 | 审 PR diff，重点是并发、授权、跨组织隔离、事务锁。跨厂商 |
+| 难题委员会-Fable | Claude Fable 5.1 / xhigh | plan（只读） | 复杂架构设计、疑难 bug 根因分析 |
+| 难题委员会-Opus | Claude Opus 5.5 / xhigh | plan（只读） | 与 Fable 组成双人委员会，提供第二视角 |
+| 探索 | Claude Haiku 4.5 | plan（只读） | 代码搜索、定位引用、CI 初筛、日志检查、定时任务 |
+
+GPT 系列只用于代码审查，不写代码。
 
 要点：
 
