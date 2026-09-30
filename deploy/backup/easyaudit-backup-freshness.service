@@ -1,0 +1,11 @@
+# Example unit: fails (so it alerts if you watch failed units) when no integrity-ok backup
+# younger than 24h exists. Wire the failure into your monitoring; Pilot-7's checklist uses it.
+[Unit]
+Description=EasyAudit backup freshness (RPO 24h)
+
+[Service]
+Type=oneshot
+User=easyaudit
+Environment=EASYAUDIT_BACKUP_DIR=/srv/easyaudit-backups
+Environment=EASYAUDIT_BACKUP_MAX_AGE_HOURS=24
+ExecStart=/opt/easyaudit/deploy/backup/check-freshness.sh

@@ -58,17 +58,12 @@ alembic_revision() {
 
 restore_environment() {
   require_commands git
-  local manifest_release head
-  manifest_release="$(manifest_field "$BACKUP" release_sha)"
+  local head
   head="$(git -C "$REPO_DIR" rev-parse HEAD)"
-  if [ "$head" != "$manifest_release" ]; then
-    fail "this checkout is $head but the backup was taken on release $manifest_release. Check out that release first: git checkout $manifest_release"
-  fi
+  # A new environment builds from this checkout, so it defaults to (and must equal) HEAD.
+  export EASYAUDIT_RELEASE="${EASYAUDIT_RELEASE:-$head}"
+  require_release_match "$BACKUP"
   git -C "$REPO_DIR" diff --quiet HEAD || fail "the checkout has uncommitted changes; images would not match release $head"
-  if [ -n "${EASYAUDIT_RELEASE:-}" ] && [ "$EASYAUDIT_RELEASE" != "$head" ]; then
-    fail "EASYAUDIT_RELEASE=$EASYAUDIT_RELEASE differs from the checkout $head"
-  fi
-  export EASYAUDIT_RELEASE="$head"
 
   local secrets="${EASYAUDIT_SECRETS_DIR:-$DEPLOY_DIR/secrets}" certs="${EASYAUDIT_CERTS_DIR:-$DEPLOY_DIR/certs}" f
   for f in "$secrets"/{postgres_password,garage_rpc_secret,s3_access_key_id,s3_secret_access_key} "$certs"/{tls.crt,tls.key}; do
@@ -80,6 +75,9 @@ restore_environment() {
   "${DC[@]}" --profile migrate build
   step "start postgres and object-storage"
   "${DC[@]}" up -d --wait postgres object-storage
+  # Both targets must be empty before anything is written.
+  require_empty_database
+  require_empty_bucket
   restore_database
   restore_objects
 
@@ -100,8 +98,8 @@ restore_environment() {
 require_commands docker python3
 require_non_root
 case "$COMMAND" in
-  database) require_release; restore_database ;;
-  objects) require_release; restore_objects ;;
+  database) require_release_match "$BACKUP"; restore_database ;;
+  objects) require_release_match "$BACKUP"; restore_objects ;;
   environment) restore_environment ;;
   *) usage ;;
 esac

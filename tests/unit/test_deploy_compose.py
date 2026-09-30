@@ -210,3 +210,27 @@ def test_restore_checks_emptiness_before_writing() -> None:
     text = (ROOT / "deploy" / "backup" / "restore.sh").read_text()
     assert text.index("require_empty_database") < text.index("db_tool pg_restore")
     assert text.index("require_empty_bucket") < text.index("copy /data")
+    # A whole-environment restore checks both targets before either is written.
+    environment = text[text.index("restore_environment() {") :]
+    checks = [
+        environment.index("require_empty_database"),
+        environment.index("require_empty_bucket"),
+    ]
+    assert max(checks) < environment.index("  restore_database\n")
+
+
+def test_every_restore_entry_point_checks_the_release_first() -> None:
+    text = (ROOT / "deploy" / "backup" / "restore.sh").read_text()
+    dispatch = text[text.index('case "$COMMAND" in') :]
+    assert 'database) require_release_match "$BACKUP"' in dispatch
+    assert 'objects) require_release_match "$BACKUP"' in dispatch
+    assert 'require_release_match "$BACKUP"' in text[text.index("restore_environment() {") :]
+
+
+def test_backup_timer_keeps_snapshots_well_inside_24_hours() -> None:
+    timer = (ROOT / "deploy" / "backup" / "easyaudit-backup.timer").read_text()
+    assert "RandomizedDelaySec" not in timer
+    calendar = re.search(r"^OnCalendar=.* (\d\d),(\d\d):\d\d:\d\d$", timer, re.MULTILINE)
+    assert calendar is not None, "expected two runs per day"
+    first, second = int(calendar.group(1)), int(calendar.group(2))
+    assert max(second - first, 24 - (second - first)) <= 12

@@ -111,7 +111,8 @@ src/easyaudit_next/
 
 - 备份先 `pg_dump`，再经 S3 协议镜像对象（不打包 Garage 内部卷）。对象必须由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守）；因此 dump 之后拷贝的对象集合一定是 DB 引用集合的超集，多出来的是孤儿，由孤儿清理处理。备份时 DB 引用的对象缺失，或 size/sha256 不一致，备份照常保留并在 manifest 标记 `integrity: degraded`，脚本以退出码 3 结束（不产出就丢了当前 DB，RPO 失守）；`verify` 对 degraded 判失败，`restore` 允许但先打印问题清单。
 - 一个备份包 = `database.dump` + `objects/` + `manifest.json`，manifest 记录 release SHA（取自运行中镜像的 label）、alembic revision、各文件 sha256 和镜像 tag，保证同一 release、同一时间点。
-- 恢复只写入空目标（DB 无表、bucket 为空），不提供覆盖开关；恢复整个环境要求检出的 release 等于 manifest 的 release，且 `alembic current` 等于 manifest revision 和该 release 的 head。
+- 保留策略：按天数清理，但最近一份 `integrity: ok` 的备份永远保留，degraded 备份不能把它挤出保留窗口。备份每 12 小时一次，`check-freshness.sh` 监控"最近一份 ok 备份不超过 24h"；调度本身不保证 RPO。
+- 恢复只写入空目标（DB 无表、bucket 为空），不提供覆盖开关；`database`、`objects`、`environment` 三个入口在写入之前都要求 manifest 的 release 等于检出的 HEAD 和 `EASYAUDIT_RELEASE`（以及已有 api 容器的镜像 label），整环境恢复在写入之前先确认 DB 和 bucket 都为空，且 `alembic current` 等于 manifest revision 和该 release 的 head。
 - 备份/恢复工具是接入 `backend` 网络的一次性容器（非 root、`cap_drop: ALL`、不发布端口），不在长驻容器里写文件，也不给 postgres 发布端口。
 - secrets 和 TLS 证书不进备份包；和数据同盘的备份不算备份，异地拷贝由运维负责。
 - 恢复演练（`deploy/backup/drill.sh`，CI job `backup-restore-drill`）是备份恢复的验收；Pilot-4B 上线下载端点后，必须把"通过 API 下载 Evidence"加进演练。

@@ -10,6 +10,8 @@ tests/unit/test_backup_manifest.py.
   manifest.py verify-bundle  DIR [--fail-degraded]
   manifest.py show-integrity DIR   (print a degraded backup's problem list, exit 0)
   manifest.py verify-live    DIR --lsjson FILE --hashsum FILE --evidences FILE
+  manifest.py retention      ROOT --days N          (names of backups to delete, one per line)
+  manifest.py latest-ok      ROOT --max-age-hours H (fails unless an ok backup is that fresh)
 
 Exit status is non-zero when anything is inconsistent; every problem is listed on stderr.
 `build` exits 3 (EXIT_DEGRADED) after writing a manifest with integrity "degraded": the bundle
@@ -23,7 +25,7 @@ import json
 import re
 import sys
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -180,6 +182,45 @@ def images_from_tsv(text: str, expected_release: str) -> tuple[str, dict[str, di
 
 
 EXIT_DEGRADED = 3
+BACKUP_NAME = re.compile(r"^easyaudit-backup-(\d{8}T\d{6}Z)(\.partial)?$")
+TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+
+
+def list_backups(root: Path) -> list[dict[str, Any]]:
+    """Directories in `root` that look like backups; anything else is ignored (never touched)."""
+    entries = []
+    for path in sorted(root.iterdir()):
+        match = BACKUP_NAME.match(path.name)
+        if not match or not path.is_dir():
+            continue
+        partial = match.group(2) is not None
+        integrity = None
+        if not partial:
+            try:
+                integrity = json.loads((path / MANIFEST_NAME).read_text()).get("integrity")
+            except (OSError, ValueError):
+                integrity = None
+        entries.append(
+            {"name": path.name, "stamp": match.group(1), "partial": partial, "integrity": integrity}
+        )
+    return entries
+
+
+def latest_ok(entries: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    ok = [e for e in entries if not e["partial"] and e["integrity"] == "ok"]
+    return max(ok, key=lambda e: e["stamp"], default=None)
+
+
+def expired_backups(entries: list[dict[str, Any]], now: datetime, days: int) -> list[str]:
+    """Backups older than `days`, except the newest integrity-ok one, which is never expired
+    (degraded backups must not push the last healthy one out of retention)."""
+    cutoff = (now - timedelta(days=days)).strftime(TIMESTAMP_FORMAT)
+    keep = latest_ok(entries)
+    return [
+        e["name"]
+        for e in entries
+        if e["stamp"] < cutoff and (keep is None or e["name"] != keep["name"])
+    ]
 
 
 def build_manifest(
@@ -315,6 +356,25 @@ def _print_degraded(problems: list[str]) -> None:
     print("!" * 72, file=sys.stderr)
 
 
+def _check_freshness(root: Path, max_age_hours: float) -> int:
+    latest = latest_ok(list_backups(root))
+    if latest is None:
+        print("STALE: no integrity-ok backup found", file=sys.stderr)
+        return 1
+    stamp = load_manifest(root / latest["name"])["backup_timestamp"]
+    taken = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    age = (utc_now() - taken).total_seconds() / 3600
+    if age > max_age_hours:
+        print(
+            f"STALE: newest integrity-ok backup {latest['name']} is {age:.1f}h old "
+            f"(limit {max_age_hours:g}h)",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"FRESH: {latest['name']} is {age:.1f}h old (limit {max_age_hours:g}h)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -330,6 +390,12 @@ def main(argv: list[str] | None = None) -> int:
     bundle = sub.add_parser("verify-bundle")
     bundle.add_argument("dir", type=Path)
     bundle.add_argument("--fail-degraded", action="store_true")
+    retention = sub.add_parser("retention")
+    retention.add_argument("root", type=Path)
+    retention.add_argument("--days", type=int, required=True)
+    fresh = sub.add_parser("latest-ok")
+    fresh.add_argument("root", type=Path)
+    fresh.add_argument("--max-age-hours", type=float, required=True)
     show = sub.add_parser("show-integrity")
     show.add_argument("dir", type=Path)
     live = sub.add_parser("verify-live")
@@ -366,6 +432,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "verify-bundle":
         return _report(verify_bundle(args.dir, fail_degraded=args.fail_degraded))
+    if args.command == "retention":
+        print("\n".join(expired_backups(list_backups(args.root), utc_now(), args.days)))
+        return 0
+    if args.command == "latest-ok":
+        return _check_freshness(args.root, args.max_age_hours)
     if args.command == "show-integrity":
         problems = load_manifest(args.dir).get("integrity_problems", [])
         if problems:

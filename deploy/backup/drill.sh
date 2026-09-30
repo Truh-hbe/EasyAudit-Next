@@ -28,6 +28,9 @@ ADMIN_PASSWORD="drill-admin-password-1"
 DRILL_API=(python3 "$BACKUP_DIR_SRC/drill_api.py")
 ALL_PROFILES=(--profile migrate --profile backup)
 
+RTO_LIMIT="${DRILL_RTO_LIMIT_SECONDS:-14400}"
+[[ "$RTO_LIMIT" =~ ^[1-9][0-9]*$ ]] || fail "DRILL_RTO_LIMIT_SECONDS must be a positive integer"
+
 RESULT="fail"
 RESTORE_STARTED_AT="" RESTORE_COMPLETED_AT="" RTO_SECONDS="" BACKUP_TIMESTAMP="" RELEASE_SHA=""
 
@@ -58,10 +61,26 @@ cleanup() {
     RESULT="fail"
     "${DC[@]}" logs --no-color --tail=80 || true
   fi
-  write_record || true
+  # A drill whose record cannot be written did not succeed, whatever else happened.
+  record_status=0
+  write_record || record_status=$?
   "${DC[@]}" "${ALL_PROFILES[@]}" down -v --remove-orphans || true
   rm -rf "$WORK"
+  if [ "$status" -eq 0 ] && [ "$record_status" -ne 0 ]; then
+    echo "drill: ERROR: could not write the drill record to $RECORD" >&2
+    status="$record_status"
+  fi
   exit "$status"
+}
+
+# expect_refusal PATTERN CMD...: CMD must fail, and its output must say why.
+expect_refusal() {
+  local pattern="$1" out status=0
+  shift
+  out="$("$@" 2>&1)" || status=$?
+  echo "$out"
+  [ "$status" -ne 0 ] || fail "expected a refusal but the command succeeded: $*"
+  grep -q -- "$pattern" <<<"$out" || fail "refused for the wrong reason (wanted '$pattern'): $*"
 }
 trap cleanup EXIT
 
@@ -123,8 +142,8 @@ RESTORE_COMPLETED_AT="$(now_utc)"
 RTO_SECONDS="$(( $(date +%s) - RESTORE_T0 ))"
 
 step "7. restore refuses non-empty targets and a mismatched release"
-if "$BACKUP_DIR_SRC/restore.sh" database "$BACKUP"; then fail "restore database wrote into a non-empty database"; fi
-if "$BACKUP_DIR_SRC/restore.sh" objects "$BACKUP"; then fail "restore objects wrote into a non-empty bucket"; fi
+expect_refusal "database is not empty" "$BACKUP_DIR_SRC/restore.sh" database "$BACKUP"
+expect_refusal "is not empty" "$BACKUP_DIR_SRC/restore.sh" objects "$BACKUP"
 cp -a "$BACKUP" "$WORK/other-release"
 python3 - "$WORK/other-release/manifest.json" <<'PY'
 import json, sys
@@ -133,7 +152,10 @@ manifest = json.load(open(path))
 manifest["release_sha"] = "0" * 40
 json.dump(manifest, open(path, "w"))
 PY
-if "$BACKUP_DIR_SRC/restore.sh" environment "$WORK/other-release"; then fail "restore environment ignored a release mismatch"; fi
+# Every entry point checks the release before it looks at, let alone writes to, the targets.
+for sub in database objects environment; do
+  expect_refusal "was taken on release" "$BACKUP_DIR_SRC/restore.sh" "$sub" "$WORK/other-release"
+done
 
 step "8. degraded backup: a registered object is lost, the backup is still kept"
 LOST_KEY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidences"][0]["storage_key"])' "$WORK/state.json")"
@@ -146,6 +168,19 @@ DEGRADED="$(echo "$WORK"/backups/easyaudit-backup-* | tr ' ' '\n' | grep -v -F "
 [ "$(manifest_field "$DEGRADED" integrity)" = "degraded" ] || fail "manifest is not marked degraded"
 grep -q "$LOST_KEY" "$DEGRADED/manifest.json" || fail "manifest does not name the lost object"
 if "$BACKUP_DIR_SRC/verify.sh" "$DEGRADED"; then fail "verify passed a degraded backup"; fi
+# The degraded backup does not count for RPO; the earlier integrity-ok one is still fresh.
+EASYAUDIT_BACKUP_DIR="$WORK/backups" "$BACKUP_DIR_SRC/check-freshness.sh"
+python3 "$BACKUP_DIR_SRC/manifest.py" latest-ok "$WORK/backups" --max-age-hours 24 | grep -q -F "$(basename "$BACKUP")" \
+  || fail "freshness must point at the integrity-ok backup, not the degraded one"
 
+step "9. environment restore refuses a non-empty bucket before it writes the database"
+"${DC[@]}" "${ALL_PROFILES[@]}" down -v --remove-orphans
+"${DC[@]}" up -d --wait object-storage
+object_tool "$WORK/objs" ro copy /data "$S3_REMOTE"
+expect_refusal "bucket $BUCKET is not empty" "$BACKUP_DIR_SRC/restore.sh" environment "$BACKUP"
+tables="$(db_scalar "select count(*) from information_schema.tables where table_schema not in ('pg_catalog','information_schema')")"
+[ "$tables" = "0" ] || fail "the database was written to ($tables tables) although the bucket was not empty"
+
+[ "$RTO_SECONDS" -le "$RTO_LIMIT" ] || fail "actual RTO ${RTO_SECONDS}s exceeds the limit ${RTO_LIMIT}s"
 RESULT="pass"
 echo "DRILL OK: RTO ${RTO_SECONDS}s (small dataset, warm image cache; see deploy/README.md)"

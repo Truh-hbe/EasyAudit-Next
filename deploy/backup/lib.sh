@@ -28,6 +28,28 @@ require_release() {
   [ -n "${EASYAUDIT_RELEASE:-}" ] || fail "EASYAUDIT_RELEASE is not set (export EASYAUDIT_RELEASE=\$(git rev-parse HEAD))"
 }
 
+# Every restore entry point calls this before it writes anything: the backup's release_sha must
+# equal the checkout's HEAD and EASYAUDIT_RELEASE, and, if an api container already exists, the
+# revision label of its image. A dump restored under a different release could not be migrated
+# or served safely.
+require_release_match() {
+  local backup="$1" want head cid image_id label
+  require_commands git
+  want="$(manifest_field "$backup" release_sha)"
+  head="$(git -C "$REPO_DIR" rev-parse HEAD)"
+  [ "$head" = "$want" ] \
+    || fail "this checkout is $head but the backup was taken on release $want. Check out that release first: git checkout $want"
+  [ "${EASYAUDIT_RELEASE:-}" = "$want" ] \
+    || fail "EASYAUDIT_RELEASE='${EASYAUDIT_RELEASE:-}' but the backup was taken on release $want"
+  cid="$("${DC[@]}" ps -q api)"
+  if [ -n "$cid" ]; then
+    image_id="$(docker inspect --format '{{.Image}}' "$cid")"
+    label="$(docker image inspect --format "{{ index .Config.Labels \"$IMAGE_REVISION_LABEL\" }}" "$image_id")"
+    [ "$label" = "$want" ] \
+      || fail "the running api image is release '$label' but the backup was taken on release $want"
+  fi
+}
+
 # Containers run as the invoking uid so they can write the 0700 backup directory; running as
 # root would make them root too.
 require_non_root() {

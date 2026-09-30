@@ -5,7 +5,7 @@ import importlib.util
 import json
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -261,3 +261,89 @@ def test_release_comes_from_image_labels_and_must_be_uniform() -> None:
         manifest.images_from_tsv(_tsv(web=RELEASE, api=RELEASE, storage=RELEASE), "c" * 40)
     with pytest.raises(ValueError, match="no org.opencontainers.image.revision"):
         manifest.images_from_tsv(_tsv(web=RELEASE, api="", storage=RELEASE), RELEASE)
+
+
+NOW = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
+
+
+def _make_backup(root: Path, stamp: str, integrity: str | None, *, partial: bool = False) -> str:
+    name = f"easyaudit-backup-{stamp}" + (".partial" if partial else "")
+    directory = root / name
+    directory.mkdir()
+    if integrity is not None:
+        (directory / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "format_version": 1,
+                    "integrity": integrity,
+                    "backup_timestamp": f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"
+                    f"T{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}Z",
+                }
+            )
+        )
+    return name
+
+
+def _expired(root: Path, days: int = 14) -> list[str]:
+    return manifest.expired_backups(manifest.list_backups(root), NOW, days)
+
+
+def test_retention_expires_old_backups_and_keeps_recent_ones(tmp_path: Path) -> None:
+    old = _make_backup(tmp_path, "20261001T023000Z", "ok")
+    _make_backup(tmp_path, "20261025T023000Z", "ok")
+    assert _expired(tmp_path) == [old]
+
+
+def test_retention_never_deletes_the_newest_ok_backup_even_when_it_is_old(tmp_path: Path) -> None:
+    older_ok = _make_backup(tmp_path, "20260901T023000Z", "ok")
+    newest_ok = _make_backup(tmp_path, "20260910T023000Z", "ok")
+    degraded = [
+        _make_backup(tmp_path, "20261001T023000Z", "degraded"),
+        _make_backup(tmp_path, "20261020T023000Z", "degraded"),  # inside the window
+        _make_backup(tmp_path, "20261029T023000Z", "degraded"),
+    ]
+    expired = _expired(tmp_path)
+    assert newest_ok not in expired
+    assert set(expired) == {older_ok, degraded[0]}
+
+
+def test_retention_treats_unreadable_manifests_as_not_ok(tmp_path: Path) -> None:
+    keep = _make_backup(tmp_path, "20260901T023000Z", "ok")
+    broken = _make_backup(tmp_path, "20260902T023000Z", None)  # no manifest at all
+    assert _expired(tmp_path) == [broken] and keep not in _expired(tmp_path)
+
+
+def test_retention_cleans_stale_partials_and_ignores_foreign_directories(tmp_path: Path) -> None:
+    stale = _make_backup(tmp_path, "20260901T023000Z", None, partial=True)
+    fresh = _make_backup(tmp_path, "20261030T110000Z", None, partial=True)
+    for foreign in ("lost+found", "easyaudit-backup-old", "easyaudit-backup-2026", "notes"):
+        (tmp_path / foreign).mkdir()
+    (tmp_path / "easyaudit-backup-20200101T000000Z").write_text("a file, not a directory")
+    assert _expired(tmp_path) == [stale]
+    assert fresh not in _expired(tmp_path)
+
+
+def test_partial_backups_never_count_as_the_last_ok_backup(tmp_path: Path) -> None:
+    _make_backup(tmp_path, "20260901T023000Z", "ok", partial=True)
+    assert manifest.latest_ok(manifest.list_backups(tmp_path)) is None
+
+
+def _freshness(root: Path, hours: float) -> int:
+    return int(manifest._check_freshness(root, hours))
+
+
+def test_freshness_uses_only_the_newest_integrity_ok_backup(tmp_path: Path) -> None:
+    assert _freshness(tmp_path, 24) == 1  # nothing at all
+    _make_backup(tmp_path, "20200101T000000Z", "ok")
+    assert _freshness(tmp_path, 24) == 1  # ancient
+    _make_backup(tmp_path, "20261030T110000Z", "degraded")
+    assert _freshness(tmp_path, 24) == 1  # a fresh degraded backup does not help
+    _make_backup(tmp_path, "20261030T110000Z", "ok", partial=True)
+    assert _freshness(tmp_path, 24) == 1
+
+
+def test_freshness_passes_for_a_recent_ok_backup_and_fails_past_the_limit(tmp_path: Path) -> None:
+    taken = datetime.now(UTC) - timedelta(hours=5)
+    _make_backup(tmp_path, taken.strftime(manifest.TIMESTAMP_FORMAT), "ok")
+    assert _freshness(tmp_path, 24) == 0
+    assert _freshness(tmp_path, 4) == 1

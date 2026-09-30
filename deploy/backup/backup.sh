@@ -87,17 +87,12 @@ chmod -R go-rwx "$STAGE"
 mv "$STAGE" "$ROOT/$NAME"
 PRODUCED=true
 
-step "retention: removing backups older than $RETENTION_DAYS days"
-CUTOFF="$(date -u -d "$RETENTION_DAYS days ago" +%Y%m%dT%H%M%SZ)"
-for old in "$ROOT"/easyaudit-backup-*; do
-  [ -d "$old" ] || continue
-  base="${old##*/}"
-  [[ "$base" =~ ^easyaudit-backup-([0-9]{8}T[0-9]{6}Z)(\.partial)?$ ]] || continue
-  if [[ "${BASH_REMATCH[1]}" < "$CUTOFF" ]]; then
-    echo "removing $base"
-    rm -rf "$old"
-  fi
-done
+step "retention: removing backups older than $RETENTION_DAYS days (the newest integrity-ok backup is always kept)"
+while IFS= read -r old; do
+  [ -n "$old" ] || continue
+  echo "removing $old"
+  rm -rf "${ROOT:?}/$old"
+done < <(python3 "$MANIFEST_PY" retention "$ROOT" --days "$RETENTION_DAYS")
 
 SUMMARY="$ROOT/$NAME ($((SECONDS - T0))s) release=$(manifest_field "$ROOT/$NAME" release_sha) alembic=$(manifest_field "$ROOT/$NAME" alembic_revision)"
 if [ "$build_status" -eq 3 ]; then
