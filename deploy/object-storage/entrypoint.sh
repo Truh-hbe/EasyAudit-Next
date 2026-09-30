@@ -3,6 +3,10 @@
 # operator-supplied access key (imported, so credentials never appear in compose).
 set -eu
 
+# Docker secrets are bind-mounted 0444 so non-root uids can read them (the host directory is
+# 0700). Garage refuses world-readable secret files unless told otherwise.
+export GARAGE_ALLOW_WORLD_READABLE_SECRETS=true
+
 CONFIG=/etc/garage.toml
 BUCKET="${S3_BUCKET:-easyaudit-evidence}"
 KEY_ID="$(cat /run/secrets/s3_access_key_id)"
