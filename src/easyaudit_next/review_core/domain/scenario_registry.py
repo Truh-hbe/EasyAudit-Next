@@ -88,12 +88,3 @@ class ScenarioRegistry:
             return self._policies[key][version]
         except KeyError as exc:
             raise LookupError(f"Scenario version is not registered: {key}@{version}") from exc
-
-    def get_latest(self, key: ScenarioKey) -> ScenarioPolicy:
-        try:
-            enabled = [policy for policy in self._policies[key].values() if policy.scenario.enabled]
-        except KeyError as exc:
-            raise LookupError(f"Scenario is not registered: {key}") from exc
-        if not enabled:
-            raise LookupError(f"Scenario has no enabled version: {key}")
-        return max(enabled, key=lambda policy: policy.scenario.version)

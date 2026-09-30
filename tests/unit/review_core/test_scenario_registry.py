@@ -41,7 +41,6 @@ class ScenarioRegistryTest(TestCase):
 
         self.assertIs(registry.get(ScenarioKey("process_review"), ScenarioVersion(1)), v1)
         self.assertIs(registry.get(ScenarioKey("process_review"), ScenarioVersion(2)), v2)
-        self.assertIs(registry.get_latest(ScenarioKey("process_review")), v2)
 
     def test_exact_version_lookup_survives_scenario_disablement(self) -> None:
         registry = ScenarioRegistry()
@@ -54,7 +53,6 @@ class ScenarioRegistryTest(TestCase):
             registry.get(ScenarioKey("process_review"), ScenarioVersion(1)),
             disabled_history,
         )
-        self.assertIs(registry.get_latest(ScenarioKey("process_review")), current)
 
     def test_duplicate_version_is_rejected_instead_of_overwritten(self) -> None:
         registry = ScenarioRegistry()
