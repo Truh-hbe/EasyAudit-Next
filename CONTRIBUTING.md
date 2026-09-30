@@ -15,3 +15,4 @@
 
 - 使用 Conventional Commits，例如 `feat(review-core): add finding reopen reason`。
 - 提交前至少跑一遍 README 中的验证命令。
+- 受 GitHub 私有仓库免费套餐限制，`main` 无服务端分支保护，严禁直接推送；所有变更走 PR 且在 CI 全绿后由人工合并，详见 [AGENTS.md](AGENTS.md)。
