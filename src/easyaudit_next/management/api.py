@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
 from easyaudit_next.composition import build_management_query_service
+from easyaudit_next.infrastructure.database import snapshot_read
 from easyaudit_next.management.schemas import (
     ManagementCaseCollectionResponse,
     ManagementCaseProgressResponse,
@@ -29,14 +30,15 @@ def list_managed_review_cases(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> ManagementCaseCollectionResponse:
-    return build_management_query_service(session).list_review_cases(
-        identity.user,
-        review_plan_id=review_plan_id,
-        lifecycle=lifecycle,
-        deadline_status=deadline_status,
-        limit=limit,
-        offset=offset,
-    )
+    with snapshot_read(session):
+        return build_management_query_service(session).list_review_cases(
+            identity.user,
+            review_plan_id=review_plan_id,
+            lifecycle=lifecycle,
+            deadline_status=deadline_status,
+            limit=limit,
+            offset=offset,
+        )
 
 
 @management_router.get(
@@ -50,7 +52,8 @@ def get_managed_review_case_progress(
     session: DatabaseSession,
 ) -> ManagementCaseProgressResponse:
     try:
-        return build_management_query_service(session).get_progress(identity.user, case_id)
+        with snapshot_read(session):
+            return build_management_query_service(session).get_progress(identity.user, case_id)
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
