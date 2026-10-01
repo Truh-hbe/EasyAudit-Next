@@ -238,6 +238,16 @@ class _Tally:
     failure_types: Counter[str] = field(default_factory=Counter)
 
 
+def organization_key_share_lock(organization_id: OrganizationId) -> Select[tuple[UUID]]:
+    # `read=True, key_share=True` is FOR KEY SHARE; `key_share=True` alone compiles to
+    # FOR NO KEY UPDATE, which would make sweeps of one Organization exclude each other.
+    return (
+        select(OrganizationRecord.id)
+        .where(OrganizationRecord.id == organization_id)
+        .with_for_update(read=True, key_share=True)
+    )
+
+
 @contextmanager
 def _evaluator_in(
     transaction: Callable[[], AbstractContextManager[Session]],
@@ -248,9 +258,5 @@ def _evaluator_in(
         # Inserting a Notification takes FOR KEY SHARE on its Organization row (FK) after the
         # Case/Action and User locks. Web operations lock Organization -> Case -> User, so take
         # the Organization first, in the same order, or the two form a cycle.
-        session.execute(
-            select(OrganizationRecord.id)
-            .where(OrganizationRecord.id == organization_id)
-            .with_for_update(key_share=True)
-        )
+        session.execute(organization_key_share_lock(organization_id))
         yield evaluator_factory(session)

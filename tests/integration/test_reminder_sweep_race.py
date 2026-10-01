@@ -20,6 +20,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
 from easyaudit_next import cli
+from easyaudit_next.collaboration.reminder_sweep import organization_key_share_lock
 from easyaudit_next.composition import build_automatic_reminder_sweep, build_review_planning_service
 from easyaudit_next.notifications.persistence import NotificationRecord
 from easyaudit_next.notifications.service import NotificationService
@@ -54,23 +55,50 @@ def _count(engine: Engine, organization_id) -> int:
         )
 
 
-def _lock_waiters(engine: Engine) -> int:
+def _waiting_queries(engine: Engine) -> list[str]:
+    """Statements of the sessions currently blocked on a heavyweight lock (row lock waits
+    show the blocked statement itself, so its text tells which row it waits for)."""
     with engine.connect() as connection:
-        return connection.scalar(
-            text(
-                "SELECT count(*) FROM pg_stat_activity "
-                "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        return [
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT query FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                )
             )
-        )
+        ]
 
 
-def _wait_for_lock_waiter(engine: Engine) -> None:
+def _wait_for_lock_waiter(engine: Engine) -> list[str]:
     deadline = time.monotonic() + WAIT
     while time.monotonic() < deadline:
-        if _lock_waiters(engine):
-            return
+        if queries := _waiting_queries(engine):
+            return queries
         time.sleep(0.05)
     raise AssertionError("no session ever waited for a lock")
+
+
+def _assert_waiting_on_case_row(queries: list[str]) -> None:
+    """The sweep must queue on the Case row, never on the Organization row (sweeps of one
+    Organization share its FOR KEY SHARE lock)."""
+    assert len(queries) == 1, queries
+    assert "FROM review_cases" in queries[0] and "FOR UPDATE" in queries[0], queries
+    assert "organizations" not in queries[0], queries
+
+
+def _assert_waiting_on_organization_prologue(engine: Engine, queries: list[str]) -> None:
+    assert len(queries) == 1, queries
+    assert "FROM organizations" in queries[0] and "FOR KEY SHARE" in queries[0], queries
+    with engine.connect() as connection:
+        held = connection.scalar(
+            text(
+                "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a USING (pid) "
+                "WHERE a.datname = current_database() AND a.wait_event_type = 'Lock' "
+                "AND l.locktype = 'transactionid' AND l.granted"
+            )
+        )
+    assert held == 0  # the waiting sweep transaction has locked no row yet
 
 
 def test_two_sweeps_with_same_key_overlapping_create_each_delivery_once(
@@ -105,7 +133,8 @@ def test_two_sweeps_with_same_key_overlapping_create_each_delivery_once(
         first = pool.submit(sweep)
         assert inside.wait(WAIT)
         second = pool.submit(sweep)
-        _wait_for_lock_waiter(postgres_engine)  # the second sweep queues behind the first
+        # the second sweep queues behind the first, on the Case row
+        _assert_waiting_on_case_row(_wait_for_lock_waiter(postgres_engine))
         release.set()
         results = [first.result(WAIT), second.result(WAIT)]
 
@@ -164,7 +193,9 @@ def _web_member_operation(
         )
 
 
-def _interleave(engine: Engine, run_sweep) -> tuple[list[BaseException], UUID]:  # type: ignore[no-untyped-def]
+def _interleave(
+    engine: Engine, run_sweep, per_candidate: bool = True
+) -> tuple[list[BaseException], UUID]:  # type: ignore[no-untyped-def]
     """Web holds Org + the later-processed Case; the sweep finishes the earlier Case and then
     waits on the later one; only then the Web operation asks for the Users the sweep touched."""
     fixture = _seed_reminder_fixture(engine)
@@ -185,7 +216,10 @@ def _interleave(engine: Engine, run_sweep) -> tuple[list[BaseException], UUID]: 
         )
         assert holding.wait(WAIT)
         sweep = pool.submit(guarded, run_sweep, fixture)
-        _wait_for_lock_waiter(engine)  # sweep is queued behind the Web's Case lock
+        # Web holds the Organization, so the sweep queues on its first statement, holding nothing
+        queries = _wait_for_lock_waiter(engine)
+        if per_candidate:
+            _assert_waiting_on_organization_prologue(engine, queries)
         proceed.set()
         web.result(WAIT * 2)
         sweep.result(WAIT * 2)
@@ -232,9 +266,88 @@ def test_single_transaction_mode_deadlocks_in_the_same_interleaving(
             )
             session.commit()
 
-    errors, _ = _interleave(postgres_engine, run)
+    errors, _ = _interleave(postgres_engine, run, per_candidate=False)
 
     assert len(errors) == 1
     error = errors[0]
     assert isinstance(error, DBAPIError)
     assert getattr(error.orig, "sqlstate", None) == "40P01"  # deadlock_detected
+
+
+def test_sweep_organization_locks_are_shared_between_sessions(postgres_engine: Engine) -> None:
+    """FOR KEY SHARE does not exclude another FOR KEY SHARE; the control shows the pre-fix mode
+    (FOR NO KEY UPDATE) excludes itself, so the assertion can fail."""
+    fixture = _seed_reminder_fixture(postgres_engine)
+    shared = organization_key_share_lock(fixture.organization_id)
+    no_key_update = (
+        select(OrganizationRecord.id)
+        .where(OrganizationRecord.id == fixture.organization_id)
+        .with_for_update(key_share=True)
+    )
+    with Session(postgres_engine) as first, Session(postgres_engine) as second:
+        first.execute(shared)
+        second.execute(text("SET LOCAL lock_timeout = '1s'"))
+        second.execute(shared)  # does not wait
+        second.rollback()
+        first.rollback()
+
+        first.execute(no_key_update)  # control: the pre-fix mode excludes itself
+        second.execute(text("SET LOCAL lock_timeout = '300ms'"))
+        with pytest.raises(DBAPIError) as blocked:
+            second.execute(no_key_update)
+        assert getattr(blocked.value.orig, "sqlstate", None) == "55P03"
+        second.rollback()
+        first.rollback()
+
+
+def test_sweep_started_first_does_not_deadlock_with_a_later_web_operation(
+    postgres_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opposite order: the sweep is inside a candidate (holds Organization KEY SHARE, a Case
+    and Users) when the Web operation arrives and queues for `Organization FOR UPDATE`."""
+    fixture = _seed_reminder_fixture(postgres_engine)
+    second_case = _add_overdue_case(postgres_engine, fixture)
+    factory = sessionmaker(postgres_engine, autoflush=False, expire_on_commit=False)
+    inside, release = Event(), Event()
+    first_call = Lock()
+    original = NotificationService.deliver_automatic
+    state = {"blocked": False}
+
+    def hold_first_delivery(self, **kwargs):  # type: ignore[no-untyped-def]
+        outcome = original(self, **kwargs)
+        with first_call:
+            hold = not state["blocked"]
+            state["blocked"] = True
+        if hold:
+            inside.set()
+            assert release.wait(WAIT)
+        return outcome
+
+    monkeypatch.setattr(NotificationService, "deliver_automatic", hold_first_delivery)
+    holding, proceed = Event(), Event()
+    proceed.set()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        sweep = pool.submit(
+            cli.run_reminder_sweep_job,
+            factory,
+            as_of=NOW,
+            occurrence_key=f"daily:{uuid4()}",
+            organization_id=fixture.organization_id,
+        )
+        assert inside.wait(WAIT)
+        web = pool.submit(
+            _web_member_operation,
+            postgres_engine,
+            fixture,
+            max(fixture.review_case_id, second_case),
+            holding,
+            proceed,
+        )
+        queries = _wait_for_lock_waiter(postgres_engine)
+        assert len(queries) == 1 and "FROM organizations" in queries[0]
+        assert "FOR UPDATE" in queries[0], queries  # the Web operation waits for the sweep
+        release.set()
+        web.result(WAIT * 2)
+        outcome = sweep.result(WAIT * 2)
+
+    assert outcome["status"] == "succeeded" and outcome["failed_count"] == 0
