@@ -22,6 +22,7 @@ from easyaudit_next.platform.persistence.repositories import (
 from easyaudit_next.review_case_queries.context_service import ReviewCaseContextQueryService
 from easyaudit_next.review_case_queries.query_service import ReviewCaseCollectionQueryService
 from easyaudit_next.review_case_queries.review_catalog import ReviewCatalogQueryService
+from easyaudit_next.review_core.application.create_idempotency import CreateIdempotencyService
 from easyaudit_next.review_core.application.review_closure_findings import (
     ClosureAwareFindingLifecycleService,
 )
@@ -31,6 +32,9 @@ from easyaudit_next.review_core.application.review_verification import (
     VerificationClosureService,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
+from easyaudit_next.review_core.persistence.idempotency_repository import (
+    SqlAlchemyCreateIdempotencyRepository,
+)
 from easyaudit_next.review_core.persistence.rectification_repositories import (
     SqlAlchemyRectificationRepository,
 )
@@ -91,6 +95,12 @@ def build_platform_administration_service(session: Session) -> PlatformAdministr
         auth,
         audit,
     )
+
+
+def build_create_idempotency_service(session: Session) -> CreateIdempotencyService:
+    """Wire the ReviewPlan / ReviewCase creation idempotency claim."""
+
+    return CreateIdempotencyService(SqlAlchemyCreateIdempotencyRepository(session))
 
 
 def build_case_team_coordinator(session: Session) -> CaseTeamUserCoordinator:

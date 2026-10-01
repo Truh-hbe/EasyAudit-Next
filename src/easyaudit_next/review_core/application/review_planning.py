@@ -115,6 +115,7 @@ class ReviewPlanningService:
         *,
         planned_start_at: datetime | None = None,
         planned_end_at: datetime | None = None,
+        new_plan_id: ReviewPlanId | None = None,
     ) -> ReviewPlan:
         if not CORE_REVIEW_PLANNING_AUTHORIZATION.allows(
             ReviewPlanningPermission.CREATE_REVIEW_PLAN,
@@ -124,7 +125,7 @@ class ReviewPlanningService:
         self._validate_title(title)
         self._validate_dates(planned_start_at, planned_end_at)
         plan = ReviewPlan(
-            id=ReviewPlanId(uuid4()),
+            id=new_plan_id or ReviewPlanId(uuid4()),
             organization_id=actor.organization_id,
             title=title,
             planned_start_at=planned_start_at,
@@ -157,6 +158,7 @@ class ReviewPlanningService:
         planned_start_at: datetime | None = None,
         planned_end_at: datetime | None = None,
         occurred_at: datetime | None = None,
+        new_case_id: ReviewCaseId | None = None,
     ) -> ReviewCase:
         self._validate_title(title)
         self._validate_dates(planned_start_at, planned_end_at)
@@ -177,7 +179,7 @@ class ReviewPlanningService:
 
         now = occurred_at or datetime.now(UTC)
         review_case = ReviewCase(
-            id=ReviewCaseId(uuid4()),
+            id=new_case_id or ReviewCaseId(uuid4()),
             organization_id=actor.organization_id,
             plan_id=plan_id,
             scenario_key=scenario_key,

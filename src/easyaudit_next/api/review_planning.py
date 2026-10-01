@@ -1,7 +1,7 @@
 from typing import Annotated, NoReturn
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
@@ -19,6 +19,7 @@ from easyaudit_next.api.review_contracts import (
 )
 from easyaudit_next.composition import (
     build_case_team_coordinator,
+    build_create_idempotency_service,
     build_notification_orchestrator,
     build_review_case_collection_query_service,
     build_review_case_context_query_service,
@@ -35,6 +36,10 @@ from easyaudit_next.review_case_queries.schemas import (
     CaseMemberViewResponse,
     ReviewCaseActivityResponse,
 )
+from easyaudit_next.review_core.application.create_idempotency import (
+    CreateOperation,
+    IdempotencyKeyReuseError,
+)
 from easyaudit_next.review_core.application.review_planning import (
     CaseManagerConflictError,
     ConcurrentCaseTransitionError,
@@ -50,6 +55,30 @@ from easyaudit_next.review_core.domain.models import (
 )
 
 review_planning_router = APIRouter(prefix="/api/v1", tags=["review-planning"])
+
+IDEMPOTENT_REPLAYED_HEADER = "Idempotent-Replayed"
+
+# Optional: without the header creation behaves exactly as before.
+IdempotencyKeyHeader = Annotated[
+    str | None,
+    Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[\x20-\x7e]+$",
+        description="1-128 printable ASCII characters; scoped to organization, user and operation.",
+    ),
+]
+
+_CREATE_RESPONSES: dict[int | str, dict[str, object]] = {
+    201: {"headers": {IDEMPOTENT_REPLAYED_HEADER: {"schema": {"type": "string"}}}},
+    409: {
+        "description": (
+            "Conflict, including an Idempotency-Key reused with a different request "
+            "(detail: Idempotency-Key reused with a different request)."
+        )
+    },
+}
 
 
 def _plan_response(plan: ReviewPlan) -> ReviewPlanResponse:
@@ -123,7 +152,12 @@ def _raise_api_error(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if isinstance(
         exc,
-        (CaseManagerConflictError, ConcurrentCaseTransitionError, IntegrityError),
+        (
+            CaseManagerConflictError,
+            ConcurrentCaseTransitionError,
+            IdempotencyKeyReuseError,
+            IntegrityError,
+        ),
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
@@ -142,21 +176,47 @@ def _raise_api_error(exc: Exception) -> NoReturn:
     response_model=ReviewPlanResponse,
     status_code=status.HTTP_201_CREATED,
     operation_id="createReviewPlan",
+    responses=_CREATE_RESPONSES,
 )
 def create_review_plan(
     payload: ReviewPlanCreateRequest,
+    response: Response,
     identity: BusinessIdentity,
     session: DatabaseSession,
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ReviewPlanResponse:
     service = build_review_planning_service(session)
+    new_plan_id = ReviewPlanId(uuid4())
     try:
+        first_plan_id = (
+            build_create_idempotency_service(session).claim(
+                identity.user,
+                CreateOperation.CREATE_REVIEW_PLAN,
+                idempotency_key,
+                payload.model_dump(),
+                new_plan_id,
+            )
+            if idempotency_key is not None
+            else None
+        )
+        if first_plan_id is not None:
+            # Replay: no new rows or Activity; the current representation, read-authorized.
+            response.headers[IDEMPOTENT_REPLAYED_HEADER] = "true"
+            return _plan_response(service.get_plan(identity.user, ReviewPlanId(first_plan_id)))
         plan = service.create_plan(
             identity.user,
             payload.title,
             planned_start_at=payload.planned_start_at,
             planned_end_at=payload.planned_end_at,
+            new_plan_id=new_plan_id,
         )
-    except (ReviewAuthorizationError, ValueError, IntegrityError) as exc:
+    except (
+        IdempotencyKeyReuseError,
+        LookupError,
+        ReviewAuthorizationError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
         _raise_api_error(exc)
     return _plan_response(plan)
 
@@ -219,13 +279,36 @@ def get_review_plan(
     response_model=ReviewCaseResponse,
     status_code=status.HTTP_201_CREATED,
     operation_id="createReviewCase",
+    responses=_CREATE_RESPONSES,
 )
 def create_review_case(
     payload: ReviewCaseCreateRequest,
+    response: Response,
     identity: BusinessIdentity,
     session: DatabaseSession,
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ReviewCaseResponse:
+    new_case_id = ReviewCaseId(uuid4())
     try:
+        # The claim is the first statement: IdempotencyKey -> Organization -> ... lock order.
+        first_case_id = (
+            build_create_idempotency_service(session).claim(
+                identity.user,
+                CreateOperation.CREATE_REVIEW_CASE,
+                idempotency_key,
+                payload.model_dump(),
+                new_case_id,
+            )
+            if idempotency_key is not None
+            else None
+        )
+        if first_case_id is not None:
+            response.headers[IDEMPOTENT_REPLAYED_HEADER] = "true"
+            return _case_response(
+                build_review_planning_service(session).get_case(
+                    identity.user, ReviewCaseId(first_case_id)
+                )
+            )
         review_case = build_case_team_coordinator(session).create_case(
             identity.user,
             ScenarioKey(payload.scenario_key),
@@ -235,9 +318,11 @@ def create_review_case(
             plan_id=ReviewPlanId(payload.plan_id) if payload.plan_id is not None else None,
             planned_start_at=payload.planned_start_at,
             planned_end_at=payload.planned_end_at,
+            new_case_id=new_case_id,
         )
     except (
         CaseManagerConflictError,
+        IdempotencyKeyReuseError,
         ReviewAuthorizationError,
         LookupError,
         ValueError,

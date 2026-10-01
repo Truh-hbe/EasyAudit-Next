@@ -62,6 +62,7 @@ class CaseTeamUserCoordinator:
         planned_start_at: datetime | None = None,
         planned_end_at: datetime | None = None,
         occurred_at: datetime | None = None,
+        new_case_id: ReviewCaseId | None = None,
     ) -> ReviewCase:
         fresh_actor = self._lock_actor(actor)
         return self._planning.create_case(
@@ -74,6 +75,7 @@ class CaseTeamUserCoordinator:
             planned_start_at=planned_start_at,
             planned_end_at=planned_end_at,
             occurred_at=occurred_at,
+            new_case_id=new_case_id,
         )
 
     def add_case_member_result(
