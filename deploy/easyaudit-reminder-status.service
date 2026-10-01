@@ -1,0 +1,13 @@
+# Example unit: fails (so it alerts if you watch failed units) when the latest reminder sweep
+# failed, or no run succeeded within 26h (daily run + 2h slack), or it never ran.
+# Prints the latest run as JSON. Pilot-7's checklist uses it.
+[Unit]
+Description=EasyAudit reminder sweep freshness
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=easyaudit
+WorkingDirectory=/opt/easyaudit
+ExecStart=/bin/bash -c 'EASYAUDIT_RELEASE="$(git -C /opt/easyaudit rev-parse HEAD)" exec docker compose -f /opt/easyaudit/deploy/compose.yaml run --rm --no-deps -T api easyaudit-next scheduler-status --max-age-hours 26'

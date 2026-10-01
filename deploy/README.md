@@ -66,6 +66,22 @@ $DC run --rm api easyaudit-next bootstrap-admin \
 
 `$DC run --rm --no-deps -T api easyaudit-next cleanup-auth` 删除过期的 `login_throttle` 窗口（运维计数，不是业务数据），向 stdout 输出一行 JSON：删除条数和已过期 Session 的计数。**不删除也不修改任何 Session**：`auth_sessions` 是审计事件的 FK 锚点，试点期只增不删，过期靠 `expires_at` 保证不可用。某个登录名被限流误封（或被他人故意封锁）时，运维用 `$DC run --rm --no-deps -T api easyaudit-next cleanup-auth --clear-login-name <name>` 立即解封（名字会按登录规则规范化；输出里 `login_name_cleared` 是删除的窗口数）。`deploy/easyaudit-cleanup-auth.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。
 
+## 每日自动提醒
+
+调度在 Web 进程之外：systemd timer 每天 09:00（Asia/Shanghai）运行一次性容器 `easyaudit-next run-reminder-sweep`。`deploy/easyaudit-reminder-sweep.service/.timer` 是示例（改路径和账号后安装，要求同备份）：
+
+```bash
+sudo install -m 644 deploy/easyaudit-reminder-sweep.{service,timer} deploy/easyaudit-reminder-status.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now easyaudit-reminder-sweep.timer
+systemctl list-timers easyaudit-reminder-sweep.timer     # 确认下次触发时间（Asia/Shanghai 09:00）
+```
+
+- 手动运行：`$DC run --rm --no-deps -T api easyaudit-next run-reminder-sweep [--as-of 2026-10-02T01:00:00Z] [--occurrence-key daily:2026-10-02]`。默认 `as_of` 是当前 UTC 时间，默认 key 是 `daily:<as_of 在 REMINDER_TIMEZONE（默认 Asia/Shanghai）下的日期>`，所以**同一天重跑是安全的**：已发出的提醒被数据库唯一约束去重，失败的候选会补上。stdout 是一行 JSON（`status`、`scanned_count`、`created_count`、`deduped_count`、`failed_count`、`error_summary`）；有候选失败或整体无法运行时退出码为 1，unit 会显示 failed。
+- 查看状态：`$DC run --rm --no-deps -T api easyaudit-next scheduler-status [--job automatic_reminder_sweep] [--max-age-hours 26]` 输出最近一次运行和最近一次成功的 JSON。最近一次失败、最近一次成功早于 26 小时、或从未运行，退出码为 1。`easyaudit-reminder-status.service/.timer` 是每小时执行它的示例（先让 sweep 至少成功运行一次再启用，否则会报 `never_run`）；Pilot-7 上线检查清单的"提醒调度"就用它。
+- 运行记录在表 `scheduler_runs`（运维记录，不影响业务，也不决定是否跳过运行）。进程崩溃会留下一条 `running` 记录，它不会阻止下一次运行；`scheduler-status` 不把它当作失败，只看最近一次成功。
+- 排障：先看 `journalctl -u easyaudit-reminder-sweep` 里最近一次的 JSON，`error_summary` 只含异常类型和 SQLSTATE（如 `OperationalError/55P03` 是锁等待超时、`/40P01` 是死锁），不含 SQL 或数据；重跑即可补齐。
+
 ## 备份
 
 目标：RPO ≤ 24h，RTO ≤ 4h。工具在 `deploy/backup/`，全部通过一次性容器（`db-tool`、`object-tool`，只接入 `backend` 网络，不发布端口，非 root，`cap_drop: ALL`）访问数据库和对象存储。前置条件：docker compose、python3、flock，且用**非 root** 的运维账号（在 docker 组内，且拥有 0700 的 `deploy/secrets`）执行，容器以该账号的 uid 写备份目录。

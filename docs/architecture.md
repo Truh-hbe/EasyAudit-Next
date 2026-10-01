@@ -44,6 +44,7 @@ src/easyaudit_next/
   - Case 成员增删、用户停用：`Organization → Case（按 ID 排序）→ User（按 ID 排序）`
 - 等待锁之后的决定性读取必须刷新 ORM 状态（`populate_existing=True`），不能使用锁前的 identity map 快照。
 - 锁后发现生命周期已变化，按并发冲突（409）处理，而不是按业务校验失败（422）处理。
+  - 自动提醒 sweep（每个候选一个事务）：`Organization(FOR KEY SHARE) → Case 或 Action → 收件人 User(KEY SHARE，由 Notification FK 隐式获得)`，与上面的顺序一致，见"通知与提醒"。
 - 每个并发修复都要有 PostgreSQL 双 Session 竞争测试（`tests/integration/*race*`、`*concurrency*`）。
 
 ## 创建幂等
@@ -79,7 +80,7 @@ src/easyaudit_next/
 | `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 30000 | 事务里空闲超过此值，服务端终止连接 |
 
 - **客户端上限**：业务 engine 给 libpq 下发 `connect_timeout`（建连上限）、`keepalives*` 和 `tcp_user_timeout`（发现已建立连接上的死对端）。keepalive 与 `tcp_user_timeout` 是否生效取决于平台是否支持对应的 socket 选项，见 libpq 文档；**TCP 存活检测不等于查询响应截止时间**：连接已建立、对端存活但不返回结果时，业务请求没有客户端截止时间，只依赖服务端的 `statement_timeout`（同步驱动加线程池模型，试点期接受；`ready` 探针有独立的客户端截止时间，会把这种情况暴露为 not ready）。URL 里已有的同名参数优先于 Settings，这是运维的显式选择：在 URL 里覆盖它们等于放弃 Settings 的默认上限，`connect_timeout=0` 表示无限等待。`DB_POOL_SIZE + DB_MAX_OVERFLOW` 至少为 2（Settings 校验）。
-- 三个超时通过业务 engine 的连接参数 `options=-c ...` 下发，与 URL 里已有的 `options` **合并**（追加在后，同名以我们为准）。只作用于业务 engine：`alembic/env.py` 自建 NullPool engine，迁移不受 statement_timeout 限制；CLI 用业务 engine，同样受限。
+- 三个超时通过业务 engine 的连接参数 `options=-c ...` 下发，与 URL 里已有的 `options` **合并**（追加在后，同名以我们为准）。只作用于业务 engine：`alembic/env.py` 自建 NullPool engine，迁移不受 statement_timeout 限制；CLI（含 `run-reminder-sweep`）自建同样配置的业务 engine，同样受限；sweep 逐个候选取一条连接，任何时刻只占一条。
 - **连接预算公式**：`workers × (pool_size + max_overflow) + readiness 探针 + 运维工具 < max_connections`。当前 compose：1 个 uvicorn worker × 15 + readiness 探针 1（single-flight，同一时间最多一条）+ 运维工具（`migrate`、备份 `pg_dump`、CLI，各按 1 条，预留 5）≈ 21，远低于 PostgreSQL 默认 `max_connections=100`（另有 superuser 预留 3）。增加 worker 或调大池之前先按公式核对。
 - **超时的 HTTP 语义**：`statement_timeout`、`lock_timeout` 到期（SQLSTATE 57014 / 55P03）映射为 **503 + `Retry-After: 1`**，body 只有 `detail` 与 `request_id`，由 `RequestContextMiddleware` 统一处理并记 WARNING `database_timeout`。不用 409：409 的含义是"数据已过期，刷新后重试"，而超时并没有发现生命周期变化，只是暂时拿不到资源；前端对 409 会刷新数据，对 503 才是正确的"稍后重试同一个请求"。死锁（40P01）与 idle-in-transaction 终止不在此列，仍是 500（说明代码违反了加锁顺序或持有了空闲事务）。
 - **没有运行时自检**：这些 timeout 由集成测试保证（`tests/integration/test_db_budget.py`：真实 PostgreSQL 上 `SHOW` 三个值等于配置、`options` 与 URL 合并、statement/lock 超时行为、idle-in-transaction 终止、迁移连接不受影响），不在启动时再向数据库查询比对，也不影响 `ready`。
@@ -143,7 +144,15 @@ src/easyaudit_next/
   - 事件通知：`组织 + 收件人 + origin_activity + kind`
   - 自动提醒：`组织 + 收件人 + kind + 主题 + 提醒发生键`。发生键绑定到当时的截止日期值。
 - 手动催办（Finding / Action）是人的操作：写一条 Activity，再按收件人扇出 Notification。收件人为空时拒绝；发起人不会收到自己的催办。
-- 自动提醒不写 Review Activity，只写 Notification。`collaboration/reminder_sweep.py` 与调度器无关，调度由外部触发。
+- 自动提醒不写 Review Activity，只写 Notification。`collaboration/reminder_sweep.py` 与调度器无关：时钟、`occurrence_key` 和事务粒度都由调用方提供。
+- **调度在 Web 进程之外。** systemd timer 每天 09:00（`Asia/Shanghai`）运行 `easyaudit-next run-reminder-sweep`（一次性容器，示例见 `deploy/easyaudit-reminder-sweep.*`）。`api/`、各模块的 `api.py`、`main.py`、`serve.py` 不得 import sweep、`scheduler_runs`、CLI 或任何调度库，`scripts/check_architecture.py` 强制（`tests/unit/test_web_process_has_no_scheduler.py`）。uvicorn 多 worker 或重启都不会导致重复或遗漏调度。
+- **发生键**：默认 `occurrence_key = daily:<as_of 在 REMINDER_TIMEZONE（默认 Asia/Shanghai）下的日期>`，所以同一天内任意次运行（timer 补跑、手动重跑）共享同一个键；`--as-of`、`--occurrence-key` 可显式覆盖，用于补发或测试。
+- **每个候选一个事务。** sweep 自己不持有长事务：发现候选（keyset 分页，按 id 升序，每页一个只读短事务，页间不丢位置；READ COMMITTED 下评估器会重新校验是否仍然逾期）和评估每个候选各用独立事务。单个候选失败（含 40P01、55P03）只回滚这一个候选，计入 `failed_count`，sweep 继续处理后面的候选。
+- **锁序论证**：一个候选事务先 `SELECT … FOR KEY SHARE` 该 Organization 行，再对 Case（或 Action）`FOR UPDATE`，再插入 Notification，此时 Notification FK 对收件人 `users` 行和 `organizations` 行加 `KEY SHARE`（后者已持有）。这与 Web 的 `Organization → Case → User` 同序，而且事务内从不跨候选累积锁，因此不会与 Web 成员操作成环。第一版（单事务扫完所有候选）会在 `Case₁ → User → Case₂ …` 处与 Web 成环；"先锁 Organization"这一步是实测补上的：Notification 对 `organizations` 的 FK 检查本身是一次后置的 `KEY SHARE`，与 Web 持有的 `Organization FOR UPDATE` 冲突。`tests/integration/test_reminder_sweep_race.py` 固定了无死锁的时序，并保留旧的单事务形态作为必然死锁的反例。
+- **运行记录 `scheduler_runs`**（`job_key`、`occurrence_key`、`as_of`、`started_at`、`finished_at`、`status`、各计数、`error_summary`）是**运维记录，不是业务真相，也不进 Review Core**。三段事务：(a) 短事务插入 `running` 并提交；(b) sweep 的各个候选事务；(c) 短事务写终态和计数。全部候选成功为 `succeeded`；只要有候选失败，或 sweep 整体无法运行，就是 `failed`（不设 `partial`：监控只需要区分"需要人处理"和"不需要"，细节在 `failed_count` 与 `error_summary`），CLI 以退出码 1 结束。进程崩溃会让记录停在 `running`，不做任何自动处理（不引入 `abandoned`）。
+- **去重不依赖运行记录。** 禁止用"已有 `succeeded` 记录"跳过一次运行或代替业务去重；重跑总是完整执行 sweep，已提交的候选被 Notification 唯一索引去重（`created_count = 0`，`deduped_count` 等于上次的 `created_count`），失败的候选补上。计数来自 `INSERT … ON CONFLICT DO NOTHING RETURNING` 的实际返回行数，仍由数据库约束裁决，不是先查后插。
+- `error_summary` 只含异常类名（加 SQLSTATE）和失败数，如 `failed_candidates=2: OperationalError/40P01 x2`；绝不写 `str(exc)`（SQLAlchemy 异常带 SQL 和参数）。CLI 在 stdout 输出一行 JSON（run_id、job_key、occurrence_key、计数、status），不经过请求日志的字段白名单。
+- **新鲜度监控**：`easyaudit-next scheduler-status [--job automatic_reminder_sweep] [--max-age-hours 26]` 输出最近一次运行和最近一次成功的 JSON；最近一次 `failed`、最近一次成功早于 max-age、或从未运行，退出码为 1。最近一次仍是 `running`（进行中或已崩溃）本身不算失败，新鲜度只看最近一次成功。
 - 收件人由 Scenario 的收件人语义在当时解析，部门展开到当时的活跃成员；历史通知的收件人不会被改写。
 
 ## 前端边界

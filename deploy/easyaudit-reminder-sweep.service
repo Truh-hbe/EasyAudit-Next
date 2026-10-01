@@ -1,0 +1,16 @@
+# Example unit: install as /etc/systemd/system/easyaudit-reminder-sweep.service and adjust paths.
+# Runs the automatic reminder sweep once (see easyaudit-reminder-sweep.timer) in a one-shot
+# container, outside the web process. Exit code 1 means the run is recorded as failed (some or all
+# candidates failed): the unit shows failed; a rerun is safe, Notification's unique index
+# deduplicates. Same operator-account requirements as deploy/backup/easyaudit-backup.service.
+# The stack must be up (the container joins the backend network and reaches postgres).
+[Unit]
+Description=EasyAudit automatic reminder sweep
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=easyaudit
+WorkingDirectory=/opt/easyaudit
+ExecStart=/bin/bash -c 'EASYAUDIT_RELEASE="$(git -C /opt/easyaudit rev-parse HEAD)" exec docker compose -f /opt/easyaudit/deploy/compose.yaml run --rm --no-deps -T api easyaudit-next run-reminder-sweep'

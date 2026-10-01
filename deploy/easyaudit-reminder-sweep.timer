@@ -1,0 +1,13 @@
+# Example unit: install next to easyaudit-reminder-sweep.service, then
+#   systemctl enable --now easyaudit-reminder-sweep.timer
+# Every day at 09:00 Shanghai time. The default occurrence key is the Shanghai date, so a second
+# run on the same day (Persistent=true after downtime, or a manual rerun) is deduplicated.
+[Unit]
+Description=EasyAudit automatic reminder sweep, daily 09:00 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 Asia/Shanghai
+Persistent=true
+
+[Install]
+WantedBy=timers.target
