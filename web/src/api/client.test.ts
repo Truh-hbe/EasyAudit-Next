@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   installSessionUnauthorizedHandler,
   publicApiRequest,
+  sessionApiDownload,
   sessionApiRequest,
 } from './client'
 
@@ -94,5 +95,53 @@ describe('shared API boundary', () => {
       status: 429,
       retryAfter: 900,
     })
+  })
+})
+
+describe('file downloads', () => {
+  it('returns the blob with the server-chosen filename', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response('a,b', {
+          status: 200,
+          headers: {
+            'Content-Disposition':
+              'attachment; filename="review-cases-20261002T0930+0800.csv"; filename*=UTF-8\'\'review-cases-20261002T0930%2B0800.csv',
+          },
+        }),
+      ),
+    )
+
+    const file = await sessionApiDownload('/api/v1/management/review-cases/export', 'fallback.csv')
+
+    expect(file.filename).toBe('review-cases-20261002T0930+0800.csv')
+    expect(await file.blob.text()).toBe('a,b')
+  })
+
+  it('falls back to a default filename and surfaces the server detail on errors', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValueOnce(new Response('x', { status: 200 }))
+    await expect(sessionApiDownload('/api/v1/x', 'fallback.csv')).resolves.toMatchObject({
+      filename: 'fallback.csv',
+    })
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Export exceeds the limit of 2 rows' }), {
+        status: 422,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    await expect(sessionApiDownload('/api/v1/x', 'fallback.csv')).rejects.toMatchObject({
+      status: 422,
+      detail: 'Export exceeds the limit of 2 rows',
+    })
+  })
+
+  it('rejects non-relative API origins', async () => {
+    await expect(sessionApiDownload('https://example.test/api/v1/x', 'f.csv')).rejects.toThrow(
+      'relative /api/v1/* paths',
+    )
   })
 })

@@ -136,3 +136,45 @@ export function sessionApiRequest<T>(
 ): Promise<T> {
   return request<T>(path, init, true)
 }
+
+export interface DownloadedFile {
+  blob: Blob
+  filename: string
+}
+
+function filenameFromDisposition(header: string | null): string | null {
+  if (header === null) return null
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (encoded?.[1] !== undefined) {
+    try {
+      return decodeURIComponent(encoded[1])
+    } catch {
+      // fall through to the plain filename
+    }
+  }
+  const plain = /filename="([^"]+)"/i.exec(header)
+  return plain?.[1] ?? null
+}
+
+export async function sessionApiDownload(
+  path: string,
+  fallbackFilename: string,
+  init: RequestInit = {},
+): Promise<DownloadedFile> {
+  assertApiPath(path)
+  const response = await fetch(path, init)
+  if (!response.ok) {
+    if (response.status === 401) {
+      sessionUnauthorizedHandler?.()
+    }
+    throw new ApiError(
+      response.status,
+      safeDetail(await parseResponseBody(response), `Request failed with HTTP ${response.status}`),
+      response.headers,
+    )
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get('Content-Disposition')) ?? fallbackFilename,
+  }
+}

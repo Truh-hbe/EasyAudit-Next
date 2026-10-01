@@ -1,4 +1,5 @@
-import { sessionApiRequest } from './client'
+import { sessionApiDownload, sessionApiRequest } from './client'
+import type { DownloadedFile } from './client'
 import type {
   ManagementCaseProgressResponse,
   ManagementCaseSummary,
@@ -40,6 +41,32 @@ export function listManagedReviewCases(
   }
   return sessionApiRequest<ManagementCaseCollectionResponse>(
     `/api/v1/management/review-cases?${params.toString()}`,
+    { signal },
+  )
+}
+
+export type ManagementExportFormat = 'csv' | 'xlsx'
+
+export type ManagementExportQuery = Omit<ManagementCaseQuery, 'limit' | 'offset'>
+
+export function exportManagedReviewCases(
+  format: ManagementExportFormat,
+  query: ManagementExportQuery,
+  signal?: AbortSignal,
+): Promise<DownloadedFile> {
+  const params = new URLSearchParams({
+    format,
+    deadline_status: query.deadlineStatus,
+  })
+  if (query.reviewPlanId !== undefined && query.reviewPlanId.length > 0) {
+    params.set('review_plan_id', query.reviewPlanId)
+  }
+  if (query.lifecycle !== undefined) {
+    params.set('lifecycle', query.lifecycle)
+  }
+  return sessionApiDownload(
+    `/api/v1/management/review-cases/export?${params.toString()}`,
+    `review-cases.${format}`,
     { signal },
   )
 }

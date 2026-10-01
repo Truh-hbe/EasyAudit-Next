@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import {
+  exportManagedReviewCases,
   listManagedReviewCases,
 } from '../../api/management'
 import type {
   ManagementCaseCollectionResponse,
   ManagementDeadlineFilter,
+  ManagementExportFormat,
 } from '../../api/management'
 import type { ReviewCaseLifecycle } from '../../api/product'
 import { formatDateTime, lifecycleText } from '../../product/format'
@@ -20,6 +22,17 @@ const PAGE_SIZE = 20
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
+}
+
+function saveFile(file: { blob: Blob; filename: string }): void {
+  const url = URL.createObjectURL(file.blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = file.filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }
 
 function deadlineText(bucket: 'overdue' | 'due_soon' | 'later' | 'none'): string {
@@ -40,6 +53,8 @@ export function ManagementPage() {
   const [offset, setOffset] = useState(0)
   const [revision, setRevision] = useState(0)
   const requestSequenceRef = useRef(0)
+  const [exporting, setExporting] = useState<ManagementExportFormat | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const queryKey = `${reviewPlanId}:${lifecycle}:${deadlineStatus}:${offset}`
   const [state, setState] = useState<ManagementState>({ status: 'loading', key: queryKey })
@@ -76,6 +91,20 @@ export function ManagementPage() {
 
     return () => controller.abort()
   }, [deadlineStatus, lifecycle, offset, queryKey, reviewPlanId, revision])
+
+  function exportCases(format: ManagementExportFormat) {
+    setExporting(format)
+    setExportError(null)
+    // The export is a server snapshot of the same filters, not of the page being shown.
+    void exportManagedReviewCases(format, {
+      reviewPlanId: reviewPlanId.length === 0 ? undefined : reviewPlanId,
+      lifecycle: lifecycle === '' ? undefined : lifecycle,
+      deadlineStatus,
+    })
+      .then(saveFile)
+      .catch((error: unknown) => setExportError(errorMessage(error, '导出失败')))
+      .finally(() => setExporting(null))
+  }
 
   const currentState = state.key === queryKey ? state : { status: 'loading', key: queryKey } as const
   const data = currentState.status === 'ready' ? currentState.data : null
@@ -157,6 +186,21 @@ export function ManagementPage() {
             }}
           >清除筛选</button>
         </div>
+        <div className="command-stack">
+          <button
+            type="button"
+            className="secondary"
+            disabled={exporting !== null}
+            onClick={() => exportCases('csv')}
+          >{exporting === 'csv' ? '正在导出…' : '导出 CSV'}</button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={exporting !== null}
+            onClick={() => exportCases('xlsx')}
+          >{exporting === 'xlsx' ? '正在导出…' : '导出 XLSX'}</button>
+        </div>
+        {exportError !== null ? <p role="alert">{exportError}</p> : null}
         <p className="empty-note">筛选、授权、deadline bucket、聚合、total 与分页都由 M3.3 服务器 read side 决定。</p>
       </section>
 
