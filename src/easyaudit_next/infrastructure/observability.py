@@ -62,6 +62,7 @@ ALLOWED_FIELDS = frozenset(
         "reason",
         "current_revision",
         "expected_revision",
+        "throttle_scope",
         "setting",
         "expected",
         "actual",

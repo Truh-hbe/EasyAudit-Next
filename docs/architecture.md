@@ -67,6 +67,15 @@ src/easyaudit_next/
 - `auth_sessions.last_seen_at` 最多每 `SESSION_TOUCH_INTERVAL_SECONDS`（默认 300）写一次。`AuthenticationService.touch` 在已加载的快照显示间隔内已写过时不发任何 SQL；UPDATE 自带 `last_seen_at IS NULL OR last_seen_at < touched_at - interval`，过期快照不会把时间往回写，也不会在已撤销/已过期的 Session 上写入。
 - `last_seen_at` 只是运维信息，精度就是这个间隔；它不参与授权，`expires_at` 才决定 Session 是否可用。
 
+## 登录限流
+
+- 计数存在 PostgreSQL 表 `login_throttle(scope, key_hash, window_start, attempt_count, updated_at)`，主键 `(scope, key_hash, window_start)`。**限流计数属于运维记录，不是业务真相**：丢了只会放宽限制，不影响任何业务事实，也不进备份语义；表里只有 `sha256(规范化 login_name)` 与 `sha256(client ip)`，没有明文。
+- 不用 Redis 或进程内存：进程内存在多 worker 之间不一致（限额被放大为 N 倍），重启后清零（攻击者可借重启重置）；Redis 是为这一项新增的外部依赖，而 PostgreSQL 已经是唯一的持久层，并且计数可以和失败审计在同一个事务里提交。
+- **先计数后校验**：`AuthenticationService.login` 在任何凭证查询和 Argon2 之前，用单条 `INSERT ... ON CONFLICT DO UPDATE SET attempt_count = attempt_count + 1 RETURNING` 给两个维度各加 1：规范化后的 `login_name`（与 `login()` 的 normalize 一致，账号存不存在都计数）和 `request.client.host`（uvicorn 只信任网关的代理头，所以是真实客户端 IP）。任一维度 `> 上限` 就抛 `LoginThrottledError`，不做 Argon2。行锁持有到请求事务结束，同一 key 的并发尝试被串行化，计数精确、进入密码校验的次数不会超过上限。固定加锁顺序：先 `login_name` 后 `ip`。
+- 默认：固定窗口 15 分钟（按 epoch 对齐，边界只由时间决定），`login_name` 5 次，IP 50 次（`LOGIN_THROTTLE_*`）。登录成功清零该 `login_name` 当前窗口的计数；**IP 计数不动**——若成功时回减，攻击者可用自己的有效账号 1:1 抵消对他人账号的猜测。
+- **429 与账号无关**：固定 body `{"detail": "Too many login attempts"}`，`Retry-After` 为当前窗口剩余秒数；401 的三种情况（账号不存在、密码错、停用）保持同一个响应。路由在 429 分支里先 `commit` 计数再返回。被限流的尝试不写审计（避免攻击者灌满审计表），只写 WARNING `login_throttled`，字段只有 `throttle_scope`，不含 key 或 key_hash。
+- 清理：`easyaudit-next cleanup-auth` 删除早于当前窗口的行（见 `deploy/backup/` 同风格的 systemd timer）。
+
 ## 授权
 
 - 授权完全由 Case 固定的精确 Scenario 版本判断（`ScenarioPolicy.authorization.allows`），不能写成 `role_key == "lead"`，也不能给 `system_admin` 业务捷径。
@@ -84,6 +93,8 @@ src/easyaudit_next/
 | 404 | 组织范围内查不到，或未授权且不应暴露对象是否存在 |
 | 422 | 请求、Scenario 数据、工作流或业务规则校验失败 |
 | 409 | 过期的生命周期、并发冲突、唯一性冲突 |
+| 429 | 登录尝试过多（只用于 `login`，响应与账号无关） |
+| 503 | 数据库 `statement_timeout` / `lock_timeout` 到期，带 `Retry-After` |
 
 `openapi/openapi.json` 是稳定接口的基线，由 `scripts/check_openapi.py` 校验。
 

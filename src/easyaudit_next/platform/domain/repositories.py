@@ -95,3 +95,15 @@ class AuthSessionRepository(Protocol):
 
 class PlatformAuditRepository(Protocol):
     def add(self, event: PlatformAuditEvent) -> None: ...
+
+
+class LoginThrottleRepository(Protocol):
+    def increment(
+        self, scope: str, key_hash: str, window_start: datetime, now: datetime
+    ) -> int:
+        """Atomically add one attempt to the window's counter and return the new count."""
+        ...
+
+    def reset(self, scope: str, key_hash: str, window_start: datetime, now: datetime) -> None: ...
+
+    def delete_before(self, window_start: datetime) -> int: ...

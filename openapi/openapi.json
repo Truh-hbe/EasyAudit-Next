@@ -24,7 +24,7 @@
       }
     },
     "/api/v1/auth/login": {
-      "post": {"operationId": "login", "tags": ["auth"]}
+      "post": {"operationId": "login", "tags": ["auth"], "responses": ["200", "401", "429"]}
     },
     "/api/v1/auth/logout": {
       "post": {"operationId": "logout", "tags": ["auth"]}

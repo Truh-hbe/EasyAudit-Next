@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,7 @@ from easyaudit_next.composition import (
     build_platform_administration_service,
     build_scenario_registry,
 )
+from easyaudit_next.infrastructure.observability import APP_LOGGER
 from easyaudit_next.platform.application.administration import PlatformAdministrationService
 from easyaudit_next.platform.application.authentication import (
     InvalidCredentialsError,
@@ -45,6 +46,7 @@ from easyaudit_next.platform.application.authentication import (
     LocalCredentialUnavailableError,
     PasswordReuseError,
 )
+from easyaudit_next.platform.application.login_throttle import LoginThrottledError
 from easyaudit_next.platform.application.password_policy import PasswordPolicyError
 from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, UserId
 from easyaudit_next.platform.domain.models import Department, User
@@ -148,15 +150,35 @@ def _administration_service(session: Session) -> PlatformAdministrationService:
     response_model=LoginResponse,
     operation_id="login",
     tags=["auth"],
+    responses={
+        401: {"description": "Invalid login name or password (one answer for every cause)."},
+        429: {
+            "description": "Too many login attempts; `Retry-After` is the window remainder.",
+            "headers": {"Retry-After": {"schema": {"type": "integer"}}},
+        }
+    },
 )
 def login(
+    request: Request,
     payload: LoginRequest,
     response: Response,
     auth: Authentication,
     session: DatabaseSession,
 ) -> LoginResponse:
+    client_ip = request.client.host if request.client else None
     try:
-        result = auth.login(payload.login_name, payload.password)
+        result = auth.login(payload.login_name, payload.password, client_ip=client_ip)
+    except LoginThrottledError as exc:
+        # The attempt counters are the point of throttling: make them durable although the
+        # request fails. Body and headers depend only on the window, never on the account.
+        session.commit()
+        for scope in exc.scopes:
+            APP_LOGGER.warning("login_throttled", extra={"fields": {"throttle_scope": scope}})
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
     except InvalidCredentialsError as exc:
         # Authentication failures are audit facts even though the HTTP request fails.
         session.commit()

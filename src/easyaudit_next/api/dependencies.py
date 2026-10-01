@@ -13,10 +13,15 @@ from easyaudit_next.platform.application.authentication import (
     AuthenticationService,
     InvalidSessionError,
 )
+from easyaudit_next.platform.application.login_throttle import (
+    LoginThrottlePolicy,
+    LoginThrottleService,
+)
 from easyaudit_next.platform.domain.models import AuthSession, PlatformRole, User
 from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyAuthSessionRepository,
     SqlAlchemyLocalCredentialRepository,
+    SqlAlchemyLoginThrottleRepository,
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
@@ -61,6 +66,14 @@ def get_authentication_service(
         SqlAlchemyPlatformAuditRepository(session),
         session_ttl=timedelta(seconds=settings.session_ttl_seconds),
         touch_interval=timedelta(seconds=settings.session_touch_interval_seconds),
+        login_throttle=LoginThrottleService(
+            SqlAlchemyLoginThrottleRepository(session),
+            LoginThrottlePolicy(
+                window=timedelta(seconds=settings.login_throttle_window_seconds),
+                login_name_limit=settings.login_throttle_login_name_limit,
+                ip_limit=settings.login_throttle_ip_limit,
+            ),
+        ),
     )
 
 
