@@ -64,6 +64,8 @@ ALLOWED_FIELDS = frozenset(
         "expected_revision",
         "throttle_scope",
         "storage_key",
+        "export_format",
+        "row_count",
     }
 )
 _MAX_VALUE_CHARS = 200

@@ -36,6 +36,7 @@ OBSERVABILITY_IMPORT_PREFIXES = (
 )
 OBSERVABILITY_CONSUMERS = (
     SOURCE_ROOT / "api",
+    SOURCE_ROOT / "management" / "api.py",
     SOURCE_ROOT / "infrastructure",
     SOURCE_ROOT / "main.py",
     SOURCE_ROOT / "serve.py",

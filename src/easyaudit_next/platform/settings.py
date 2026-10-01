@@ -54,6 +54,8 @@ class Settings(BaseSettings):
         "text/plain,text/csv"
     )
     reminder_timezone: str = "Asia/Shanghai"
+    export_timezone: str = "Asia/Shanghai"
+    export_max_rows: int = Field(default=10_000, ge=1)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @model_validator(mode="after")
@@ -97,6 +99,15 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError("REMINDER_TIMEZONE must be an IANA timezone name") from exc
+        return value
+
+    @field_validator("export_timezone")
+    @classmethod
+    def _export_timezone_exists(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("EXPORT_TIMEZONE must be an IANA timezone name") from exc
         return value
 
     @field_validator("log_level", mode="before")

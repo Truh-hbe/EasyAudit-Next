@@ -46,3 +46,20 @@ def test_object_storage_endpoint_accepts_an_origin(endpoint: str) -> None:
 def test_object_storage_endpoint_rejects_anything_but_an_origin(endpoint: str) -> None:
     with pytest.raises(ValidationError):
         Settings(object_storage_endpoint=endpoint)
+
+
+def test_export_defaults() -> None:
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.export_timezone == "Asia/Shanghai"
+    assert settings.export_max_rows == 10_000
+
+
+@pytest.mark.parametrize("timezone", ["", "Mars/Olympus", "../etc/passwd"])
+def test_export_timezone_must_be_an_iana_name(timezone: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(export_timezone=timezone)
+
+
+def test_export_max_rows_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        Settings(export_max_rows=0)

@@ -145,6 +145,13 @@
     "/api/v1/findings/{finding_id}/rectification-submissions": {
       "get": {"operationId": "listRectificationSubmissions", "tags": ["review-rectification"]},
       "post": {"operationId": "submitRectification", "tags": ["review-rectification"]}
+    },
+    "/api/v1/management/review-cases/export": {
+      "get": {
+        "operationId": "exportManagedReviewCases",
+        "tags": ["management"],
+        "responses": ["200", "422"]
+      }
     }
   }
 }

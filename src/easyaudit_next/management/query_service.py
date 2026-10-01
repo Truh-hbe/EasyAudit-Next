@@ -11,12 +11,15 @@ from easyaudit_next.management.schemas import (
     FindingLifecycleCounts,
     ManagementActionDeadlineItem,
     ManagementCaseCollectionResponse,
+    ManagementCaseExportSnapshot,
+    ManagementCaseFilters,
     ManagementCaseProgressResponse,
     ManagementCaseSummary,
     ManagementDeadlineFilter,
     ManagementFindingProgress,
 )
 from easyaudit_next.platform.domain.models import User
+from easyaudit_next.platform.persistence.models import OrganizationRecord
 from easyaudit_next.review_core.domain.models import (
     ActionItemLifecycle,
     FindingLifecycle,
@@ -55,6 +58,12 @@ _ACTION_DEADLINE_LIFECYCLES = {
     ActionItemLifecycle.TODO,
     ActionItemLifecycle.IN_PROGRESS,
 }
+
+
+class ExportRowLimitExceededError(Exception):
+    def __init__(self, max_rows: int) -> None:
+        super().__init__("Export exceeds the row limit")
+        self.max_rows = max_rows
 
 
 class ManagementQueryService:
@@ -96,6 +105,40 @@ class ManagementQueryService:
             total=total,
             limit=limit,
             offset=offset,
+        )
+
+    def export_review_cases(
+        self,
+        actor: User,
+        filters: ManagementCaseFilters,
+        *,
+        max_rows: int,
+        as_of: datetime | None = None,
+    ) -> ManagementCaseExportSnapshot:
+        """All rows of `list_review_cases` for the same filters, without pagination.
+
+        Fails as a whole when the filtered row count exceeds `max_rows`; never truncates.
+        """
+        captured_at = self._capture_as_of(actor, as_of)
+        summaries = self._filtered_summaries(
+            actor,
+            captured_at,
+            review_plan_id=filters.review_plan_id,
+            lifecycle=filters.lifecycle,
+            deadline_status=filters.deadline_status,
+        )
+        if len(summaries) > max_rows:
+            raise ExportRowLimitExceededError(max_rows)
+        organization_name = self._session.scalar(
+            select(OrganizationRecord.name).where(OrganizationRecord.id == actor.organization_id)
+        )
+        if organization_name is None:
+            raise LookupError("Organization not found for management export")
+        return ManagementCaseExportSnapshot(
+            as_of=captured_at,
+            organization_name=organization_name,
+            filters=filters,
+            items=tuple(summaries),
         )
 
     def _filtered_summaries(

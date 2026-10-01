@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
@@ -102,3 +103,20 @@ class ManagementCaseProgressResponse(BaseModel):
     findings: tuple[ManagementFindingProgress, ...]
     overdue_actions: tuple[ManagementActionDeadlineItem, ...]
     due_soon_actions: tuple[ManagementActionDeadlineItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ManagementCaseFilters:
+    review_plan_id: UUID | None = None
+    lifecycle: ReviewCaseLifecycle | None = None
+    deadline_status: ManagementDeadlineFilter = ManagementDeadlineFilter.ALL
+
+
+@dataclass(frozen=True, slots=True)
+class ManagementCaseExportSnapshot:
+    """Unpaginated authorized rows plus the context an export must carry."""
+
+    as_of: datetime
+    organization_name: str
+    filters: ManagementCaseFilters
+    items: tuple[ManagementCaseSummary, ...]

@@ -1,5 +1,7 @@
 """Management reads see one database snapshot, even if another Session commits mid-request."""
 
+import csv
+import io
 import os
 from collections.abc import Iterator
 from typing import Any
@@ -88,8 +90,32 @@ def _fire_once_before_findings_load(
     return state, before_cursor_execute
 
 
-def test_list_review_cases_reads_one_snapshot_across_load_queries(
-    postgres_engine: Engine,
+def _list_items(client: TestClient) -> list[dict[str, Any]]:
+    response = client.get("/api/v1/management/review-cases")
+    assert response.status_code == 200
+    return [
+        {"lifecycle": item["lifecycle"], "findings_total": item["findings"]["total"]}
+        for item in response.json()["items"]
+    ]
+
+
+def _export_items(client: TestClient) -> list[dict[str, Any]]:
+    response = client.get("/api/v1/management/review-cases/export?format=csv")
+    assert response.status_code == 200
+    rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig"), newline="")))
+    header, *data = rows[rows.index([]) + 1 :]
+    return [
+        {
+            "lifecycle": row[header.index("lifecycle")],
+            "findings_total": int(row[header.index("findings_total")]),
+        }
+        for row in data
+    ]
+
+
+@pytest.mark.parametrize("read", [_list_items, _export_items], ids=["json-list", "csv-export"])
+def test_projection_reads_one_snapshot_across_load_queries(
+    postgres_engine: Engine, read: Any
 ) -> None:
     organization_id, caller_id, _, lead_case_id, _, _ = _seed_process_review_api_shape(
         postgres_engine
@@ -103,18 +129,13 @@ def test_list_review_cases_reads_one_snapshot_across_load_queries(
         ),
     )
     try:
-        during = client.get("/api/v1/management/review-cases")
+        during = read(client)
     finally:
         event.remove(postgres_engine, "before_cursor_execute", listener)
 
-    assert state["fired"], "the concurrent commit must land between the two load queries"
-    assert during.status_code == 200
-    [item] = during.json()["items"]
+    assert state["fired"], "the concurrent commit must land between the Case and Finding loads"
     # Pre-change state: still in progress with exactly the one seeded Finding. READ COMMITTED
     # would report the old lifecycle together with the new Finding count.
-    assert item["lifecycle"] == "in_progress"
-    assert item["findings"]["total"] == 1
-
-    after = client.get("/api/v1/management/review-cases").json()["items"]
-    assert after[0]["lifecycle"] == "closed"
-    assert after[0]["findings"]["total"] == 2
+    assert during == [{"lifecycle": "in_progress", "findings_total": 1}]
+    # The change was really committed; a fresh request sees it.
+    assert read(client) == [{"lifecycle": "closed", "findings_total": 2}]
