@@ -83,7 +83,7 @@ def _assert_waiting_on_case_row(queries: list[str]) -> None:
     """The sweep must queue on the Case row, never on the Organization row (sweeps of one
     Organization share its FOR KEY SHARE lock)."""
     assert len(queries) == 1, queries
-    assert "FROM review_cases" in queries[0] and "FOR UPDATE" in queries[0], queries
+    assert "FROM review_cases" in queries[0] and "FOR NO KEY UPDATE" in queries[0], queries
     assert "organizations" not in queries[0], queries
 
 
