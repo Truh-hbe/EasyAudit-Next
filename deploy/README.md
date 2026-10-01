@@ -62,6 +62,10 @@ $DC run --rm api easyaudit-next bootstrap-admin \
 
 `git pull` → `export EASYAUDIT_RELEASE=$(git rev-parse HEAD)` → `$DC build` → `$DC run --rm migrate` → `$DC up -d`。迁移始终在新 API 启动前手动执行。升级要一次做完：`git pull` 之后、`up -d` 之前，备份会因"运行中的镜像与检出版本不一致"而拒绝执行。
 
+## 认证维护
+
+`$DC run --rm --no-deps -T api easyaudit-next cleanup-auth` 删除过期的 `login_throttle` 窗口（运维计数，不是业务数据），向 stdout 输出一行 JSON：删除条数和已过期 Session 的计数。**不删除也不修改任何 Session**：`auth_sessions` 是审计事件的 FK 锚点，试点期只增不删，过期靠 `expires_at` 保证不可用。`deploy/easyaudit-cleanup-auth.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。
+
 ## 备份
 
 目标：RPO ≤ 24h，RTO ≤ 4h。工具在 `deploy/backup/`，全部通过一次性容器（`db-tool`、`object-tool`，只接入 `backend` 网络，不发布端口，非 root，`cap_drop: ALL`）访问数据库和对象存储。前置条件：docker compose、python3、flock，且用**非 root** 的运维账号（在 docker 组内，且拥有 0700 的 `deploy/secrets`）执行，容器以该账号的 uid 写备份目录。

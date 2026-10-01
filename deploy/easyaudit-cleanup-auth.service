@@ -1,0 +1,15 @@
+# Example unit: install as /etc/systemd/system/easyaudit-cleanup-auth.service and adjust paths.
+# Deletes expired login_throttle windows (operational counters). It never deletes or changes
+# auth_sessions: they anchor platform audit events; expired ones are unusable via expires_at.
+# Same operator-account requirements as deploy/backup/easyaudit-backup.service. The stack must
+# be up (the one-shot container joins the backend network and reaches postgres).
+[Unit]
+Description=EasyAudit cleanup of expired login throttle windows
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=easyaudit
+WorkingDirectory=/opt/easyaudit
+ExecStart=/bin/bash -c 'EASYAUDIT_RELEASE="$(git -C /opt/easyaudit rev-parse HEAD)" exec docker compose -f /opt/easyaudit/deploy/compose.yaml run --rm --no-deps -T api easyaudit-next cleanup-auth'

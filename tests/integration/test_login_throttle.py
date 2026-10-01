@@ -74,8 +74,13 @@ def small_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dependencies, "get_settings", lambda: settings)
 
 
+def _random_ip() -> str:
+    """Rows persist in the shared database and the clock is frozen: never reuse an address."""
+    return ".".join(str(uuid4().int % 250 + 1) for _ in range(4))
+
+
 def _client(ip: str | None = None) -> TestClient:
-    ip = ip or f"10.{uuid4().int % 250}.{uuid4().int % 250}.{uuid4().int % 250}"
+    ip = ip or _random_ip()
     return TestClient(create_app(), base_url="https://testserver", client=(ip, 50000))
 
 
@@ -148,7 +153,7 @@ def test_ip_dimension_throttles_across_login_names_with_the_same_response(
 ) -> None:
     settings = Settings(login_throttle_login_name_limit=100, login_throttle_ip_limit=2)
     monkeypatch.setattr(dependencies, "get_settings", lambda: settings)
-    client = _client(ip="10.200.0.1")
+    client = _client(ip=_random_ip())
     by_ip = []
     for _ in range(2):
         assert _post(client, f"a-{uuid4().hex}", WRONG).status_code == 401
@@ -182,7 +187,7 @@ def test_success_resets_the_login_name_counter_only(
     postgres_engine: Engine, clock: type[_Clock]
 ) -> None:
     login_name = _account("wrong_password", postgres_engine)
-    ip = "10.201.0.7"
+    ip = _random_ip()
     client = _client(ip=ip)
     _post(client, login_name, WRONG)
     _post(client, login_name, WRONG)
@@ -210,7 +215,7 @@ def test_database_holds_only_hashes_of_login_name_and_ip(
     postgres_engine: Engine, clock: type[_Clock]
 ) -> None:
     login_name = f"Plain-Name-{uuid4().hex}"
-    ip = "10.202.3.4"
+    ip = _random_ip()
     _post(_client(ip=ip), login_name, WRONG)
 
     normalized = login_name.strip().lower()
@@ -233,7 +238,7 @@ def test_throttle_hit_logs_scope_only(
     postgres_engine: Engine, clock: type[_Clock], caplog: pytest.LogCaptureFixture
 ) -> None:
     login_name = _account("missing", postgres_engine)
-    ip = "10.203.9.9"
+    ip = _random_ip()
     client = _client(ip=ip)
     with caplog.at_level(logging.WARNING, logger="easyaudit.app"):
         for _ in range(LIMIT + 1):
@@ -266,6 +271,7 @@ class _CountingHash:
 
 def test_concurrent_attempts_on_one_key_never_exceed_the_limit(postgres_engine: Engine) -> None:
     login_name = _account("wrong_password", postgres_engine)
+    ip = _random_ip()
     hasher = _CountingHash()
     attempts = LIMIT + 9
     now = datetime.now(UTC)
@@ -286,7 +292,7 @@ def test_concurrent_attempts_on_one_key_never_exceed_the_limit(postgres_engine: 
             )
             barrier.wait(timeout=10)
             try:
-                service.login(login_name, WRONG, client_ip="10.204.0.1", now=now)
+                service.login(login_name, WRONG, client_ip=ip, now=now)
                 outcome = "ok"
             except LoginThrottledError:
                 outcome = "throttled"

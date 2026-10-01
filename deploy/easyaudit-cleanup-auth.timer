@@ -1,0 +1,13 @@
+# Example unit: install next to easyaudit-cleanup-auth.service, then
+#   systemctl enable --now easyaudit-cleanup-auth.timer
+# Daily is plenty: a missed run only leaves a few extra tiny rows, nothing depends on it.
+[Unit]
+Description=EasyAudit cleanup of expired login throttle windows, daily
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -66,6 +66,7 @@ src/easyaudit_next/
 
 - `auth_sessions.last_seen_at` 最多每 `SESSION_TOUCH_INTERVAL_SECONDS`（默认 300）写一次。`AuthenticationService.touch` 在已加载的快照显示间隔内已写过时不发任何 SQL；UPDATE 自带 `last_seen_at IS NULL OR last_seen_at < touched_at - interval`，过期快照不会把时间往回写，也不会在已撤销/已过期的 Session 上写入。
 - `last_seen_at` 只是运维信息，精度就是这个间隔；它不参与授权，`expires_at` 才决定 Session 是否可用。
+- **试点期不删除 `auth_sessions` 行。** 它们是 `platform_audit_events.target_session_id`（复合 FK，`RESTRICT`）的锚点，每次登录成功都有一条审计引用，所以不改审计就删不掉；过期的 Session 由 `expires_at` 保证不可用（`authenticate` 检查）。表只增不删，试点规模下可接受；何时保留、何时删除，与审计 FK 一起在"数据保留"里设计。`cleanup-auth` 只清 `login_throttle`，并在输出里给出已过期 Session 的计数（不含 ID），不修改任何 Session。
 
 ## 登录限流
 
