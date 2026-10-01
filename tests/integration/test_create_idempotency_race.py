@@ -1,15 +1,16 @@
 """Pilot-3: two real transactions racing on one Idempotency-Key (PostgreSQL arbitrates)."""
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from os import environ
 from threading import Barrier, Event
 from typing import Any
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Engine, create_engine, text
 
 from easyaudit_next.review_core.application.create_idempotency import CreateIdempotencyService
 from tests.integration.create_idempotency_support import (
@@ -52,17 +53,51 @@ class _FirstOwnerPause:
         monkeypatch.setattr(CreateIdempotencyService, "claim", claim)
 
 
+def _wait_until_blocked_on_claim(observer: Engine, application_name: str) -> None:
+    """Poll pg_stat_activity until the second claim INSERT waits on a lock; never skip."""
+
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        with observer.connect() as connection:
+            blocked = connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE application_name = :name AND wait_event_type = 'Lock' "
+                    "AND query LIKE 'INSERT INTO create_idempotency_records%'"
+                ),
+                {"name": application_name},
+            )
+        if blocked:
+            return
+        time.sleep(0.05)
+    pytest.fail("second claim never blocked on the first transaction's unique entry")
+
+
+@pytest.fixture
+def named_engine() -> Iterator[tuple[Engine, str]]:
+    """The application's engine, tagged so its backends can be found in pg_stat_activity."""
+
+    name = f"p3-race-{uuid4().hex[:12]}"
+    engine = create_engine(
+        environ["DATABASE_URL"], pool_size=10, connect_args={"application_name": name}
+    )
+    yield engine, name
+    engine.dispose()
+
+
 def _race(
     pool: ThreadPoolExecutor,
     pause: _FirstOwnerPause,
+    observer: Engine,
+    application_name: str,
     first: Callable[[], Any],
     second: Callable[[], Any],
 ) -> tuple[Any, Any]:
     owner: Future[Any] = pool.submit(first)
     assert pause.claimed.wait(20)
     waiter: Future[Any] = pool.submit(second)
-    time.sleep(0.5)
-    # The second claim waits on the first transaction's uncommitted unique entry.
+    # The second claim is provably waiting on the first transaction's uncommitted unique entry.
+    _wait_until_blocked_on_claim(observer, application_name)
     assert not waiter.done()
     pause.release.set()
     return owner.result(30), waiter.result(30)
@@ -70,10 +105,14 @@ def _race(
 
 @pytest.mark.parametrize("operation", ["plan", "case"])
 def test_concurrent_same_key_same_payload_creates_once(
-    postgres_engine: Engine, monkeypatch: pytest.MonkeyPatch, operation: str
+    postgres_engine: Engine,
+    named_engine: tuple[Engine, str],
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
 ) -> None:
+    app_engine, application_name = named_engine
     organization_id, [(_, name)] = seed_org(postgres_engine)
-    client_a = login(postgres_engine, name)
+    client_a = login(app_engine, name)
     client_b = clone(client_a)
     headers = {"Idempotency-Key": f"race-{uuid4()}"}
     title = f"{operation}-{uuid4()}"
@@ -87,6 +126,8 @@ def test_concurrent_same_key_same_payload_creates_once(
         first, second = _race(
             pool,
             pause,
+            postgres_engine,
+            application_name,
             lambda: client_a.post(path, json=body, headers=headers),
             lambda: client_b.post(path, json=body, headers=headers),
         )
@@ -106,10 +147,14 @@ def test_concurrent_same_key_same_payload_creates_once(
 
 @pytest.mark.parametrize("operation", ["plan", "case"])
 def test_waiter_creates_after_first_transaction_rolls_back(
-    postgres_engine: Engine, monkeypatch: pytest.MonkeyPatch, operation: str
+    postgres_engine: Engine,
+    named_engine: tuple[Engine, str],
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
 ) -> None:
+    app_engine, application_name = named_engine
     organization_id, [(_, name)] = seed_org(postgres_engine)
-    client_a = login(postgres_engine, name)
+    client_a = login(app_engine, name)
     client_b = clone(client_a)
     headers = {"Idempotency-Key": f"race-{uuid4()}"}
     title = f"{operation}-{uuid4()}"
@@ -123,6 +168,8 @@ def test_waiter_creates_after_first_transaction_rolls_back(
         first, second = _race(
             pool,
             pause,
+            postgres_engine,
+            application_name,
             lambda: client_a.post(path, json=body, headers=headers),
             lambda: client_b.post(path, json=body, headers=headers),
         )
