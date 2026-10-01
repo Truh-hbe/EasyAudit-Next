@@ -48,19 +48,24 @@ ThrottleUnitOfWork = Callable[[], AbstractContextManager[LoginThrottleRepository
 
 
 class LoginThrottleService:
-    """Every operation runs in its own short transaction, committed when the block exits.
+    """Counting runs in its own short transaction, committed when the block exits.
 
-    The throttle must never share the request's transaction: its row locks would then be held
-    through Argon2 and unrelated logins from the same IP would queue behind each other.
+    Counting must never share the request's transaction: its row locks would then be held
+    through Argon2 and unrelated logins from the same IP would queue behind each other. It
+    also happens before the request session has taken a connection, so a login never holds two.
+    Only `record_success` uses the request's own transaction (`session_repository`).
     """
 
     def __init__(
         self,
         unit_of_work: ThrottleUnitOfWork,
         policy: LoginThrottlePolicy | None = None,
+        *,
+        session_repository: LoginThrottleRepository | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._policy = policy or LoginThrottlePolicy()
+        self._session_repository = session_repository
 
     def register_attempt(self, login_name: str, client_ip: str | None, *, now: datetime) -> None:
         """Count this attempt on both dimensions atomically; raise if either is over its limit.
@@ -92,15 +97,20 @@ class LoginThrottleService:
             raise LoginThrottledError(scopes, max(1, ceil(remaining)))
 
     def record_success(self, login_name: str, *, now: datetime) -> None:
-        """Reset the login_name counter of the current window. The ip counter is left alone:
-        decrementing it would let one valid account offset guesses against others 1:1."""
-        with self._unit_of_work() as repository:
-            repository.reset(
-                SCOPE_LOGIN_NAME,
-                key_hash(login_name),
-                window_start_for(now, self._policy.window),
-                now,
-            )
+        """Reset the login_name counter of the current window, in the request's transaction.
+
+        Called after Argon2 has finished, just before the request commits, so the row lock is
+        held only for the last few statements and no second connection is needed. The ip
+        counter is left alone: decrementing it would let one valid account offset guesses
+        against others 1:1."""
+        if self._session_repository is None:
+            raise RuntimeError("record_success needs the request's session repository")
+        self._session_repository.reset(
+            SCOPE_LOGIN_NAME,
+            key_hash(login_name),
+            window_start_for(now, self._policy.window),
+            now,
+        )
 
     def purge_expired(self, *, now: datetime) -> int:
         with self._unit_of_work() as repository:

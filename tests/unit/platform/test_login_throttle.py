@@ -39,7 +39,9 @@ class FakeRepository:
 
 def service(repo: FakeRepository, name_limit: int = 2, ip_limit: int = 3) -> LoginThrottleService:
     return LoginThrottleService(
-        lambda: nullcontext(repo), LoginThrottlePolicy(WINDOW, name_limit, ip_limit)
+        lambda: nullcontext(repo),
+        LoginThrottlePolicy(WINDOW, name_limit, ip_limit),
+        session_repository=repo,
     )
 
 

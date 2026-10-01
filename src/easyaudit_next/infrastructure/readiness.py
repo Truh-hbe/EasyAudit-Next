@@ -99,10 +99,17 @@ async def verify_db_settings(state: Any, engine: Engine, settings: Settings) -> 
     raises, so it cannot crash the process.
     """
     state.db_settings_failures = None
+    loop = asyncio.get_running_loop()
     while True:
+        # Not asyncio.to_thread: on cancellation we must be able to wait for the thread itself.
+        thread = loop.run_in_executor(None, verify_server_settings, engine, settings)
+        thread.add_done_callback(_consume)
         try:
-            mismatches = await asyncio.to_thread(verify_server_settings, engine, settings)
+            mismatches = await asyncio.shield(thread)
         except asyncio.CancelledError:
+            # The blocking call cannot be interrupted; the engine's libpq connect_timeout bounds
+            # it. Wait for it (bounded) so shutdown does not leave a live thread behind.
+            await asyncio.wait({thread}, timeout=settings.db_connect_timeout_seconds + 1)
             raise
         except Exception as exc:
             APP_LOGGER.warning(
@@ -174,7 +181,7 @@ async def _probe_database(settings: Settings, opened: list[AsyncConnection]) -> 
         return DatabaseState(False, None, (Failure.of("database", "unreachable", exc),))
 
 
-def _consume(task: "asyncio.Future[DatabaseState]") -> None:
+def _consume(task: "asyncio.Future[Any]") -> None:
     if not task.cancelled():
         task.exception()  # mark as retrieved; the probe reports its own failures
 

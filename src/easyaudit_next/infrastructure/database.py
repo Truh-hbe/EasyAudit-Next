@@ -21,12 +21,34 @@ def create_database_engine(settings: Settings | None = None) -> Engine:
         max_overflow=resolved.db_max_overflow,
         pool_timeout=resolved.db_pool_timeout_seconds,
         pool_recycle=resolved.db_pool_recycle_seconds,
-        connect_args={
-            "options": _with_options(
-                _url_options(resolved.database_url), **expected_server_settings(resolved)
-            )
-        },
+        connect_args=business_connect_args(resolved),
     )
+
+
+def business_connect_args(settings: Settings) -> dict[str, Any]:
+    """libpq parameters of the business engine, merged with (never replacing) the URL's own.
+
+    Timeouts via `options`; client-side limits so a black-holed database cannot hang a thread
+    forever: `connect_timeout` bounds connection setup, TCP keepalives plus `tcp_user_timeout`
+    bound a connection that goes silent afterwards. A parameter already present in the URL
+    wins. `tcp_user_timeout` and the keepalive tuning are Linux effects (ignored elsewhere).
+    """
+    existing = _url_connect_kwargs(settings.database_url)
+    args: dict[str, Any] = {
+        "options": _with_options(
+            _opt(existing.get("options")), **expected_server_settings(settings)
+        )
+    }
+    limits = {
+        "connect_timeout": settings.db_connect_timeout_seconds,
+        "keepalives": 1,
+        "keepalives_idle": settings.db_keepalives_idle_seconds,
+        "keepalives_interval": settings.db_keepalives_interval_seconds,
+        "keepalives_count": settings.db_keepalives_count,
+        "tcp_user_timeout": settings.db_tcp_user_timeout_ms,
+    }
+    args.update({key: value for key, value in limits.items() if key not in existing})
+    return args
 
 
 def expected_server_settings(settings: Settings) -> dict[str, int]:
@@ -74,10 +96,13 @@ def session_scope(factory: sessionmaker[Session]) -> Iterator[Session]:
         session.close()
 
 
-def _url_options(database_url: str) -> str | None:
+def _url_connect_kwargs(database_url: str) -> dict[str, Any]:
     url = make_url(database_url)
     _, raw_kwargs = url.get_dialect()().create_connect_args(url)
-    options = raw_kwargs.get("options")
+    return dict(raw_kwargs)
+
+
+def _opt(options: object) -> str | None:
     return str(options) if options else None
 
 

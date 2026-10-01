@@ -3,6 +3,7 @@
 import logging
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from easyaudit_next import cli
 from easyaudit_next.api import dependencies
+from easyaudit_next.api.dependencies import get_database_session
+from easyaudit_next.infrastructure.database import create_database_engine
 from easyaudit_next.main import create_app
 from easyaudit_next.platform.application import authentication
 from easyaudit_next.platform.application.authentication import (
@@ -351,66 +354,102 @@ def test_purge_removes_expired_windows_and_keeps_the_current_one(
     assert remaining == {keys["new"]}
 
 
-class _SlowHash(_CountingHash):
+class _MarkerSlowHash(_CountingHash):
+    """Sleeps inside verify only for the marker password, so one request can be held in Argon2."""
+
+    MARKER = "slow-password"
+
     def __init__(self, entered: threading.Event, seconds: float) -> None:
         super().__init__()
         self._entered = entered
         self._seconds = seconds
 
     def verify(self, password: str, hashed: str) -> bool:
-        self._entered.set()
-        time.sleep(self._seconds)
+        if password == self.MARKER:
+            self._entered.set()
+            time.sleep(self._seconds)
         return super().verify(password, hashed)
 
 
-def _service_with(engine: Engine, session: Session, hasher: Any) -> AuthenticationService:
-    return AuthenticationService(
-        SqlAlchemyLocalCredentialRepository(session),
-        SqlAlchemyAuthSessionRepository(session),
-        SqlAlchemyUserRepository(session),
-        SqlAlchemyPlatformAuditRepository(session),
-        login_throttle=LoginThrottleService(
-            SqlAlchemyLoginThrottleUnitOfWork(engine),
-            LoginThrottlePolicy(window=WINDOW, login_name_limit=LIMIT, ip_limit=1000),
-        ),
-        password_hash=hasher,
-    )
-
-
 def test_a_slow_password_check_does_not_block_other_logins_from_the_same_ip(
-    postgres_engine: Engine,
+    postgres_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Through the HTTP route and the production dependency wiring (only the hasher is faked)."""
     first = _account("wrong_password", postgres_engine)
     second = _account("wrong_password", postgres_engine)
     ip = _random_ip()
     entered = threading.Event()
     slow_seconds = 2.0
+    monkeypatch.setattr(
+        authentication, "_DEFAULT_PASSWORD_HASH", _MarkerSlowHash(entered, slow_seconds)
+    )
+    outcome: dict[str, int] = {}
 
     def slow_login() -> None:
-        with Session(postgres_engine) as session:
-            service = _service_with(postgres_engine, session, _SlowHash(entered, slow_seconds))
-            try:
-                service.login(first, WRONG, client_ip=ip)
-            except InvalidCredentialsError:
-                pass
-            session.commit()
+        outcome["slow"] = _post(_client(ip=ip), first, _MarkerSlowHash.MARKER).status_code
 
     worker = threading.Thread(target=slow_login)
     worker.start()
     try:
         assert entered.wait(timeout=10)  # the first login is now inside its (slow) Argon2
         started = time.monotonic()
-        with Session(postgres_engine) as session:
-            service = _service_with(postgres_engine, session, _CountingHash())
-            with pytest.raises(InvalidCredentialsError):
-                service.login(second, WRONG, client_ip=ip)
-            session.commit()
+        status = _post(_client(ip=ip), second, WRONG).status_code
         elapsed = time.monotonic() - started
     finally:
         worker.join(timeout=15)
 
-    # Sharing a transaction would have queued this behind the first login's open ip row lock.
+    assert status == 401
+    assert outcome["slow"] == 401
+    # Counting inside the request transaction would queue this behind the first login's open
+    # ip row lock for the rest of its Argon2.
     assert elapsed < slow_seconds / 2
+
+
+def test_login_never_holds_two_connections_so_a_nearly_full_pool_cannot_stall_it(
+    postgres_engine: Engine,
+) -> None:
+    """Smallest legal pool (2 connections) with one already taken elsewhere: a successful
+    login (count, verify, reset, session insert) must still finish within pool_timeout."""
+    small = create_database_engine(
+        Settings(db_pool_size=1, db_max_overflow=1, db_pool_timeout_seconds=1.5)
+    )
+    login_name = _account("wrong_password", postgres_engine)
+    app = create_app()
+
+    def database_session() -> Iterator[Session]:
+        with Session(small) as session:
+            yield session
+            session.commit()
+
+    app.dependency_overrides[get_database_session] = database_session
+    hogged = small.connect()
+    try:
+        client = TestClient(app, base_url="https://testserver", client=(_random_ip(), 50000))
+        started = time.monotonic()
+        response = _post(client, login_name, P0)
+        elapsed = time.monotonic() - started
+    finally:
+        hogged.close()
+        small.dispose()
+
+    assert response.status_code == 200
+    assert elapsed < 1.5
+
+
+def test_fixed_window_boundary_admits_up_to_2n_attempts_across_two_windows(
+    postgres_engine: Engine, clock: type[_Clock]
+) -> None:
+    login_name = _account("missing", postgres_engine)
+    client = _client()
+    window_end = window_start_for(T0, WINDOW) + WINDOW
+
+    clock.current = window_end - timedelta(seconds=1)
+    assert [_post(client, login_name, WRONG).status_code for _ in range(LIMIT)] == [401] * LIMIT
+    assert _post(client, login_name, WRONG).status_code == 429
+
+    clock.current = window_end  # the next window starts: the counter starts from zero again
+    assert [_post(client, login_name, WRONG).status_code for _ in range(LIMIT)] == [401] * LIMIT
+    assert _post(client, login_name, WRONG).status_code == 429
 
 
 def test_clearing_a_login_name_unblocks_it(postgres_engine: Engine, clock: type[_Clock]) -> None:

@@ -21,6 +21,7 @@ from easyaudit_next.platform.domain.models import AuthSession, PlatformRole, Use
 from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyAuthSessionRepository,
     SqlAlchemyLocalCredentialRepository,
+    SqlAlchemyLoginThrottleRepository,
     SqlAlchemyLoginThrottleUnitOfWork,
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
@@ -73,6 +74,7 @@ def get_authentication_service(
                 login_name_limit=settings.login_throttle_login_name_limit,
                 ip_limit=settings.login_throttle_ip_limit,
             ),
+            session_repository=SqlAlchemyLoginThrottleRepository(session),
         ),
     )
 

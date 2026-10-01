@@ -35,6 +35,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         verification.cancel()
+        # The blocking SHOW thread cannot be interrupted; verify_db_settings waits for it on
+        # cancellation, bounded by the libpq connect_timeout. Wait for that, no longer.
+        await asyncio.wait({verification}, timeout=get_settings().db_connect_timeout_seconds + 3)
 
 
 def create_app() -> FastAPI:

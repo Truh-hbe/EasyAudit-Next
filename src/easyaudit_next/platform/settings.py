@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://easyaudit:easyaudit@localhost:5432/easyaudit"
@@ -24,11 +24,24 @@ class Settings(BaseSettings):
     db_max_overflow: int = Field(default=5, ge=0, le=100)
     db_pool_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     db_pool_recycle_seconds: int = Field(default=1800, ge=-1)
+    db_connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
+    db_tcp_user_timeout_ms: int = Field(default=15_000, ge=1_000)
+    db_keepalives_idle_seconds: int = Field(default=10, ge=1)
+    db_keepalives_interval_seconds: int = Field(default=5, ge=1)
+    db_keepalives_count: int = Field(default=3, ge=1)
     db_statement_timeout_ms: int = Field(default=15_000, ge=1)
     db_lock_timeout_ms: int = Field(default=5_000, ge=1)
     db_idle_in_transaction_timeout_ms: int = Field(default=30_000, ge=1)
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+    @model_validator(mode="after")
+    def _pool_can_hold_two_connections(self) -> "Settings":
+        # Minimum guard: a login briefly needs a second connection after another was released
+        # (throttle transaction, then the request transaction); a 1-connection pool is a typo.
+        if self.db_pool_size + self.db_max_overflow < 2:
+            raise ValueError("DB_POOL_SIZE + DB_MAX_OVERFLOW must be at least 2")
+        return self
 
     @field_validator("log_level", mode="before")
     @classmethod

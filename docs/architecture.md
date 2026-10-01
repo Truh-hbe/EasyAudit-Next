@@ -53,14 +53,18 @@ src/easyaudit_next/
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | 10 / 5 | 每个 worker 进程最多 15 条连接 |
 | `DB_POOL_TIMEOUT_SECONDS` | 10 | 等池超时；超时是 500（池耗尽说明预算或泄漏有问题） |
 | `DB_POOL_RECYCLE_SECONDS` | 1800 | 连接最长存活 |
+| `DB_CONNECT_TIMEOUT_SECONDS` | 5 | libpq 建连上限 |
+| `DB_TCP_USER_TIMEOUT_MS` | 15000 | 已建立的连接上，已发送数据多久得不到 ACK 就报错 |
+| `DB_KEEPALIVES_IDLE/INTERVAL_SECONDS`、`DB_KEEPALIVES_COUNT` | 10 / 5 / 3 | TCP keepalive：静默连接约 25 秒内判死 |
 | `DB_STATEMENT_TIMEOUT_MS` | 15000 | 单条语句上限 |
 | `DB_LOCK_TIMEOUT_MS` | 5000 | 等行锁/表锁上限（低于 statement_timeout，锁等待先于语句超时暴露） |
 | `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 30000 | 事务里空闲超过此值，服务端终止连接 |
 
+- **客户端上限**：服务端 timeout 管不到"数据库地址接受 TCP 但不再响应"（连接黑洞）。业务 engine 因此还给 libpq 下发 `connect_timeout`、`keepalives*` 和 `tcp_user_timeout`，让建连和建连之后的静默连接都会在有限时间内报错，线程能自然结束，而不是永久挂住（包括启动校验和业务请求）。URL 里已有的同名参数优先，不被覆盖。`tcp_user_timeout` 与 keepalive 调参只在 Linux 上生效（生产是 Linux，其他平台 libpq 忽略）。`DB_POOL_SIZE + DB_MAX_OVERFLOW` 至少为 2（Settings 校验）。
 - 三个超时通过业务 engine 的连接参数 `options=-c ...` 下发，与 URL 里已有的 `options` **合并**（追加在后，同名以我们为准）。只作用于业务 engine：`alembic/env.py` 自建 NullPool engine，迁移不受 statement_timeout 限制；CLI 用业务 engine，同样受限。
 - **连接预算公式**：`workers × (pool_size + max_overflow) + readiness 探针 + 运维工具 < max_connections`。当前 compose：1 个 uvicorn worker × 15 + readiness 探针 1（single-flight，同一时间最多一条）+ 运维工具（`migrate`、备份 `pg_dump`、CLI，各按 1 条，预留 5）≈ 21，远低于 PostgreSQL 默认 `max_connections=100`（另有 superuser 预留 3）。增加 worker 或调大池之前先按公式核对。
 - **超时的 HTTP 语义**：`statement_timeout`、`lock_timeout` 到期（SQLSTATE 57014 / 55P03）映射为 **503 + `Retry-After: 1`**，body 只有 `detail` 与 `request_id`，由 `RequestContextMiddleware` 统一处理并记 WARNING `database_timeout`。不用 409：409 的含义是"数据已过期，刷新后重试"，而超时并没有发现生命周期变化，只是暂时拿不到资源；前端对 409 会刷新数据，对 503 才是正确的"稍后重试同一个请求"。死锁（40P01）与 idle-in-transaction 终止不在此列，仍是 500（说明代码违反了加锁顺序或持有了空闲事务）。
-- **启动校验**：lifespan 在后台用业务 engine 读 `pg_settings`，与配置比对。不一致写 ERROR（`db_settings_mismatch`，字段 `setting/expected/actual`）并让 `/health/ready` 的 `db_settings` 为 `fail`，进程不退出；数据库暂时不可达则每 5 秒重试，期间 `db_settings` 为 `fail`（未验证）。
+- **启动校验**：lifespan 在后台用业务 engine 读 `pg_settings`，与配置比对。不一致写 ERROR（`db_settings_mismatch`，字段 `setting/expected/actual`）并让 `/health/ready` 的 `db_settings` 为 `fail`，进程不退出；数据库暂时不可达则每 5 秒重试，期间 `db_settings` 为 `fail`（未验证）。校验用的同步连接受上述 `connect_timeout` 约束；lifespan 退出时取消校验并有上限地等它结束（`connect_timeout` + 余量），不会卡住进程退出。
 
 ## Session 活动时间
 
@@ -72,7 +76,8 @@ src/easyaudit_next/
 
 - 计数存在 PostgreSQL 表 `login_throttle(scope, key_hash, window_start, attempt_count, updated_at)`，主键 `(scope, key_hash, window_start)`。**限流计数属于运维记录，不是业务真相**：丢了只会放宽限制，不影响任何业务事实，也不进备份语义；表里只有 `sha256(规范化 login_name)` 与 `sha256(client ip)`，没有明文。
 - 不用 Redis 或进程内存：进程内存在多 worker 之间不一致（限额被放大为 N 倍），重启后清零（攻击者可借重启重置）；Redis 是为这一项新增的外部依赖，而 PostgreSQL 已经是唯一的持久层，并且计数可以和失败审计在同一个事务里提交。
-- **先计数后校验**：`AuthenticationService.login` 在任何凭证查询和 Argon2 之前，用单条 `INSERT ... ON CONFLICT DO UPDATE SET attempt_count = attempt_count + 1 RETURNING` 给两个维度各加 1：规范化后的 `login_name`（与 `login()` 的 normalize 一致，账号存不存在都计数）和 `request.client.host`（uvicorn 只信任网关的代理头，所以是真实客户端 IP）。任一维度 `> 上限` 就抛 `LoginThrottledError`，不做 Argon2。**计数在独立的短事务里执行并立即提交**（独立 Session，不与请求事务共用），行锁只在那两条 upsert 期间持有，所以 Argon2 期间不会阻塞同 IP 的其他登录；单条 upsert 原子，同一 key 并发得到互不相同的计数，进入密码校验的次数不超过上限。固定加锁顺序：先 `login_name` 后 `ip`。登录成功清零 `login_name` 计数同样用独立短事务；失败审计仍在请求事务里提交。独立事务意味着请求在进入校验前不占用连接，而成功清零时会短暂同时占用第二条连接（池耗尽的前提是同时有 `pool_size + max_overflow` 个成功登录）。
+- **先计数后校验**：`AuthenticationService.login` 在任何凭证查询和 Argon2 之前，用单条 `INSERT ... ON CONFLICT DO UPDATE SET attempt_count = attempt_count + 1 RETURNING` 给两个维度各加 1：规范化后的 `login_name`（与 `login()` 的 normalize 一致，账号存不存在都计数）和 `request.client.host`（uvicorn 只信任网关的代理头，所以是真实客户端 IP）。任一维度 `> 上限` 就抛 `LoginThrottledError`，不做 Argon2。**计数在独立的短事务里执行并立即提交**（独立 Session，不与请求事务共用），行锁只在那两条 upsert 期间持有，所以 Argon2 期间不会阻塞同 IP 的其他登录；单条 upsert 原子，同一 key 并发得到互不相同的计数，进入密码校验的次数不超过上限。固定加锁顺序：先 `login_name` 后 `ip`。计数发生在请求 Session 拿到连接之**前**（路由到 `login` 之前没有任何查询），所以一次登录任何时刻最多占一条连接。登录成功清零 `login_name` 计数在**请求事务里**执行：此时 Argon2 已结束，从清零到提交只剩写 session 和审计，行锁持有很短，也不需要第二条连接。失败审计同样在请求事务里提交。
+- **固定窗口的边界效应**：窗口是固定的，攻击者在一个窗口的最后 N 次加下一个窗口的最前 N 次，短时间内最多能得到 2N 次尝试（`login_name` 默认 10 次、IP 默认 100 次）。这是固定窗口相对滑动窗口的已知取舍，试点期接受；测试 `test_fixed_window_boundary_…` 固定了这一行为。
 - 默认：固定窗口 15 分钟（按 epoch 对齐，边界只由时间决定），`login_name` 5 次，IP 50 次（`LOGIN_THROTTLE_*`）。登录成功清零该 `login_name` 当前窗口的计数；**IP 计数不动**——若成功时回减，攻击者可用自己的有效账号 1:1 抵消对他人账号的猜测。
 - **429 与账号无关**：固定 body `{"detail": "Too many login attempts"}`，`Retry-After` 为当前窗口剩余秒数；401 的三种情况（账号不存在、密码错、停用）保持同一个响应。429 分支返回前，计数已经独立提交。被限流的尝试不写审计（避免攻击者灌满审计表），只写 WARNING `login_throttled`，字段只有 `throttle_scope`，不含 key 或 key_hash。
 - 清理：`easyaudit-next cleanup-auth` 删除早于当前窗口的行（见 `deploy/` 下的 systemd timer）。
