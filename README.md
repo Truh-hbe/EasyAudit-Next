@@ -54,8 +54,10 @@ cd web && npm run typecheck && npm run lint && npm run test && npm run test:brow
 ```bash
 (
   export PGPASSWORD=easyaudit DATABASE_URL=postgresql+psycopg://easyaudit:easyaudit@localhost:5432/easyaudit_test
-  dropdb -h localhost -U easyaudit --if-exists easyaudit_test && createdb -h localhost -U easyaudit easyaudit_test
-  alembic upgrade head && EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
+  dropdb -h localhost -U easyaudit --if-exists easyaudit_test \
+    && createdb -h localhost -U easyaudit easyaudit_test \
+    && alembic upgrade head \
+    && EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
 )
 ```
 
