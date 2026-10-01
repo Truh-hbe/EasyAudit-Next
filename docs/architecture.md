@@ -44,6 +44,45 @@ src/easyaudit_next/
 - 锁后发现生命周期已变化，按并发冲突（409）处理，而不是按业务校验失败（422）处理。
 - 每个并发修复都要有 PostgreSQL 双 Session 竞争测试（`tests/integration/*race*`、`*concurrency*`）。
 
+## 数据库预算
+
+业务 engine（`create_database_engine`）的连接池和服务端超时都显式配置（`platform/settings.py`，模板见 `.env.example`）：
+
+| 配置 | 默认 | 作用 |
+|---|---|---|
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | 10 / 5 | 每个 worker 进程最多 15 条连接 |
+| `DB_POOL_TIMEOUT_SECONDS` | 10 | 等池超时；超时是 500（池耗尽说明预算或泄漏有问题） |
+| `DB_POOL_RECYCLE_SECONDS` | 1800 | 连接最长存活 |
+| `DB_CONNECT_TIMEOUT_SECONDS` | 5 | libpq 建连上限 |
+| `DB_TCP_USER_TIMEOUT_MS` | 15000 | 已建立的连接上，已发送数据多久得不到 ACK 就报错 |
+| `DB_KEEPALIVES_IDLE/INTERVAL_SECONDS`、`DB_KEEPALIVES_COUNT` | 10 / 5 / 3 | TCP keepalive：静默连接约 25 秒内判死 |
+| `DB_STATEMENT_TIMEOUT_MS` | 15000 | 单条语句上限 |
+| `DB_LOCK_TIMEOUT_MS` | 5000 | 等行锁/表锁上限（低于 statement_timeout，锁等待先于语句超时暴露） |
+| `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 30000 | 事务里空闲超过此值，服务端终止连接 |
+
+- **客户端上限**：业务 engine 给 libpq 下发 `connect_timeout`（建连上限）、`keepalives*` 和 `tcp_user_timeout`（发现已建立连接上的死对端）。keepalive 与 `tcp_user_timeout` 是否生效取决于平台是否支持对应的 socket 选项，见 libpq 文档；**TCP 存活检测不等于查询响应截止时间**：连接已建立、对端存活但不返回结果时，业务请求没有客户端截止时间，只依赖服务端的 `statement_timeout`（同步驱动加线程池模型，试点期接受；`ready` 探针有独立的客户端截止时间，会把这种情况暴露为 not ready）。URL 里已有的同名参数优先于 Settings，这是运维的显式选择：在 URL 里覆盖它们等于放弃 Settings 的默认上限，`connect_timeout=0` 表示无限等待。`DB_POOL_SIZE + DB_MAX_OVERFLOW` 至少为 2（Settings 校验）。
+- 三个超时通过业务 engine 的连接参数 `options=-c ...` 下发，与 URL 里已有的 `options` **合并**（追加在后，同名以我们为准）。只作用于业务 engine：`alembic/env.py` 自建 NullPool engine，迁移不受 statement_timeout 限制；CLI 用业务 engine，同样受限。
+- **连接预算公式**：`workers × (pool_size + max_overflow) + readiness 探针 + 运维工具 < max_connections`。当前 compose：1 个 uvicorn worker × 15 + readiness 探针 1（single-flight，同一时间最多一条）+ 运维工具（`migrate`、备份 `pg_dump`、CLI，各按 1 条，预留 5）≈ 21，远低于 PostgreSQL 默认 `max_connections=100`（另有 superuser 预留 3）。增加 worker 或调大池之前先按公式核对。
+- **超时的 HTTP 语义**：`statement_timeout`、`lock_timeout` 到期（SQLSTATE 57014 / 55P03）映射为 **503 + `Retry-After: 1`**，body 只有 `detail` 与 `request_id`，由 `RequestContextMiddleware` 统一处理并记 WARNING `database_timeout`。不用 409：409 的含义是"数据已过期，刷新后重试"，而超时并没有发现生命周期变化，只是暂时拿不到资源；前端对 409 会刷新数据，对 503 才是正确的"稍后重试同一个请求"。死锁（40P01）与 idle-in-transaction 终止不在此列，仍是 500（说明代码违反了加锁顺序或持有了空闲事务）。
+- **没有运行时自检**：这些 timeout 由集成测试保证（`tests/integration/test_db_budget.py`：真实 PostgreSQL 上 `SHOW` 三个值等于配置、`options` 与 URL 合并、statement/lock 超时行为、idle-in-transaction 终止、迁移连接不受影响），不在启动时再向数据库查询比对，也不影响 `ready`。
+
+## Session 活动时间
+
+- `auth_sessions.last_seen_at` 最多每 `SESSION_TOUCH_INTERVAL_SECONDS`（默认 300）写一次。`AuthenticationService.touch` 在已加载的快照显示间隔内已写过时不发任何 SQL；UPDATE 自带 `last_seen_at IS NULL OR last_seen_at < touched_at - interval`，过期快照不会把时间往回写，也不会在已撤销/已过期的 Session 上写入。
+- `last_seen_at` 只是运维信息，精度就是这个间隔；它不参与授权，`expires_at` 才决定 Session 是否可用。
+- **试点期不删除 `auth_sessions` 行。** 它们是 `platform_audit_events.target_session_id`（复合 FK，`RESTRICT`）的锚点，每次登录成功都有一条审计引用，所以不改审计就删不掉；过期的 Session 由 `expires_at` 保证不可用（`authenticate` 检查）。表只增不删，试点规模下可接受；何时保留、何时删除，与审计 FK 一起在"数据保留"里设计。`cleanup-auth` 只清 `login_throttle`，并在输出里给出已过期 Session 的计数（不含 ID），不修改任何 Session。
+
+## 登录限流
+
+- 计数存在 PostgreSQL 表 `login_throttle(scope, key_hash, window_start, attempt_count, updated_at)`，主键 `(scope, key_hash, window_start)`。**限流计数属于运维记录，不是业务真相**：丢了只会放宽限制，不影响任何业务事实，也不进备份语义；表里只有 `sha256(规范化 login_name)` 与 `sha256(client ip)`，没有明文。
+- 不用 Redis 或进程内存：进程内存在多 worker 之间不一致（限额被放大为 N 倍），重启后清零（攻击者可借重启重置）；Redis 是为这一项新增的外部依赖，而 PostgreSQL 已经是唯一的持久层，并且计数可以和失败审计在同一个事务里提交。
+- **先计数后校验**：`AuthenticationService.login` 在任何凭证查询和 Argon2 之前，用单条 `INSERT ... ON CONFLICT DO UPDATE SET attempt_count = attempt_count + 1 RETURNING` 给两个维度各加 1：规范化后的 `login_name`（与 `login()` 的 normalize 一致，账号存不存在都计数）和 `request.client.host`（uvicorn 只信任网关的代理头，所以是真实客户端 IP）。任一维度 `> 上限` 就抛 `LoginThrottledError`，不做 Argon2。**计数在独立的短事务里执行并立即提交**（独立 Session，不与请求事务共用），行锁只在那两条 upsert 期间持有，所以 Argon2 期间不会阻塞同 IP 的其他登录；单条 upsert 原子，同一 key 并发得到互不相同的计数，进入密码校验的次数不超过上限。固定加锁顺序：先 `login_name` 后 `ip`。计数发生在请求 Session 拿到连接之**前**（路由到 `login` 之前没有任何查询），所以一次登录任何时刻最多占一条连接。登录成功清零 `login_name` 计数在**请求事务里**执行：此时 Argon2 已结束，从清零到提交只剩写 session 和审计，行锁持有很短，也不需要第二条连接。失败审计同样在请求事务里提交。
+- **固定窗口的边界效应**：窗口是固定的，攻击者在一个窗口的最后 N 次加下一个窗口的最前 N 次，短时间内最多能得到 2N 次尝试（`login_name` 默认 10 次、IP 默认 100 次）。这是固定窗口相对滑动窗口的已知取舍，试点期接受；测试 `test_fixed_window_boundary_…` 固定了这一行为。
+- 默认：固定窗口 15 分钟（按 epoch 对齐，边界只由时间决定），`login_name` 5 次，IP 50 次（`LOGIN_THROTTLE_*`）。登录成功清零该 `login_name` 当前窗口的计数；**IP 计数不动**——若成功时回减，攻击者可用自己的有效账号 1:1 抵消对他人账号的猜测。
+- **429 与账号无关**：固定 body `{"detail": "Too many login attempts"}`，`Retry-After` 为当前窗口剩余秒数；401 的三种情况（账号不存在、密码错、停用）保持同一个响应。429 分支返回前，计数已经独立提交。被限流的尝试不写审计（避免攻击者灌满审计表），只写 WARNING `login_throttled`，字段只有 `throttle_scope`，不含 key 或 key_hash。
+- 清理：`easyaudit-next cleanup-auth` 删除早于当前窗口的行（见 `deploy/` 下的 systemd timer）。
+- **运维逃生口**：限流可被用来封锁已知登录名（对某名发超限请求即可，试点期私网内接受此风险）。`easyaudit-next cleanup-auth --clear-login-name <name>` 按规范化后的名字算 hash，删除它所有窗口的计数，立即解封。
+
 ## 授权
 
 - 授权完全由 Case 固定的精确 Scenario 版本判断（`ScenarioPolicy.authorization.allows`），不能写成 `role_key == "lead"`，也不能给 `system_admin` 业务捷径。
@@ -61,6 +100,8 @@ src/easyaudit_next/
 | 404 | 组织范围内查不到，或未授权且不应暴露对象是否存在 |
 | 422 | 请求、Scenario 数据、工作流或业务规则校验失败 |
 | 409 | 过期的生命周期、并发冲突、唯一性冲突 |
+| 429 | 登录尝试过多（只用于 `login`，响应与账号无关） |
+| 503 | 数据库 `statement_timeout` / `lock_timeout` 到期，带 `Retry-After` |
 
 `openapi/openapi.json` 是稳定接口的基线，由 `scripts/check_openapi.py` 校验。
 

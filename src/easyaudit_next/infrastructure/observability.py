@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -61,6 +62,7 @@ ALLOWED_FIELDS = frozenset(
         "reason",
         "current_revision",
         "expected_revision",
+        "throttle_scope",
     }
 )
 _MAX_VALUE_CHARS = 200
@@ -191,13 +193,27 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, send_with_request_id)
         except Exception as exc:
-            APP_LOGGER.error("unhandled_exception", exc_info=exc)
             failed = True
+            timeout_kind = database_timeout_kind(exc)
+            if timeout_kind is not None:
+                APP_LOGGER.warning(
+                    "database_timeout",
+                    extra={
+                        "fields": {"reason": timeout_kind},
+                        "exception_details": describe_exception(exc),
+                    },
+                )
+            else:
+                APP_LOGGER.error("unhandled_exception", exc_info=exc)
             # Once the response has started, the status line is already on the wire
             # (e.g. a background task or a stream failed later); never rewrite it.
             if not response_started:
-                status_code = 500
-                await _send_internal_error(send, request_id)
+                if timeout_kind is not None:
+                    status_code = 503
+                    await _send_database_unavailable(send, request_id)
+                else:
+                    status_code = 500
+                    await _send_internal_error(send, request_id)
         finally:
             route = scope.get("route")
             route_path = getattr(route, "path", None)
@@ -219,6 +235,41 @@ class RequestContextMiddleware:
             )
             _actor.reset(actor_token)
             _request_id.reset(request_token)
+
+
+DATABASE_RETRY_AFTER_SECONDS = 1
+
+
+def database_timeout_kind(exc: BaseException) -> str | None:
+    """`statement_timeout` / `lock_timeout` expiry, as raised through SQLAlchemy or directly.
+
+    Both are transient contention, not a stale lifecycle: the request is mapped to 503 with
+    Retry-After (not 409, which tells clients to refresh stale data).
+    """
+    current: BaseException | None = exc
+    for _ in range(5):
+        if current is None:
+            return None
+        if isinstance(current, psycopg.errors.QueryCanceled):
+            return "statement_timeout"
+        if isinstance(current, psycopg.errors.LockNotAvailable):
+            return "lock_timeout"
+        current = getattr(current, "orig", None) or current.__cause__
+    return None
+
+
+async def _send_database_unavailable(send: Send, request_id: str) -> None:
+    body = json.dumps(
+        {"detail": "Database temporarily unavailable; retry", "request_id": request_id}
+    ).encode()
+    headers: MutableMapping[bytes, bytes] = {
+        b"content-type": b"application/json",
+        b"content-length": str(len(body)).encode(),
+        b"retry-after": str(DATABASE_RETRY_AFTER_SECONDS).encode(),
+        REQUEST_ID_HEADER.lower().encode(): request_id.encode(),
+    }
+    await send({"type": "http.response.start", "status": 503, "headers": list(headers.items())})
+    await send({"type": "http.response.body", "body": body})
 
 
 async def _send_internal_error(send: Send, request_id: str) -> None:

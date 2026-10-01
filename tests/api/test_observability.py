@@ -51,7 +51,7 @@ class AuthStub:
     def __init__(self) -> None:
         self.current = identity(PlatformRole.ORDINARY_USER)
 
-    def login(self, login_name: str, password: str) -> Any:
+    def login(self, login_name: str, password: str, *, client_ip: str | None = None) -> Any:
         from easyaudit_next.platform.application.authentication import LoginResult
 
         return LoginResult(

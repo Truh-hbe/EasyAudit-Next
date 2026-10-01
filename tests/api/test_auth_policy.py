@@ -48,7 +48,7 @@ def test_ordinary_user_cannot_access_admin_api() -> None:
 
 
 class LoginAuthenticationStub:
-    def login(self, login_name: str, password: str) -> LoginResult:
+    def login(self, login_name: str, password: str, *, client_ip: str | None = None) -> LoginResult:
         current = identity(PlatformRole.SYSTEM_ADMIN)
         return LoginResult(
             token="browser-only-token",

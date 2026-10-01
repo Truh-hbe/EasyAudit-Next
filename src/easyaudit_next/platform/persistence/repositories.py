@@ -1,7 +1,11 @@
-from datetime import datetime
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import Connection, Engine, func, or_, select
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import (
@@ -23,6 +27,7 @@ from easyaudit_next.platform.persistence.models import (
     AuthSessionRecord,
     DepartmentRecord,
     LocalCredentialRecord,
+    LoginThrottleRecord,
     OrganizationRecord,
     PlatformAuditEventRecord,
     UserRecord,
@@ -330,7 +335,11 @@ class SqlAlchemyAuthSessionRepository:
         session_id: AuthSessionId,
         expected_token_hash: str,
         touched_at: datetime,
+        *,
+        min_interval: timedelta = timedelta(0),
     ) -> AuthSession | None:
+        """Record activity; None when nothing was written (inactive, or touched within
+        `min_interval` already: then no UPDATE takes place at all)."""
         result = self._session.execute(
             sa_update(AuthSessionRecord)
             .where(
@@ -338,6 +347,10 @@ class SqlAlchemyAuthSessionRepository:
                 AuthSessionRecord.token_hash == expected_token_hash,
                 AuthSessionRecord.revoked_at.is_(None),
                 AuthSessionRecord.expires_at > touched_at,
+                or_(
+                    AuthSessionRecord.last_seen_at.is_(None),
+                    AuthSessionRecord.last_seen_at < touched_at - min_interval,
+                ),
             )
             .values(last_seen_at=touched_at)
             .returning(AuthSessionRecord.id),
@@ -430,3 +443,69 @@ class SqlAlchemyPlatformAuditRepository:
             )
         )
         self._session.flush()
+
+
+class SqlAlchemyLoginThrottleUnitOfWork:
+    """Opens a short transaction of its own on the same database as `bind`, commits on exit."""
+
+    def __init__(self, bind: Engine | Connection) -> None:
+        self._bind = bind
+
+    @contextmanager
+    def __call__(self) -> Iterator["SqlAlchemyLoginThrottleRepository"]:
+        with Session(self._bind, expire_on_commit=False) as session, session.begin():
+            yield SqlAlchemyLoginThrottleRepository(session)
+
+
+class SqlAlchemyLoginThrottleRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def increment(
+        self, scope: str, key_hash: str, window_start: datetime, now: datetime
+    ) -> int:
+        statement = pg_insert(LoginThrottleRecord).values(
+            scope=scope,
+            key_hash=key_hash,
+            window_start=window_start,
+            attempt_count=1,
+            updated_at=now,
+        )
+        result = self._session.execute(
+            statement.on_conflict_do_update(
+                index_elements=["scope", "key_hash", "window_start"],
+                set_={
+                    "attempt_count": LoginThrottleRecord.attempt_count + 1,
+                    "updated_at": now,
+                },
+            ).returning(LoginThrottleRecord.attempt_count)
+        )
+        return int(result.scalar_one())
+
+    def reset(self, scope: str, key_hash: str, window_start: datetime, now: datetime) -> None:
+        self._session.execute(
+            sa_update(LoginThrottleRecord)
+            .where(
+                LoginThrottleRecord.scope == scope,
+                LoginThrottleRecord.key_hash == key_hash,
+                LoginThrottleRecord.window_start == window_start,
+            )
+            .values(attempt_count=0, updated_at=now),
+            execution_options={"synchronize_session": False},
+        )
+
+    def delete_before(self, window_start: datetime) -> int:
+        result = self._session.execute(
+            sa_delete(LoginThrottleRecord).where(LoginThrottleRecord.window_start < window_start),
+            execution_options={"synchronize_session": False},
+        )
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+    def delete_key(self, scope: str, key_hash: str) -> int:
+        result = self._session.execute(
+            sa_delete(LoginThrottleRecord).where(
+                LoginThrottleRecord.scope == scope, LoginThrottleRecord.key_hash == key_hash
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]

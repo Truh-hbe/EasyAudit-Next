@@ -1,9 +1,12 @@
 import argparse
 import getpass
-from datetime import UTC, datetime
+import json
+from contextlib import nullcontext
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from pwdlib import PasswordHash
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from easyaudit_next.composition import build_scenario_registry
@@ -11,6 +14,11 @@ from easyaudit_next.infrastructure.database import (
     create_database_engine,
     create_session_factory,
     session_scope,
+)
+from easyaudit_next.platform.application.authentication import normalize_login_name
+from easyaudit_next.platform.application.login_throttle import (
+    LoginThrottlePolicy,
+    LoginThrottleService,
 )
 from easyaudit_next.platform.application.password_policy import (
     PasswordPolicyError,
@@ -23,13 +31,16 @@ from easyaudit_next.platform.domain.models import (
     PlatformAuditEvent,
     PlatformRole,
 )
+from easyaudit_next.platform.persistence.models import AuthSessionRecord
 from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyDepartmentRepository,
     SqlAlchemyLocalCredentialRepository,
+    SqlAlchemyLoginThrottleRepository,
     SqlAlchemyOrganizationRepository,
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
+from easyaudit_next.platform.settings import get_settings
 from easyaudit_next.review_core.application.scenario_catalog import ScenarioCatalogService
 from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersion
 from easyaudit_next.review_core.persistence.repositories import SqlAlchemyScenarioCatalogRepository
@@ -139,6 +150,55 @@ def publish_scenario(
         engine.dispose()
 
 
+def cleanup_auth_in_session(
+    session: Session,
+    *,
+    window: timedelta,
+    now: datetime | None = None,
+    clear_login_name: str | None = None,
+) -> dict[str, int]:
+    """Delete expired login_throttle windows. Never touches auth_sessions: they are audit
+    anchors (FK RESTRICT) and `expires_at` already makes an expired one unusable. The count of
+    expired sessions is reported for scale only."""
+    current = now or datetime.now(UTC)
+    throttle = LoginThrottleService(
+        lambda: nullcontext(SqlAlchemyLoginThrottleRepository(session)),
+        LoginThrottlePolicy(window=window),
+    )
+    deleted = throttle.purge_expired(now=current)
+    counts: dict[str, int] = {}
+    if clear_login_name is not None:
+        counts["login_name_cleared"] = throttle.clear_login_name(
+            normalize_login_name(clear_login_name)
+        )
+    expired_sessions = session.scalar(
+        select(func.count()).select_from(AuthSessionRecord).where(
+            AuthSessionRecord.expires_at <= current
+        )
+    )
+    return {
+        "login_throttle_deleted": deleted,
+        **counts,
+        "expired_sessions": int(expired_sessions or 0),
+    }
+
+
+def cleanup_auth(clear_login_name: str | None = None) -> None:
+    settings = get_settings()
+    engine = create_database_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        with session_scope(factory) as session:
+            counts = cleanup_auth_in_session(
+                session,
+                window=timedelta(seconds=settings.login_throttle_window_seconds),
+                clear_login_name=clear_login_name,
+            )
+    finally:
+        engine.dispose()
+    print(json.dumps({"event": "cleanup_auth", **counts}))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="easyaudit-next")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -156,6 +216,13 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--organization-id", required=True, type=UUID)
     publish.add_argument("--key", required=True, type=ScenarioKey)
     publish.add_argument("--version", required=True, type=int)
+    subparsers.add_parser(
+        "cleanup-auth",
+        help="Delete expired login_throttle windows (sessions are kept; only counted)",
+    ).add_argument(
+        "--clear-login-name",
+        help="Also drop every login throttle counter of this login name (unblocks it)",
+    )
     return parser
 
 
@@ -169,6 +236,8 @@ def main() -> None:
             ScenarioKey(args.key),
             ScenarioVersion(args.version),
         )
+    elif args.command == "cleanup-auth":
+        cleanup_auth(args.clear_login_name)
 
 
 if __name__ == "__main__":

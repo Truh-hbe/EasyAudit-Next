@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, OrganizationId, UserId
@@ -78,6 +78,8 @@ class AuthSessionRepository(Protocol):
         session_id: AuthSessionId,
         expected_token_hash: str,
         touched_at: datetime,
+        *,
+        min_interval: timedelta = timedelta(0),
     ) -> AuthSession | None: ...
 
     def revoke_if_active(self, session_id: AuthSessionId, revoked_at: datetime) -> bool: ...
@@ -93,3 +95,17 @@ class AuthSessionRepository(Protocol):
 
 class PlatformAuditRepository(Protocol):
     def add(self, event: PlatformAuditEvent) -> None: ...
+
+
+class LoginThrottleRepository(Protocol):
+    def increment(
+        self, scope: str, key_hash: str, window_start: datetime, now: datetime
+    ) -> int:
+        """Atomically add one attempt to the window's counter and return the new count."""
+        ...
+
+    def reset(self, scope: str, key_hash: str, window_start: datetime, now: datetime) -> None: ...
+
+    def delete_before(self, window_start: datetime) -> int: ...
+
+    def delete_key(self, scope: str, key_hash: str) -> int: ...

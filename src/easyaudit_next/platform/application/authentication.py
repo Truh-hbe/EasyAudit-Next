@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pwdlib import PasswordHash
 
+from easyaudit_next.platform.application.login_throttle import LoginThrottleService
 from easyaudit_next.platform.application.password_policy import validate_local_password
 from easyaudit_next.platform.domain.ids import AuthSessionId, PlatformAuditEventId, UserId
 from easyaudit_next.platform.domain.models import (
@@ -20,6 +21,11 @@ from easyaudit_next.platform.domain.repositories import (
     PlatformAuditRepository,
     UserRepository,
 )
+
+
+def normalize_login_name(login_name: str) -> str:
+    return login_name.strip().lower()
+
 
 _DEFAULT_PASSWORD_HASH = PasswordHash.recommended()
 _DUMMY_PASSWORD_HASH = _DEFAULT_PASSWORD_HASH.hash("not-a-real-user-password")
@@ -68,6 +74,8 @@ class AuthenticationService:
         audit: PlatformAuditRepository,
         *,
         session_ttl: timedelta = timedelta(hours=12),
+        touch_interval: timedelta = timedelta(0),
+        login_throttle: LoginThrottleService | None = None,
         password_hash: PasswordHash | None = None,
     ) -> None:
         self._credentials = credentials
@@ -75,6 +83,8 @@ class AuthenticationService:
         self._users = users
         self._audit = audit
         self._session_ttl = session_ttl
+        self._touch_interval = touch_interval
+        self._login_throttle = login_throttle
         self._password_hash = password_hash or _DEFAULT_PASSWORD_HASH
         self._dummy_hash = _DUMMY_PASSWORD_HASH
 
@@ -83,10 +93,16 @@ class AuthenticationService:
         login_name: str,
         password: str,
         *,
+        client_ip: str | None = None,
         now: datetime | None = None,
     ) -> LoginResult:
         current_time = now or datetime.now(UTC)
-        normalized_login = login_name.strip().lower()
+        normalized_login = normalize_login_name(login_name)
+        if self._login_throttle is not None:
+            # Counted before any credential lookup or hashing, whether or not the account
+            # exists; raises LoginThrottledError without running Argon2. The caller must
+            # commit so the count is durable.
+            self._login_throttle.register_attempt(normalized_login, client_ip, now=current_time)
         coarse_credential = self._credentials.get_by_login_name(normalized_login)
         coarse_matches = self._password_hash.verify(
             password,
@@ -132,6 +148,8 @@ class AuthenticationService:
                 occurred_at=current_time,
             )
         )
+        if self._login_throttle is not None:
+            self._login_throttle.record_success(normalized_login, now=current_time)
         return LoginResult(token=token, auth_session=auth_session, user=user)
 
     def authenticate(self, token: str, *, now: datetime | None = None) -> tuple[AuthSession, User]:
@@ -150,10 +168,14 @@ class AuthenticationService:
 
     def touch(self, auth_session: AuthSession, *, now: datetime | None = None) -> None:
         current_time = now or datetime.now(UTC)
+        seen = auth_session.last_seen_at
+        if seen is not None and seen >= current_time - self._touch_interval:
+            return  # touched recently: no statement at all. The SQL guard covers stale snapshots.
         self._sessions.touch_if_active(
             auth_session.id,
             auth_session.token_hash,
             current_time,
+            min_interval=self._touch_interval,
         )
 
     def logout(self, auth_session: AuthSession, user: User, *, now: datetime | None = None) -> None:

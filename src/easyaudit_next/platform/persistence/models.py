@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     func,
@@ -146,6 +147,24 @@ class AuthSessionRecord(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LoginThrottleRecord(Base):
+    """Operational counter per (scope, sha256(key), fixed window); never business truth."""
+
+    __tablename__ = "login_throttle"
+    __table_args__ = (
+        CheckConstraint("scope IN ('login_name', 'ip')", name="ck_login_throttle_scope"),
+        CheckConstraint("length(key_hash) = 64", name="ck_login_throttle_key_hash"),
+        CheckConstraint("attempt_count >= 0", name="ck_login_throttle_attempt_count"),
+        Index("ix_login_throttle_window_start", "window_start"),
+    )
+
+    scope: Mapped[str] = mapped_column(String(16), primary_key=True)
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    attempt_count: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class PlatformAuditEventRecord(Base):

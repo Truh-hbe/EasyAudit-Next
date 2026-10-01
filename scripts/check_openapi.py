@@ -19,6 +19,9 @@ def main() -> None:
             actual = runtime["paths"][path][method]
             assert actual["operationId"] == operation["operationId"]
             assert actual["tags"] == operation["tags"]
+            # Optional: status codes the contract promises beyond the default ones.
+            for code in operation.get("responses", []):
+                assert code in actual["responses"], f"{method} {path} lost response {code}"
 
     print("OpenAPI contract check passed.")
 
