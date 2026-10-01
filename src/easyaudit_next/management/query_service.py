@@ -11,12 +11,15 @@ from easyaudit_next.management.schemas import (
     FindingLifecycleCounts,
     ManagementActionDeadlineItem,
     ManagementCaseCollectionResponse,
+    ManagementCaseExportSnapshot,
+    ManagementCaseFilters,
     ManagementCaseProgressResponse,
     ManagementCaseSummary,
     ManagementDeadlineFilter,
     ManagementFindingProgress,
 )
 from easyaudit_next.platform.domain.models import User
+from easyaudit_next.platform.persistence.models import OrganizationRecord
 from easyaudit_next.review_core.domain.models import (
     ActionItemLifecycle,
     FindingLifecycle,
@@ -57,6 +60,12 @@ _ACTION_DEADLINE_LIFECYCLES = {
 }
 
 
+class ExportRowLimitExceededError(Exception):
+    def __init__(self, max_rows: int) -> None:
+        super().__init__("Export exceeds the row limit")
+        self.max_rows = max_rows
+
+
 class ManagementQueryService:
     """Authorization-safe M3.3 management projection over existing Review facts."""
 
@@ -81,8 +90,68 @@ class ManagementQueryService:
         if offset < 0:
             raise ValueError("offset must be non-negative")
 
-        snapshot = self._authorized_snapshot(actor, captured_at)
-        summaries = list(snapshot.summaries)
+        summaries = self._filtered_summaries(
+            actor,
+            captured_at,
+            review_plan_id=review_plan_id,
+            lifecycle=lifecycle,
+            deadline_status=deadline_status,
+        )
+        total = len(summaries)
+        page = tuple(summaries[offset : offset + limit])
+        return ManagementCaseCollectionResponse(
+            as_of=captured_at,
+            items=page,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    def export_review_cases(
+        self,
+        actor: User,
+        filters: ManagementCaseFilters,
+        *,
+        max_rows: int,
+        as_of: datetime | None = None,
+    ) -> ManagementCaseExportSnapshot:
+        """All rows of `list_review_cases` for the same filters, without pagination.
+
+        Fails as a whole when the filtered row count exceeds `max_rows`; never truncates.
+        """
+        captured_at = self._capture_as_of(actor, as_of)
+        summaries = self._filtered_summaries(
+            actor,
+            captured_at,
+            review_plan_id=filters.review_plan_id,
+            lifecycle=filters.lifecycle,
+            deadline_status=filters.deadline_status,
+        )
+        if len(summaries) > max_rows:
+            raise ExportRowLimitExceededError(max_rows)
+        organization_name = self._session.scalar(
+            select(OrganizationRecord.name).where(OrganizationRecord.id == actor.organization_id)
+        )
+        if organization_name is None:
+            raise LookupError("Organization not found for management export")
+        return ManagementCaseExportSnapshot(
+            as_of=captured_at,
+            organization_name=organization_name,
+            filters=filters,
+            items=tuple(summaries),
+        )
+
+    def _filtered_summaries(
+        self,
+        actor: User,
+        as_of: datetime,
+        *,
+        review_plan_id: UUID | None,
+        lifecycle: ReviewCaseLifecycle | None,
+        deadline_status: ManagementDeadlineFilter,
+    ) -> list[ManagementCaseSummary]:
+        """Authorized snapshot -> filters -> sort. The single source for every case listing."""
+        summaries = list(self._authorized_snapshot(actor, as_of).summaries)
 
         if review_plan_id is not None:
             summaries = [item for item in summaries if item.review_plan_id == review_plan_id]
@@ -98,15 +167,7 @@ class ManagementQueryService:
             ]
 
         summaries.sort(key=self._case_sort_key)
-        total = len(summaries)
-        page = tuple(summaries[offset : offset + limit])
-        return ManagementCaseCollectionResponse(
-            as_of=captured_at,
-            items=page,
-            total=total,
-            limit=limit,
-            offset=offset,
-        )
+        return summaries
 
     def get_progress(
         self,

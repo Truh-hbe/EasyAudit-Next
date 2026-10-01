@@ -49,3 +49,21 @@ def test_management_endpoints_require_existing_business_identity() -> None:
     assert progress.status_code == 401
     assert collection.json()["detail"] == "Authentication required"
     assert progress.json()["detail"] == "Authentication required"
+
+
+def test_management_export_documents_formats_headers_contract() -> None:
+    schema = create_app().openapi()
+    operation = schema["paths"]["/api/v1/management/review-cases/export"]["get"]
+    parameters = {item["name"]: item for item in operation["parameters"]}
+
+    assert operation["operationId"] == "exportManagedReviewCases"
+    assert operation["tags"] == ["management"]
+    assert parameters["format"]["required"] is True
+    assert {"review_plan_id", "lifecycle", "deadline_status"} <= set(parameters)
+    assert "limit" not in parameters and "offset" not in parameters
+    content = operation["responses"]["200"]["content"]
+    assert set(content) == {
+        "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    assert "422" in operation["responses"]

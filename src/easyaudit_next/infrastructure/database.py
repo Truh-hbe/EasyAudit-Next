@@ -119,3 +119,28 @@ def libpq_connect_kwargs(
             kwargs.get("options"), statement_timeout=statement_timeout_ms
         )
     return kwargs
+
+
+@contextmanager
+def snapshot_read(session: Session) -> Iterator[None]:
+    """Run the enclosed reads in one ``REPEATABLE READ, READ ONLY`` transaction.
+
+    Under READ COMMITTED every statement takes its own snapshot, so a multi-query projection can
+    mix states from before and after a concurrent commit. Isolation can only be chosen before
+    the transaction's first statement, but the request transaction has already authenticated
+    the caller, so the pending (read-only) work is committed first, which releases the connection
+    to the pool; the snapshot then checks one out again (not necessarily the same physical
+    connection). The request therefore holds at most one connection at any moment. The snapshot
+    is committed on exit so later writes in the request (the session touch) start a fresh
+    read-write transaction.
+    """
+    session.commit()
+    session.connection(
+        execution_options={"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
+    )
+    try:
+        yield
+    except BaseException:
+        session.rollback()
+        raise
+    session.commit()
