@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,7 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.presentationml.presentation,"
         "text/plain,text/csv"
     )
+    reminder_timezone: str = "Asia/Shanghai"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @model_validator(mode="after")
@@ -86,6 +88,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OBJECT_STORAGE_ENDPOINT must be http(s)://host[:port] without path or credentials"
             )
+        return value
+
+    @field_validator("reminder_timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("REMINDER_TIMEZONE must be an IANA timezone name") from exc
         return value
 
     @field_validator("log_level", mode="before")

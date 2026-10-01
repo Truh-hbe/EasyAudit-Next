@@ -43,6 +43,21 @@ OBSERVABILITY_CONSUMERS = (
 INFRASTRUCTURE_ROOT = SOURCE_ROOT / "infrastructure"
 OBJECT_STORAGE_SDK_PREFIXES = ("boto3", "botocore", "aioboto3", "aiobotocore", "minio")
 OBJECT_STORAGE_ADAPTER = "easyaudit_next.infrastructure.object_storage"
+# Scheduling lives outside the web process (systemd timer -> `easyaudit-next run-reminder-sweep`).
+# The HTTP edge must not import the sweep, the run records, the CLI, or a scheduler library.
+WEB_PROCESS_PATHS = (SOURCE_ROOT / "api", SOURCE_ROOT / "main.py", SOURCE_ROOT / "serve.py")
+FORBIDDEN_WEB_IMPORT_PREFIXES = (
+    "easyaudit_next.collaboration.reminder_sweep",
+    "easyaudit_next.collaboration.scheduler_runs",
+    "easyaudit_next.collaboration.automatic_reminder",
+    "easyaudit_next.cli",
+)
+FORBIDDEN_WEB_THIRD_PARTY = {"apscheduler", "celery", "schedule", "sched", "rq"}
+FORBIDDEN_WEB_COMPOSITION_NAMES = {
+    "build_automatic_reminder_sweep",
+    "build_per_candidate_reminder_sweep",
+    "build_automatic_reminder_evaluator",
+}
 FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS = {
     "submit_rectification",
     "update_assigned_action",
@@ -74,6 +89,31 @@ def string_literals(tree: ast.AST) -> set[str]:
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
+
+
+def is_web_process_file(path: Path) -> bool:
+    # Any HTTP adapter: src/.../api/**, per-module api.py routers, main.py, serve.py.
+    return path.name == "api.py" or any(
+        path == allowed or path.is_relative_to(allowed) for allowed in WEB_PROCESS_PATHS
+    )
+
+
+def check_web_process_has_no_scheduler(path: Path, tree: ast.AST) -> None:
+    for module in imported_modules(tree):
+        if (
+            module.startswith(FORBIDDEN_WEB_IMPORT_PREFIXES)
+            or module.split(".")[0] in FORBIDDEN_WEB_THIRD_PARTY
+        ):
+            raise SystemExit(
+                f"Web process must not host a scheduler or sweep (use the CLI): {path}: {module}"
+            )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "easyaudit_next.composition":
+            coupled = {alias.name for alias in node.names} & FORBIDDEN_WEB_COMPOSITION_NAMES
+            if coupled:
+                raise SystemExit(
+                    f"Web process must not wire the reminder sweep: {path}: {sorted(coupled)}"
+                )
 
 
 def main() -> None:
@@ -133,6 +173,9 @@ def main() -> None:
                     "Review Core must not depend on collaboration/read-side modules: "
                     f"{path}: {module}"
                 )
+
+        if is_web_process_file(path):
+            check_web_process_has_no_scheduler(path, tree)
 
         if path.is_relative_to(COLLABORATION_ROOT) and imports_name(
             tree,

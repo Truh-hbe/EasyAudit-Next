@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from easyaudit_next.collaboration.automatic_reminder import AutomaticReminderEvaluator
 from easyaudit_next.platform.domain.ids import OrganizationId
+from easyaudit_next.platform.persistence.models import OrganizationRecord
 from easyaudit_next.review_core.persistence.models import ActionItemRecord, ReviewCaseRecord
 
 _CASE_OVERDUE_LIFECYCLES = ("scheduled", "in_progress")
@@ -62,7 +63,7 @@ class AutomaticReminderSweep:
         self,
         *,
         discovery: Callable[[], AbstractContextManager[Session]],
-        candidate: Callable[[], AbstractContextManager[AutomaticReminderEvaluator]],
+        candidate: Callable[[OrganizationId], AbstractContextManager[AutomaticReminderEvaluator]],
         isolate_failures: bool,
     ) -> None:
         self._discovery = discovery
@@ -75,7 +76,7 @@ class AutomaticReminderSweep:
     ) -> "AutomaticReminderSweep":
         return cls(
             discovery=lambda: nullcontext(session),
-            candidate=lambda: nullcontext(evaluator),
+            candidate=lambda _organization_id: nullcontext(evaluator),
             isolate_failures=False,
         )
 
@@ -87,8 +88,10 @@ class AutomaticReminderSweep:
     ) -> "AutomaticReminderSweep":
         """`transaction` must commit on success and roll back on exception, and be re-enterable."""
 
-        def candidate() -> AbstractContextManager[AutomaticReminderEvaluator]:
-            return _evaluator_in(transaction, evaluator_factory)
+        def candidate(
+            organization_id: OrganizationId,
+        ) -> AbstractContextManager[AutomaticReminderEvaluator]:
+            return _evaluator_in(transaction, evaluator_factory, organization_id)
 
         return cls(discovery=transaction, candidate=candidate, isolate_failures=True)
 
@@ -158,7 +161,7 @@ class AutomaticReminderSweep:
         as_of: datetime,
     ) -> None:
         try:
-            with self._candidate() as evaluator:
+            with self._candidate(organization_id) as evaluator:
                 evaluate = (
                     evaluator.evaluate_case_overdue
                     if kind == "case"
@@ -239,6 +242,15 @@ class _Tally:
 def _evaluator_in(
     transaction: Callable[[], AbstractContextManager[Session]],
     evaluator_factory: Callable[[Session], AutomaticReminderEvaluator],
+    organization_id: OrganizationId,
 ) -> Iterator[AutomaticReminderEvaluator]:
     with transaction() as session:
+        # Inserting a Notification takes FOR KEY SHARE on its Organization row (FK) after the
+        # Case/Action and User locks. Web operations lock Organization -> Case -> User, so take
+        # the Organization first, in the same order, or the two form a cycle.
+        session.execute(
+            select(OrganizationRecord.id)
+            .where(OrganizationRecord.id == organization_id)
+            .with_for_update(key_share=True)
+        )
         yield evaluator_factory(session)
