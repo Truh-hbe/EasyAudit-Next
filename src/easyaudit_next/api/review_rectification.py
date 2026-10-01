@@ -11,7 +11,6 @@ from easyaudit_next.api.review_contracts import (
     ActionItemCreateRequest,
     ActionItemResponse,
     ActionItemTransitionRequest,
-    EvidenceRegisterRequest,
     EvidenceResponse,
     FindingResponse,
     RectificationSubmissionRequest,
@@ -290,41 +289,6 @@ def transition_action_item(
     ) as exc:
         _raise_api_error(exc)
     return _action_response(action_item)
-
-
-@review_rectification_router.post(
-    "/action-items/{action_item_id}/evidences",
-    response_model=EvidenceResponse,
-    status_code=status.HTTP_201_CREATED,
-    operation_id="registerActionEvidence",
-)
-def register_action_evidence(
-    action_item_id: UUID,
-    payload: EvidenceRegisterRequest,
-    identity: BusinessIdentity,
-    session: DatabaseSession,
-) -> EvidenceResponse:
-    service = build_rectification_service(session)
-    try:
-        evidence = service.register_evidence(
-            identity.user,
-            ActionItemId(action_item_id),
-            payload.storage_key,
-            payload.original_name,
-            payload.size_bytes,
-            payload.sha256,
-            content_type=payload.content_type,
-            description=payload.description,
-        )
-    except (
-        ConcurrentFindingTransitionError,
-        ReviewAuthorizationError,
-        LookupError,
-        ValueError,
-        IntegrityError,
-    ) as exc:
-        _raise_api_error(exc)
-    return _evidence_response(evidence)
 
 
 @review_rectification_router.get(

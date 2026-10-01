@@ -5,6 +5,7 @@ from easyaudit_next.collaboration.automatic_reminder import AutomaticReminderEva
 from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
 from easyaudit_next.collaboration.nudge import ManualNudgeService
 from easyaudit_next.collaboration.reminder_sweep import AutomaticReminderSweep
+from easyaudit_next.infrastructure.object_storage import S3EvidenceObjectStore
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
 from easyaudit_next.notifications.service import NotificationService
@@ -19,10 +20,13 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
+from easyaudit_next.platform.settings import Settings
 from easyaudit_next.review_case_queries.context_service import ReviewCaseContextQueryService
 from easyaudit_next.review_case_queries.query_service import ReviewCaseCollectionQueryService
 from easyaudit_next.review_case_queries.review_catalog import ReviewCatalogQueryService
 from easyaudit_next.review_core.application.create_idempotency import CreateIdempotencyService
+from easyaudit_next.review_core.application.evidence_policy import EvidenceUploadPolicy
+from easyaudit_next.review_core.application.evidence_storage import EvidenceObjectStore
 from easyaudit_next.review_core.application.review_closure_findings import (
     ClosureAwareFindingLifecycleService,
 )
@@ -135,6 +139,18 @@ def build_rectification_service(session: Session) -> RectificationService:
         SqlAlchemyUserRepository(session),
         SqlAlchemyDepartmentRepository(session),
         build_scenario_registry(),
+    )
+
+
+def build_evidence_object_store(settings: Settings) -> EvidenceObjectStore:
+    """Blocking (reads credential files); raises `ObjectStoreNotConfiguredError` if unset."""
+
+    return S3EvidenceObjectStore.from_settings(settings)
+
+
+def build_evidence_upload_policy(settings: Settings) -> EvidenceUploadPolicy:
+    return EvidenceUploadPolicy.from_config(
+        settings.evidence_max_bytes, settings.evidence_allowed_content_types
     )
 
 

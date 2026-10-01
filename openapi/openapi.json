@@ -133,8 +133,14 @@
       "post": {"operationId": "transitionActionItem", "tags": ["review-rectification"]}
     },
     "/api/v1/action-items/{action_item_id}/evidences": {
-      "get": {"operationId": "listActionEvidences", "tags": ["review-rectification"]},
-      "post": {"operationId": "registerActionEvidence", "tags": ["review-rectification"]}
+      "get": {"operationId": "listActionEvidences", "tags": ["review-rectification"]}
+    },
+    "/api/v1/action-items/{action_item_id}/evidence-uploads": {
+      "post": {
+        "operationId": "uploadActionEvidence",
+        "tags": ["review-rectification"],
+        "responses": ["201", "413", "415", "503"]
+      }
     },
     "/api/v1/findings/{finding_id}/rectification-submissions": {
       "get": {"operationId": "listRectificationSubmissions", "tags": ["review-rectification"]},

@@ -13,14 +13,19 @@ def test_rectification_routes_are_explicit_and_do_not_expose_lifecycle_patch() -
     assert "post" in paths["/api/v1/action-items/{action_item_id}/assignees"]
     assert "get" in paths["/api/v1/action-items/{action_item_id}/assignees"]
     assert "post" in paths["/api/v1/action-items/{action_item_id}/transitions"]
-    assert "post" in paths["/api/v1/action-items/{action_item_id}/evidences"]
+    assert "post" not in paths["/api/v1/action-items/{action_item_id}/evidences"]
+    assert "post" in paths["/api/v1/action-items/{action_item_id}/evidence-uploads"]
     assert "get" in paths["/api/v1/action-items/{action_item_id}/evidences"]
     assert "post" in paths["/api/v1/findings/{finding_id}/rectification-submissions"]
     assert "get" in paths["/api/v1/findings/{finding_id}/rectification-submissions"]
 
     create_schema = schema["components"]["schemas"]["ActionItemCreateRequest"]
     assert "lifecycle" not in create_schema.get("properties", {})
-    evidence_schema = schema["components"]["schemas"]["EvidenceRegisterRequest"]
-    assert "uploaded_by" not in evidence_schema.get("properties", {})
+    # Evidence has no JSON request schema: key, size and sha256 are computed by the server.
+    assert "EvidenceRegisterRequest" not in schema["components"]["schemas"]
+    upload = paths["/api/v1/action-items/{action_item_id}/evidence-uploads"]["post"]
+    assert "application/octet-stream" in upload["requestBody"]["content"]
+    assert {"X-Evidence-Filename", "description"} <= {p["name"] for p in upload["parameters"]}
+    assert not {"storage_key", "sha256", "size_bytes"} & {p["name"] for p in upload["parameters"]}
     submission_schema = schema["components"]["schemas"]["RectificationSubmissionRequest"]
     assert "purpose" not in submission_schema.get("properties", {})

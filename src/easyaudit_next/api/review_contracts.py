@@ -185,15 +185,6 @@ class ActionItemTransitionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=2_000)
 
 
-class EvidenceRegisterRequest(BaseModel):
-    storage_key: str = Field(min_length=1, max_length=500)
-    original_name: str = Field(min_length=1, max_length=500)
-    content_type: str | None = Field(default=None, min_length=1, max_length=255)
-    size_bytes: int = Field(ge=0)
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    description: str | None = Field(default=None, max_length=20_000)
-
-
 class EvidenceResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
