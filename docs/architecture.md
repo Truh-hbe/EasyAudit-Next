@@ -45,8 +45,9 @@ src/easyaudit_next/
 - **父行锁强度**：被外键引用的父行（Organization、User、Case、Finding、Action）一律用 `FOR NO KEY UPDATE`，SQLAlchemy 写作 `.with_for_update(key_share=True)`。
   - 原因：子表 INSERT 会对被引用的父行加 `FOR KEY SHARE`，它与 `FOR UPDATE` 冲突、与 `FOR NO KEY UPDATE` 不冲突。用 `FOR UPDATE` 时，一个请求先 INSERT 了引用 User/Case 的行（持有 KEY SHARE），再 INSERT Notification（需要 Organization 的 KEY SHARE），就会和持有 Organization `FOR UPDATE`、正在等该 User/Case 的成员管理/停用请求形成隐式的反向加锁，PostgreSQL 报 40P01，Web 请求返回 500。`NO KEY UPDATE` 之间、与 `FOR UPDATE` 仍然互斥，所以显式的 `lock_*` 互斥语义不变。
   - 只有事务里会修改该行主键或被引用唯一键时才允许 `FOR UPDATE`。目前没有这种情况；叶子行（`local_credentials`，没有 FK 引用它）可以保留 `FOR UPDATE`，在 `scripts/check_architecture.py` 里白名单。
+  - 只读的共享前置锁用 `FOR KEY SHARE`（`read=True, key_share=True`），例如自动提醒 sweep 对 Organization 的预锁。
   - SQLAlchemy 陷阱：`with_for_update()` 是 `FOR UPDATE`；`key_share=True` 生成的是 `FOR NO KEY UPDATE`；`FOR KEY SHARE` 要写 `read=True, key_share=True`。
-  - `check_architecture.py` 禁止其他写法；`test_parent_lock_fk_race.py` 固定了 Case / User 两条边的双 Session 竞争，并断言各父行锁编译出的 SQL。
+  - `check_architecture.py` 只放行带 `key_share=True` 的写法，禁止无参的 `with_for_update()`（`FOR UPDATE`）和只有 `read=True` 的写法（`FOR SHARE`，与 `NO KEY UPDATE` 冲突）；`test_parent_lock_fk_race.py` 固定了 Case / User 两条边的双 Session 竞争，并断言各父行锁编译出的 SQL。
 - 等待锁之后的决定性读取必须刷新 ORM 状态（`populate_existing=True`），不能使用锁前的 identity map 快照。
 - 锁后发现生命周期已变化，按并发冲突（409）处理，而不是按业务校验失败（422）处理。
   - 自动提醒 sweep（每个候选一个事务）：`Organization(FOR KEY SHARE) → Case 或 Action → 收件人 User(KEY SHARE，由 Notification FK 隐式获得)`，与上面的顺序一致，见"通知与提醒"。

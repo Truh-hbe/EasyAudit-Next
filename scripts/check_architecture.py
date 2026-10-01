@@ -98,7 +98,11 @@ def keyword_is_true(call: ast.Call, name: str) -> bool:
 
 
 def parent_lock_violations(path: Path, tree: ast.AST) -> list[str]:
-    """Row locks must be FOR NO KEY UPDATE: `key_share=True` without `read=True`."""
+    """Row locks must not conflict with FK KEY SHARE: any `key_share=True` is allowed.
+
+    That is FOR NO KEY UPDATE, or FOR KEY SHARE with `read=True`. Bare `with_for_update()` (FOR
+    UPDATE) and `read=True` alone (FOR SHARE) are rejected.
+    """
 
     violations: list[str] = []
 
@@ -110,7 +114,7 @@ def parent_lock_violations(path: Path, tree: ast.AST) -> list[str]:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "with_for_update"
             and (path, function) not in FOR_UPDATE_ALLOWED_FUNCTIONS
-            and not (keyword_is_true(node, "key_share") and not keyword_is_true(node, "read"))
+            and not keyword_is_true(node, "key_share")
         ):
             violations.append(f"{path}:{node.lineno}")
         for child in ast.iter_child_nodes(node):
@@ -275,8 +279,9 @@ def main() -> None:
         violations = parent_lock_violations(path, tree)
         if violations:
             raise SystemExit(
-                "Row locks must use with_for_update(key_share=True) (FOR NO KEY UPDATE); "
-                f"FOR UPDATE conflicts with FK FOR KEY SHARE: {violations}"
+                "Row locks must use with_for_update(key_share=True) (FOR NO KEY UPDATE, or "
+                "read=True, key_share=True for FOR KEY SHARE); FOR UPDATE and FOR SHARE "
+                f"conflict with FK FOR KEY SHARE: {violations}"
             )
 
         if path.is_relative_to(COLLABORATION_ROOT) and imports_name(
