@@ -37,11 +37,17 @@ src/easyaudit_next/
 
 - 一个请求一个事务：实体变更、Activity、Notification 在同一个事务内提交或回滚。唯一的例外是 Evidence 上传（见"证据文件上传"）：流式写对象期间不允许持有任何事务，所以它是"预授权事务 → 写对象 → 登记事务"三段。
 - 单行状态变更使用 CAS：`UPDATE ... WHERE id = :id AND lifecycle = :expected`。无匹配行时返回 409，且不写 Activity。
-- 跨行不变量使用父行 `SELECT ... FOR UPDATE`，固定加锁顺序，**禁止反向加锁**：
+- 跨行不变量使用父行 `SELECT ... FOR NO KEY UPDATE`，固定加锁顺序，**禁止反向加锁**（见下方“父行锁强度”）：
   - 创建幂等：`IdempotencyKey → Organization → …`。带 `Idempotency-Key` 的创建请求在事务**第一条语句**抢占幂等键，之后才进入下面任何一条锁顺序（见"创建幂等"）。
   - 整改（Action 增改、指派、证据、整改提交）：`Finding → Action / Assignee / Evidence / Submission`
   - 验证、重开、Case 关闭：`ReviewCase → Finding → Submission / Activity`
   - Case 成员增删、用户停用：`Organization → Case（按 ID 排序）→ User（按 ID 排序）`
+- **父行锁强度**：被外键引用的父行（Organization、User、Case、Finding、Action）一律用 `FOR NO KEY UPDATE`，SQLAlchemy 写作 `.with_for_update(key_share=True)`。
+  - 原因：子表 INSERT 会对被引用的父行加 `FOR KEY SHARE`，它与 `FOR UPDATE` 冲突、与 `FOR NO KEY UPDATE` 不冲突。用 `FOR UPDATE` 时，一个请求先 INSERT 了引用 User/Case 的行（持有 KEY SHARE），再 INSERT Notification（需要 Organization 的 KEY SHARE），就会和持有 Organization `FOR UPDATE`、正在等该 User/Case 的成员管理/停用请求形成隐式的反向加锁，PostgreSQL 报 40P01，Web 请求返回 500。`NO KEY UPDATE` 之间、与 `FOR UPDATE` 仍然互斥，所以显式的 `lock_*` 互斥语义不变。
+  - 只有事务里会修改该行主键或被引用唯一键时才允许 `FOR UPDATE`。目前没有这种情况；叶子行（`local_credentials`，没有 FK 引用它）可以保留 `FOR UPDATE`，在 `scripts/check_architecture.py` 里白名单。
+  - 只读的共享前置锁用 `FOR KEY SHARE`（`read=True, key_share=True`），例如自动提醒 sweep 对 Organization 的预锁。
+  - SQLAlchemy 陷阱：`with_for_update()` 是 `FOR UPDATE`；`key_share=True` 生成的是 `FOR NO KEY UPDATE`；`FOR KEY SHARE` 要写 `read=True, key_share=True`。
+  - `check_architecture.py` 只放行带 `key_share=True` 的写法，禁止无参的 `with_for_update()`（`FOR UPDATE`）和只有 `read=True` 的写法（`FOR SHARE`，与 `NO KEY UPDATE` 冲突）；`test_parent_lock_fk_race.py` 固定了 Case / User 两条边的双 Session 竞争，并断言各父行锁编译出的 SQL。
 - 等待锁之后的决定性读取必须刷新 ORM 状态（`populate_existing=True`），不能使用锁前的 identity map 快照。
 - 锁后发现生命周期已变化，按并发冲突（409）处理，而不是按业务校验失败（422）处理。
   - 自动提醒 sweep（每个候选一个事务）：`Organization(FOR KEY SHARE) → Case 或 Action → 收件人 User(KEY SHARE，由 Notification FK 隐式获得)`，与上面的顺序一致，见"通知与提醒"。
@@ -59,7 +65,7 @@ src/easyaudit_next/
   - 创建失败（422、授权失败、异常）整个事务回滚，键不会被占用。
 - 重放按**当前**读取授权返回资源的当前表示（不存响应快照）；actor 已无权读取时按现有读取规则返回 403/404。
 - 指纹：校验后的请求体 `model_dump`，键排序、datetime 统一为 UTC ISO、无空白，再取 sha256；`operation` 不计入（已在作用域里）。Plan：`title`、`planned_start_at`、`planned_end_at`；Case：`plan_id`、`scenario_key`、`scenario_version`、`title`、`planned_start_at`、`planned_end_at`、`scenario_data`。
-- **该表所有外键都是 `DEFERRABLE INITIALLY DEFERRED`。** 立即检查的 FK 会在 claim 时对 Organization / User 行加 `FOR KEY SHARE`，两个并发创建各持一份后都要升级为 `FOR UPDATE`（`_lock_actor`），互相等待而死锁。延迟到提交时检查，此时本事务已持有 `FOR UPDATE`。`test_concurrent_creations_with_different_keys_do_not_deadlock` 固定了这一点。
+- **该表所有外键都是 `DEFERRABLE INITIALLY DEFERRED`。** 立即检查的 FK 会在 claim 时对 Organization / User 行加 `FOR KEY SHARE`，两个并发创建各持一份后都要升级为行锁（`_lock_actor`），互相等待而死锁。延迟到提交时检查，此时本事务已持有行锁。（父行锁改为 `FOR NO KEY UPDATE` 后，升级本身不再与 `KEY SHARE` 冲突，延迟检查对这一点已不是必需，但保留无害。）`test_concurrent_creations_with_different_keys_do_not_deadlock` 固定了这一点。
 - 不用 advisory lock：它需要自己的键空间与生命周期，而唯一索引已经给出等同语义，并且随事务回滚自动释放。
 - **保留期**：试点期不清理幂等记录（规模很小）；并入"数据保留"一起设计。记录有 FK 指向资源与用户，清理前需要先确定这些行的删除规则。
 
@@ -148,7 +154,7 @@ src/easyaudit_next/
 - **调度在 Web 进程之外。** systemd timer 每天 09:00（`Asia/Shanghai`）运行 `easyaudit-next run-reminder-sweep`（一次性容器，示例见 `deploy/easyaudit-reminder-sweep.*`）。`api/`、各模块的 `api.py`、`main.py`、`serve.py` 不得 import sweep、`scheduler_runs`、CLI 或任何调度库，`scripts/check_architecture.py` 强制（`tests/unit/test_web_process_has_no_scheduler.py`）。uvicorn 多 worker 或重启都不会导致重复或遗漏调度。
 - **发生键**：默认 `occurrence_key = daily:<as_of 在 REMINDER_TIMEZONE（默认 Asia/Shanghai）下的日期>`，所以同一天内任意次运行（timer 补跑、手动重跑）共享同一个键；`--as-of`、`--occurrence-key` 可显式覆盖，用于补发或测试。
 - **每个候选一个事务。** sweep 自己不持有长事务：发现候选（keyset 分页，按 id 升序，每页一个只读短事务，页间不丢位置；READ COMMITTED 下评估器会重新校验是否仍然逾期）和评估每个候选各用独立事务。单个候选失败（含 40P01、55P03）只回滚这一个候选，计入 `failed_count`，sweep 继续处理后面的候选。
-- **锁序论证**：一个候选事务先 `SELECT … FOR KEY SHARE` 该 Organization 行，再对 Case（或 Action）`FOR UPDATE`，再插入 Notification，此时 Notification FK 对收件人 `users` 行和 `organizations` 行加 `KEY SHARE`（后者已持有）。这与 Web 的 `Organization → Case → User` 同序，而且事务内从不跨候选累积锁，因此不会与 Web 成员操作成环。第一版（单事务扫完所有候选）会在 `Case₁ → User → Case₂ …` 处与 Web 成环；"先锁 Organization"这一步是实测补上的：Notification 对 `organizations` 的 FK 检查本身是一次后置的 `KEY SHARE`，与 Web 持有的 `Organization FOR UPDATE` 冲突。`tests/integration/test_reminder_sweep_race.py` 固定了无死锁的时序，并保留旧的单事务形态作为必然死锁的反例。
+- **锁序论证**：一个候选事务先 `SELECT … FOR KEY SHARE` 该 Organization 行，再对 Case（或 Action）`FOR NO KEY UPDATE`，再插入 Notification，此时 Notification FK 对收件人 `users` 行和 `organizations` 行加 `KEY SHARE`（后者已持有）。这与 Web 的 `Organization → Case → User` 同序，而且事务内从不跨候选累积锁，因此不会与 Web 成员操作成环。第一版（单事务扫完所有候选）会在 `Case₁ → User → Case₂ …` 处与 Web 成环；"先锁 Organization"这一步是实测补上的：Notification 对 `organizations` 的 FK 检查本身是一次后置的 `KEY SHARE`，与 Web 持有的 `Organization FOR UPDATE` 冲突。`tests/integration/test_reminder_sweep_race.py` 固定了无死锁的时序，并保留旧的单事务形态作为必然死锁的反例。
 - **运行记录 `scheduler_runs`**（`job_key`、`occurrence_key`、`as_of`、`started_at`、`finished_at`、`status`、各计数、`error_summary`）是**运维记录，不是业务真相，也不进 Review Core**。三段事务：(a) 短事务插入 `running` 并提交；(b) sweep 的各个候选事务；(c) 短事务写终态和计数。全部候选成功为 `succeeded`；只要有候选失败，或 sweep 整体无法运行，就是 `failed`（不设 `partial`：监控只需要区分"需要人处理"和"不需要"，细节在 `failed_count` 与 `error_summary`），CLI 以退出码 1 结束。进程崩溃会让记录停在 `running`，不做任何自动处理（不引入 `abandoned`）。
 - **去重不依赖运行记录。** 禁止用"已有 `succeeded` 记录"跳过一次运行或代替业务去重；重跑总是完整执行 sweep，已提交的候选被 Notification 唯一索引去重（`created_count = 0`，`deduped_count` 等于上次的 `created_count`），失败的候选补上。计数来自 `INSERT … ON CONFLICT DO NOTHING RETURNING` 的实际返回行数，仍由数据库约束裁决，不是先查后插。
 - `error_summary` 只含异常类名（加 SQLSTATE）和失败数，如 `failed_candidates=2: OperationalError/40P01 x2`；绝不写 `str(exc)`（SQLAlchemy 异常带 SQL 和参数）。CLI 在 stdout 输出一行 JSON（run_id、job_key、occurrence_key、计数、status），不经过请求日志的字段白名单。

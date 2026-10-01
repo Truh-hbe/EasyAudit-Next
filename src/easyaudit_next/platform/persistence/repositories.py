@@ -62,7 +62,7 @@ class SqlAlchemyOrganizationRepository:
         locked_id = self._session.scalar(
             select(OrganizationRecord.id)
             .where(OrganizationRecord.id == organization_id)
-            .with_for_update()
+            .with_for_update(key_share=True)
         )
         if locked_id is None:
             raise LookupError(f"Organization {organization_id} does not exist")
@@ -189,7 +189,7 @@ class SqlAlchemyUserRepository:
                 UserRecord.id.in_(user_ids),
             )
             .order_by(UserRecord.id)
-            .with_for_update()
+            .with_for_update(key_share=True)
             .execution_options(populate_existing=True)
         )
         return tuple(self._to_domain(record) for record in records)
