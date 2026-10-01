@@ -621,6 +621,47 @@ export function getActionEvidences(
   )
 }
 
+// The server only accepts these types, and only with a matching extension. Deriving the type
+// from the extension (not from the OS-reported file.type) keeps e.g. CSV files that Windows
+// reports as application/vnd.ms-excel uploadable.
+const EVIDENCE_CONTENT_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  csv: 'text/csv',
+}
+
+export function evidenceContentType(file: File): string {
+  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : undefined
+  return (extension && EVIDENCE_CONTENT_TYPES[extension]) || file.type || 'application/octet-stream'
+}
+
+// Raw body, not multipart. Size, SHA-256 and storage key are computed by the server; the
+// request carries only the file type, its name and an optional description.
+export function uploadActionEvidence(
+  actionItemId: string,
+  file: File,
+  description?: string,
+): Promise<EvidenceResponse> {
+  const query = description?.trim() ? `?description=${encodeURIComponent(description.trim())}` : ''
+  return sessionApiRequest<EvidenceResponse>(
+    `/api/v1/action-items/${encodeURIComponent(actionItemId)}/evidence-uploads${query}`,
+    {
+      method: 'POST',
+      body: file,
+      headers: {
+        'Content-Type': evidenceContentType(file),
+        'X-Evidence-Filename': encodeURIComponent(file.name),
+      },
+    },
+  )
+}
+
 export function getFindingSubmissions(
   findingId: string,
   signal?: AbortSignal,
