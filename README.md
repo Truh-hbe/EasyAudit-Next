@@ -49,6 +49,18 @@ EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
 cd web && npm run typecheck && npm run lint && npm run test && npm run test:browser
 ```
 
+全量 PostgreSQL 测试必须用全新的库：部分多 Session / 并发测试会真实提交数据，bootstrap 测试要求库里没有 Organization，CI 也是每次空库。共享开发库 `easyaudit` 仍用于日常开发和单个测试。
+
+```bash
+(
+  export PGPASSWORD=easyaudit DATABASE_URL=postgresql+psycopg://easyaudit:easyaudit@localhost:5432/easyaudit_test
+  dropdb -h localhost -U easyaudit --if-exists easyaudit_test \
+    && createdb -h localhost -U easyaudit easyaudit_test \
+    && alembic upgrade head \
+    && EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
+)
+```
+
 ## 文档
 
 - [docs/architecture.md](docs/architecture.md)：架构规则

@@ -5,7 +5,7 @@ from easyaudit_next.api import health
 from easyaudit_next.infrastructure import readiness
 from easyaudit_next.infrastructure.readiness import DatabaseState
 from easyaudit_next.main import create_app
-from easyaudit_next.platform.settings import Settings
+from easyaudit_next.platform.settings import DEFAULT_DATABASE_URL, Settings
 
 DSN_PASSWORD = "dsn-password-Q7"
 UNREACHABLE = f"postgresql+psycopg://easyaudit:{DSN_PASSWORD}@127.0.0.1:1/easyaudit"
@@ -104,7 +104,7 @@ def test_ready_rejects_development_default_database_url_outside_development(
 ) -> None:
     client = client_with(
         monkeypatch,
-        settings=Settings(app_env="production"),
+        settings=Settings(app_env="production", database_url=DEFAULT_DATABASE_URL),
         state=DatabaseState(True, ("head1",)),
     )
 
