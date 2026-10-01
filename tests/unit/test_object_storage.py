@@ -397,3 +397,35 @@ def test_listing_objects_and_multipart_uploads_pages_through_everything(
     assert len(pages) == 3
     assert sorted(found) == sorted(uploads)
     assert fake_s3.open_uploads() == []
+
+
+def test_a_get_cancelled_before_it_returns_still_closes_the_body_it_gets_later() -> None:
+    from unittest.mock import MagicMock
+
+    release, in_get = threading.Event(), threading.Event()
+    body = MagicMock()
+
+    class SlowClient:
+        def get_object(self, **_: Any) -> dict[str, Any]:
+            in_get.set()
+            release.wait(5)
+            return {"Body": body, "ContentLength": 3}
+
+    store = S3EvidenceObjectStore(SlowClient(), "bucket")  # type: ignore[arg-type]
+
+    async def scenario() -> None:
+        task = asyncio.ensure_future(store.open_stream("org/o/evidence/k"))
+        await asyncio.to_thread(in_get.wait, 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        body.close.assert_not_called()  # still in flight: nothing to close yet
+        release.set()
+        for _ in range(100):
+            if body.close.called:
+                break
+            await asyncio.sleep(0.01)
+
+    asyncio.run(scenario())
+
+    body.close.assert_called_once()

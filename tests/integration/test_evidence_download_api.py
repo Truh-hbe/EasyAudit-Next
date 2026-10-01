@@ -9,6 +9,7 @@ import hashlib
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -17,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from easyaudit_next.api import review_evidence_uploads as uploads
+from easyaudit_next.api import review_evidence_downloads as downloads
 from easyaudit_next.api.dependencies import get_database_session, get_session_factory
 from easyaudit_next.main import create_app
 from easyaudit_next.platform.persistence.models import LocalCredentialRecord
@@ -27,7 +28,9 @@ from tests.evidence_support import FakeEvidenceStore
 from tests.integration.test_credential_readiness import PASSWORD_HASH, _login
 from tests.integration.test_credential_readiness import postgres_engine as postgres_engine
 from tests.integration.test_evidence_upload_api import (
-    client_for,
+    client_for as upload_client_for,
+)
+from tests.integration.test_evidence_upload_api import (
     idle_in_transaction_connections,
 )
 from tests.integration.test_review_resource_queries import (
@@ -70,6 +73,21 @@ def seed_evidence(
     with Session(engine, expire_on_commit=False) as session, session.begin():
         session.add(record)
     return record
+
+
+def client_for(
+    engine: Engine,
+    seeded: SeededCollaboration,
+    user_id: Any,
+    store: FakeEvidenceStore | None,
+    **kwargs: Any,
+) -> Iterator[TestClient]:
+    """`store=None` stands for "object storage is not configured"."""
+    stand_in = store or FakeEvidenceStore()
+    for client in upload_client_for(engine, seeded, user_id, stand_in, **kwargs):
+        app: Any = client.app
+        app.dependency_overrides[downloads.get_optional_evidence_store] = lambda: store
+        yield client
 
 
 def url(evidence: EvidenceRecord) -> str:
@@ -261,7 +279,7 @@ def test_real_cookie_authentication_leaves_no_transaction_open_while_streaming(
     app.dependency_overrides[get_session_factory] = lambda: sessionmaker(
         postgres_engine, expire_on_commit=False
     )
-    app.dependency_overrides[uploads.get_evidence_object_store] = lambda: store
+    app.dependency_overrides[downloads.get_optional_evidence_store] = lambda: store
     cookie = {"Cookie": f"{get_settings().session_cookie_name}={token}"}
     with TestClient(app, base_url="https://testserver") as client:
         response = client.get(url(evidence), headers=cookie)
@@ -306,3 +324,48 @@ def test_missing_object_for_a_forbidden_user_is_still_just_404(
 
     assert response.status_code == 404 and store.open_calls == []
 
+
+
+def test_unconfigured_storage_is_a_404_for_every_refusal_and_a_503_only_once_authorized(
+    postgres_engine: Engine, seeded: SeededCollaboration
+) -> None:
+    evidence = seed_evidence(postgres_engine, seeded, FakeEvidenceStore())
+    foreign = _seed_collaboration_shape(postgres_engine)
+    for client in client_for(postgres_engine, seeded, seeded.unrelated_id, None):
+        forbidden = client.get(url(evidence))
+        unknown = client.get(f"/api/v1/evidences/{uuid4()}/content")
+    for client in client_for(
+        postgres_engine, seeded, foreign.owner_id, None, organization_id=foreign.organization_id
+    ):
+        cross_organization = client.get(url(evidence))
+    for client in client_for(postgres_engine, seeded, seeded.owner_id, None):
+        authorized = client.get(url(evidence))
+
+    assert [r.status_code for r in (forbidden, unknown, cross_organization)] == [404, 404, 404]
+    assert authorized.status_code == 503
+
+
+@pytest.mark.parametrize("object_size_delta", [-1, 1])
+def test_an_object_whose_size_differs_from_the_metadata_is_a_500_and_sends_no_content(
+    postgres_engine: Engine,
+    seeded: SeededCollaboration,
+    caplog: pytest.LogCaptureFixture,
+    object_size_delta: int,
+) -> None:
+    store = FakeEvidenceStore()
+    evidence = seed_evidence(postgres_engine, seeded, store, b"x" * 20)
+    store.objects[evidence.storage_key] = b"x" * (20 + object_size_delta)
+
+    with caplog.at_level(logging.ERROR, logger="easyaudit.app"):
+        for client in client_for(postgres_engine, seeded, seeded.owner_id, store):
+            response = client.get(url(evidence))
+
+    assert response.status_code == 500
+    assert response.json()["request_id"] == response.headers["x-request-id"]
+    assert "content-disposition" not in response.headers
+    assert store.streams[0].closed and store.streams[0].chunks_served == 0
+    [record] = [r for r in caplog.records if r.getMessage() == "evidence_object_size_mismatch"]
+    assert record.fields == {  # type: ignore[attr-defined]
+        "evidence_id": str(evidence.id),
+        "storage_key": evidence.storage_key,
+    }

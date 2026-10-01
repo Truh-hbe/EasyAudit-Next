@@ -93,6 +93,17 @@ async def _call[T](function: Callable[[], T]) -> T:
         raise ObjectStoreError("Object storage operation failed") from exc
 
 
+def _close_abandoned_response(task: "asyncio.Future[Any]") -> None:
+    """Done-callback for a GET whose caller was cancelled before it returned: close the Body
+    the moment it exists. No bounded wait is needed, the close is tied to the GET finishing,
+    which botocore's connect/read timeouts bound per socket operation."""
+    if task.cancelled() or task.exception() is not None:
+        return
+    body = task.result().get("Body")
+    if body is not None:
+        asyncio.get_running_loop().run_in_executor(None, body.close)
+
+
 class _S3ObjectStream:
     """Reads one `GetObject` body in small chunks, each in a worker thread.
 
@@ -101,7 +112,8 @@ class _S3ObjectStream:
     and cannot be interrupted half-way: the close runs in a shielded thread call.
     """
 
-    def __init__(self, body: Any, chunk_size: int) -> None:
+    def __init__(self, body: Any, chunk_size: int, content_length: int | None) -> None:
+        self.content_length = content_length
         self._body = body
         self._chunk_size = chunk_size
         self._closed = False
@@ -206,17 +218,26 @@ class S3EvidenceObjectStore:
         return True
 
     async def open_stream(self, key: str) -> _S3ObjectStream:
+        task = asyncio.ensure_future(
+            asyncio.to_thread(lambda: self._client.get_object(Bucket=self._bucket, Key=key))
+        )
         try:
-            response = await asyncio.to_thread(
-                lambda: self._client.get_object(Bucket=self._bucket, Key=key)
-            )
+            # Shielded: a cancelled request cannot stop the worker thread, and whatever the GET
+            # returns afterwards owns a connection that someone has to close.
+            response = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(_close_abandoned_response)
+            raise
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in _NOT_FOUND_CODES:
                 raise ObjectNotFoundError("Object not found") from exc
             raise ObjectStoreError("Object storage operation failed") from exc
         except BotoCoreError as exc:
             raise ObjectStoreError("Object storage operation failed") from exc
-        return _S3ObjectStream(response["Body"], DOWNLOAD_CHUNK_SIZE)
+        length = response.get("ContentLength")
+        return _S3ObjectStream(
+            response["Body"], DOWNLOAD_CHUNK_SIZE, int(length) if length is not None else None
+        )
 
     async def list_objects(self, prefix: str) -> AsyncIterator[ListedObject]:
         token: str | None = None

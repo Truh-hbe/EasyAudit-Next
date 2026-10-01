@@ -7,14 +7,16 @@ the pool) before the store is contacted, and the response object opens the objec
 the time the first byte is sent every dependency, including the DB session, has been released.
 
 The download does not recompute the sha256: that would read the whole object twice per request.
-Integrity is checked out of band by `easyaudit-next verify-evidence`.
+It does compare the store's `ContentLength` with the metadata's `size_bytes` before any header
+is sent, because the response promises that length. Content integrity beyond that is checked out
+of band by `easyaudit-next verify-evidence`.
 """
 
 from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -23,7 +25,6 @@ from starlette.responses import Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
-from easyaudit_next.api.review_evidence_uploads import get_evidence_object_store
 from easyaudit_next.composition import build_rectification_service
 from easyaudit_next.infrastructure.observability import (
     APP_LOGGER,
@@ -44,6 +45,13 @@ from easyaudit_next.review_core.domain.models import Evidence
 review_evidence_download_router = APIRouter(prefix="/api/v1", tags=["review-rectification"])
 
 _FALLBACK_UNSAFE = frozenset('"\\;%')
+
+
+def get_optional_evidence_store(request: Request) -> EvidenceObjectStore | None:
+    """None when object storage is not configured. The route decides what that means *after*
+    authorization: an unknown, foreign or forbidden Evidence is a 404 either way."""
+    store: EvidenceObjectStore | None = getattr(request.app.state, "evidence_store", None)
+    return store
 
 
 def content_disposition(original_name: str) -> str:
@@ -112,6 +120,21 @@ class EvidenceDownloadResponse(Response):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )(scope, receive, send)
             return
+        if stream.content_length != evidence.size_bytes:
+            # Headers promise `size_bytes`. A shorter object would be saved by the client as a
+            # successful, truncated file; a longer one would be cut off. Neither is sent.
+            await stream.aclose()
+            APP_LOGGER.error(
+                "evidence_object_size_mismatch",
+                extra={
+                    "fields": {"evidence_id": evidence_id, "storage_key": evidence.storage_key}
+                },
+            )
+            await JSONResponse(
+                {"detail": "Evidence file is unavailable", "request_id": current_request_id()},
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )(scope, receive, send)
+            return
         try:
             await StreamingResponse(stream, headers=_download_headers(evidence))(
                 scope, receive, send
@@ -149,7 +172,7 @@ async def download_evidence_content(
     evidence_id: UUID,
     identity: BusinessIdentity,
     session: DatabaseSession,
-    store: Annotated[EvidenceObjectStore, Depends(get_evidence_object_store)],
+    store: Annotated[EvidenceObjectStore | None, Depends(get_optional_evidence_store)],
 ) -> Response:
     try:
         evidence = await run_in_threadpool(
@@ -159,4 +182,9 @@ async def download_evidence_content(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Evidence not found"
         ) from exc
+    if store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Evidence storage is not available",
+        )
     return EvidenceDownloadResponse(store, evidence)

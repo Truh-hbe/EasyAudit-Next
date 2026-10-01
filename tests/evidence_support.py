@@ -13,6 +13,7 @@ class FakeObjectStream:
         self, data: bytes, chunk_size: int, between_chunks: Callable[[], None] | None
     ) -> None:
         self._data = data
+        self.content_length: int | None = len(data)
         self._chunk_size = chunk_size
         self._between_chunks = between_chunks
         self._offset = 0
