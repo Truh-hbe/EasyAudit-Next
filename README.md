@@ -5,15 +5,16 @@ EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Cor
 ## 当前能力
 
 - 组织、部门、用户，本地账号与服务端 Session，最小化管理后台，凭证重置。
-- 审查计划 → 审查案例 → 发现 → 整改项与证据元数据 → 整改提交 → 验证 → 关闭。
-- 个人工作台、站内通知、管理进度与逾期视图、手动催办、自动提醒（调度器尚未接入）。
+- 审查计划 → 审查活动 → 审查发现 → 整改项与证据文件 → 整改提交 → 验证 → 关闭；计划与活动创建支持幂等重试。
+- 个人工作台、站内通知、管理进度与逾期视图、手动催办；每日自动提醒的外部调度与运行记录；管理快照 CSV/XLSX 导出。
 - React 产品界面，覆盖以上全部流程。
+- 私网部署拓扑、健康检查与结构化日志、运行加固、备份恢复演练工具；证据授权下载、孤儿清理与完整性校验。
 
-尚未具备：生产部署、证据文件存储、定时调度、导出。见 [路线](docs/roadmap.md)。
+以上是已交付的代码能力，不代表已在真实试点环境完成部署或开放。受控上线前先完成 [design.md](design.md) 规定的 UI/UX 整理、组件与图标库接入、实际浏览器与用户旅程验证，再进入试点。当前设计基线选用 Ant Design 6 与配套图标，尚待实施。部署运行说明见 [deploy/README.md](deploy/README.md)，阶段安排见 [路线](docs/roadmap.md)。
 
 ## 快速开始
 
-要求 Python 3.12+、Node 22、Docker Compose。
+要求 Python 3.12+、Node 22.22.0+、Docker Compose；前端使用 `web/package.json` 声明的 npm 版本。
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -46,7 +47,7 @@ ruff check . && mypy
 python scripts/check_architecture.py
 python scripts/check_openapi.py
 EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
-cd web && npm run typecheck && npm run lint && npm run test && npm run test:browser
+cd web && npm ci && npm run typecheck && npm run lint && npm run test && npm run build && npm run test:browser
 ```
 
 全量 PostgreSQL 测试必须用全新的库：部分多 Session / 并发测试会真实提交数据，bootstrap 测试要求库里没有 Organization，CI 也是每次空库。共享开发库 `easyaudit` 仍用于日常开发和单个测试。
@@ -61,14 +62,20 @@ cd web && npm run typecheck && npm run lint && npm run test && npm run test:brow
 )
 ```
 
+真实 FastAPI + PostgreSQL 浏览器旅程运行方式见 CI 的 `browser-acceptance` job，前端入口为 `npm run test:browser:real`。
+
 ## 文档
 
+- [design.md](design.md)：前端设计基线、固定组件/图标、页面与交互规范
 - [docs/architecture.md](docs/architecture.md)：架构规则
 - [docs/domain.md](docs/domain.md)：领域模型与场景
 - [docs/roadmap.md](docs/roadmap.md)：路线
 - [docs/adr/](docs/adr/)：架构决策记录
 - [AGENTS.md](AGENTS.md)：开发流程与 Agent 分工
+- [CONTRIBUTING.md](CONTRIBUTING.md)：贡献与 PR 要求
+- [deploy/README.md](deploy/README.md)：部署、运维与备份恢复
 
 ## License
 
 尚未选择开源许可证。在许可证明确前，本仓库代码不授予复制、修改或分发许可。
+

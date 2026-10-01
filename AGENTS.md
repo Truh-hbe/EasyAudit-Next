@@ -5,6 +5,7 @@
 - [docs/architecture.md](docs/architecture.md)：必须遵守的架构规则（依赖方向、事务与锁顺序、授权、错误语义）
 - [docs/domain.md](docs/domain.md)：领域模型与两个场景的生命周期和权限
 - [docs/roadmap.md](docs/roadmap.md)：当前要做什么
+- [design.md](design.md)：前端布局、主题、固定组件/图标与交互基线；前端改动必须先读
 
 ## 常用命令
 
@@ -43,6 +44,8 @@ cd web && npm run test:browser:real     # 需要真实 FastAPI + PostgreSQL，�
    - 用户旅程：Playwright。
 4. 本地跑通上面的检查后开 PR。CI（`check`、`frontend`、`browser-acceptance`）全绿，并经过一次跨厂商 review（见下文）后，由维护者合并。
 5. 一个 PR 只做一件事，不要夹带无关重构。
+
+前端改动遵循 `design.md`：通用组件固定 Ant Design，图标固定 `@ant-design/icons`，主题集中管理。新增依赖在接入 PR 中锁定版本并验证构建；页面迁移更新受影响的用户旅程，附关键视口截图供 review。设计变化同步更新 `design.md`，实施阶段同步更新 `docs/roadmap.md`，不在其他文档复制另一套 UI 规范。
 
 不要新增阶段状态文件、Gate 文档、审查证据包，也不要写"某某不得做"式的长篇契约。规则写进代码、测试和架构检查里，文档只记录结论。
 

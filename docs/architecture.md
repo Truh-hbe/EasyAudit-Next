@@ -8,6 +8,7 @@ EasyAudit-Next 是一个模块化单体：一个 FastAPI 进程、一个 Postgre
 
 - 后端：Python 3.12、FastAPI、SQLAlchemy 2 同步 `Session`、psycopg 3、PostgreSQL 17、Alembic。
 - 前端：React + react-router、Vite、TypeScript、Vitest、Playwright、oxlint。
+- 前端设计基线：Ant Design 6 + `@ant-design/icons` 6，主题、组件和交互规范见 [design.md](../design.md)；库接入与页面迁移按 roadmap 实施，尚未完成。
 - 认证：本地账号 + Argon2id；服务端 Session，浏览器只持有 `__Host-easyaudit_session`（Secure、HttpOnly、SameSite=Strict）Cookie。
 
 ## 模块与依赖方向
@@ -173,12 +174,14 @@ src/easyaudit_next/
 
 ## 前端边界
 
+- 页面、主题、组件、图标与交互以 [design.md](../design.md) 为统一依据；版本在接入 PR 精确锁定，共享 token 与图标集中管理。
 - 权限、生命周期、截止日期、收件人、进度都以后端为准。前端只负责展示，按钮可见不代表有权操作。
 - 前后端同源：`/api/v1/*` 与 SPA 同源，没有 CORS，没有浏览器可读的 token。
 - 所有请求走 `web/src/api/client.ts`，不散落 `fetch()`。
 - 场景相关的 UI 通过适配器按精确的 `(scenario_key, scenario_version)` 解析。版本未知时拒绝显示，不回退到其他版本。
 - 409 表示数据已过期：刷新后让用户重试。禁止自动重放写请求，包括结果未知的创建请求。创建页在表单生命周期内持有一个 `Idempotency-Key`，用户手动重试、双击和网络失败后重新提交复用同一个键；键被不同请求复用（409）时提示刷新，不自动重放。
 - 不在本地长期保存业务状态的影子副本，写操作成功后刷新相关查询。
+- 组件库的 Form、Upload、Modal 等只改变交互，不改变 API 协议。Evidence 文件选择禁用库默认自动上传，传输仍走现有 client 的原始字节协议；下载保留同源附件链接。名称、候选集合与筛选只能使用获授权的读侧接口，新需求另行设计，不用平台管理接口扩展业务可见性。
 
 ## 部署
 
@@ -264,3 +267,4 @@ Evidence 元数据（`evidences` 表、`register_evidence`）早已存在；文�
 ## 明确不做
 
 微服务、分布式事务、消息总线、以 Redis 作为业务真相、通用分布式锁、BPMN 或流程设计器、通用表单构建器、运行时实体设计器、自定义仪表盘、匿名责任令牌、督办实体、原生移动端、由 AI 生成业务真相。
+
