@@ -70,16 +70,20 @@ ready="$("${DC[@]}" exec -T api python -c \
   || fail "api /health/ready failed"
 grep -q '"object_storage":"ok"' <<<"$ready" || fail "object_storage is not ok: $ready"
 
-step "Evidence upload route is behind authentication, and the gateway caps the request body"
+step "Evidence upload route is behind authentication"
 UPLOAD_PATH="/api/v1/action-items/00000000-0000-0000-0000-000000000000/evidence-uploads"
 code="$("${CURL[@]}" --output /dev/null --write-out '%{http_code}' -X POST \
   -H 'content-type: application/pdf' -H 'x-evidence-filename: a.pdf' --data-binary 'x' "$BASE$UPLOAD_PATH")"
 [ "$code" = "401" ] || fail "unauthenticated upload returned $code, expected 401"
-head -c 27262977 /dev/zero > "$WORK/oversized.bin"   # one byte over the gateway's 26 MiB cap
+
+step "the gateway caps request bodies at 26 MiB while the API reads them"
+# Caddy's request_body max_size is enforced as the upstream reads the body, so it needs an
+# endpoint that reads it without authenticating: the login JSON body.
+head -c 27262977 /dev/zero > "$WORK/oversized.bin"   # one byte over the cap
 code="$("${CURL[@]}" --output /dev/null --write-out '%{http_code}' -X POST \
-  -H 'content-type: application/pdf' -H 'x-evidence-filename: a.pdf' \
-  --data-binary @"$WORK/oversized.bin" "$BASE$UPLOAD_PATH" || true)"
-[ "$code" = "413" ] || fail "oversized upload returned $code, expected 413 from the gateway"
+  -H 'content-type: application/json' --data-binary @"$WORK/oversized.bin" \
+  "$BASE/api/v1/auth/login" || true)"
+[ "$code" = "413" ] || fail "oversized body returned $code, expected 413 from the gateway"
 
 step "health endpoints are not exposed through the gateway"
 ctype="$("${CURL[@]}" --output /dev/null --write-out '%{content_type}' "$BASE/health/ready")"

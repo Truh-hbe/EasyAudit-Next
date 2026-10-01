@@ -119,7 +119,7 @@ deploy/backup/restore.sh environment BACKUP_DIR    # 整个新环境，见下
 
 ## 冒烟测试
 
-`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → 镜像 label → migrate → up → HTTPS 验证 → API `ready` 含 `object_storage: ok` → 未认证上传 401、超过网关上限的上传 413 → 无非网关端口发布 → down -v）。前置条件：docker compose、git、openssl、curl、python3。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
+`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → 镜像 label → migrate → up → HTTPS 验证 → API `ready` 含 `object_storage: ok` → 未认证上传 401、超过网关上限的 body 413 → 无非网关端口发布 → down -v）。前置条件：docker compose、git、openssl、curl、python3。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
 
 ## 说明
 

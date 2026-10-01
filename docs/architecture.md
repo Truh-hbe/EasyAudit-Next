@@ -189,7 +189,7 @@ Evidence 元数据（`evidences` 表、`register_evidence`）早已存在；文�
   2. 流式写对象：`request.stream()` 逐块读取，边读边算 SHA-256 和大小，满 8 MiB 就作为一个 part 上传（小于一个 part 的文件用单次 `PutObject`）。内存上限是约一个 part 加一个输入块，与文件大小无关；不先读进内存，也不先落盘。key 由服务端生成：`org/{organization_id}/evidence/{uuid4}`，只写一次，不覆盖（备份一致性模型的前提）。
   3. 新的短事务调用 `register_evidence`，传入**服务端计算的** key、size、sha256。它重新取用户（上传期间可能已被停用）、重新授权、按 `Finding → Action` 加锁、写元数据和 Activity，然后提交。
 - **失败清理**：写对象失败或中途超限，适配器 abort multipart，什么都不留；第 3 段失败（授权变化 403/404、生命周期变化 409/422、DB 错误），**尽力删除**刚写的对象，再返回原来的错误。删除也失败时对象成为孤儿，记 WARNING `evidence_object_orphaned`，字段只有 `storage_key`（日志白名单为此新增了 `storage_key`；key 里没有文件名和用户输入），留给 Pilot-4B 的孤儿清理。进程崩溃遗留的未完成 multipart 同样由 4B 处理。
-- **限制**：`EVIDENCE_MAX_BYTES`（默认 25 MiB）。`Content-Length` 超限在读 body 之前就 413；没有 `Content-Length`（chunked）时累计到超限立即中止并 413。网关 Caddy 对 `/api/v1/*` 设 `request_body max_size`（26 MiB，略大于应用上限，纵深防御，改应用上限时同步改 `deploy/Caddyfile`，`tests/unit/test_deploy_compose.py` 检查两者关系）。类型白名单 `EVIDENCE_ALLOWED_CONTENT_TYPES`（默认 pdf、png、jpeg、docx、xlsx、pptx、txt、csv；只能是代码里有扩展名映射的类型，启动时校验）；不在白名单或扩展名与类型不一致 → 415；文件名为空或编码非法、空文件 → 422。
+- **限制**：`EVIDENCE_MAX_BYTES`（默认 25 MiB）。`Content-Length` 超限在读 body 之前就 413；没有 `Content-Length`（chunked）时累计到超限立即中止并 413。网关 Caddy 对 `/api/v1/*` 设 `request_body max_size`（26 MiB，略大于应用上限，纵深防御：它在上游读取 body 时才生效，所以不替代应用自己的 `Content-Length` 检查；改应用上限时同步改 `deploy/Caddyfile`，`tests/unit/test_deploy_compose.py` 检查两者关系，`smoke.sh` 用登录接口验证它真的生效）。类型白名单 `EVIDENCE_ALLOWED_CONTENT_TYPES`（默认 pdf、png、jpeg、docx、xlsx、pptx、txt、csv；只能是代码里有扩展名映射的类型，启动时校验）；不在白名单或扩展名与类型不一致 → 415；文件名为空或编码非法、空文件 → 422。
 - **提前拒绝的代价**：413/415/422/403 在读 body 之前就返回，客户端可能还在发送，此时连接会被关闭，浏览器看到的可能是网络错误而不是状态码；前端对此有专门提示，且不自动重试。
 - 对象存储不可用或未配置：上传 503（`object_storage_operation_failed` WARNING，字段只有 `component`、`reason`），不写元数据。
 

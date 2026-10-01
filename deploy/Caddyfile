@@ -24,7 +24,7 @@
 		# Defence in depth for Evidence uploads: slightly above the application's
 		# EVIDENCE_MAX_BYTES (default 25 MiB), so the application stays the one that
 		# explains a refusal. 26 MiB = 27262976 bytes. Caddy streams the body upstream
-		# (no request buffering) and answers 413 itself once this is exceeded.
+		# (no request buffering) and cuts it off with 413 once more than this has been read.
 		request_body {
 			max_size 27262976
 		}
