@@ -260,7 +260,8 @@ def check(client: Client, args: argparse.Namespace) -> None:
         digest = hashlib.sha256(body).hexdigest()
         expect(f"download {evidence['id']} sha256 vs metadata", digest, evidence["sha256"])
         expect(f"download {evidence['id']} sha256 vs upload", digest, evidence["upload_sha256"])
-        expect(f"download {evidence['id']} nosniff", headers.get("x-content-type-options"), "nosniff")
+        nosniff = headers.get("x-content-type-options")
+        expect(f"download {evidence['id']} nosniff", nosniff, "nosniff")
         disposition = headers.get("content-disposition") or ""
         expect(f"download {evidence['id']} attachment", disposition.startswith("attachment;"), True)
         encoded_name = disposition.partition("filename*=UTF-8''")[2]
@@ -272,7 +273,8 @@ def check(client: Client, args: argparse.Namespace) -> None:
     if problems:
         print("\n".join(problems), file=sys.stderr)
         raise SystemExit(1)
-    print(f"API check ok: login, case, finding, evidence metadata, {len(state['evidences'])} downloads")
+    downloads = len(state["evidences"])
+    print(f"API check ok: login, case, finding, evidence metadata, {downloads} downloads")
 
 
 def lost(client: Client, args: argparse.Namespace) -> None:
@@ -280,7 +282,8 @@ def lost(client: Client, args: argparse.Namespace) -> None:
     (500 with a request id), never 404."""
     state = json.loads(Path(args.state).read_text())
     client.login(args.login, args.password)
-    status, headers, body = client.download(f"/api/v1/evidences/{state['evidences'][0]['id']}/content")
+    lost_id = state["evidences"][0]["id"]
+    status, headers, body = client.download(f"/api/v1/evidences/{lost_id}/content")
     if status != 500 or "request_id" not in json.loads(body) or not headers.get("x-request-id"):
         print(f"expected a 500 with a request id, got {status}: {body[:200]!r}", file=sys.stderr)
         raise SystemExit(1)
