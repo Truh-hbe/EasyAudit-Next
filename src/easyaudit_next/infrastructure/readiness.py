@@ -9,8 +9,11 @@ instead of opening another connection. Rationale: overlapping probes (orchestrat
 human) get a consistent answer, at most one probe connection exists at any time, and nobody
 receives a false 503 merely because probes overlapped.
 
-Object storage is deliberately not checked: the application does not use it yet. Pilot-4A adds
-it here together with Evidence upload.
+Object storage is probed with one HeadBucket, run in a worker thread concurrently with the
+database probe under the same deadline. A thread cannot be cancelled, so the probe's botocore
+client gets socket-level connect/read timeouts equal to the deadline and a single attempt: an
+abandoned probe thread ends by itself within about two deadlines, which also bounds how long
+it can delay process exit. No client or result is kept in module state.
 """
 
 import asyncio
@@ -24,12 +27,16 @@ from psycopg import AsyncConnection
 from sqlalchemy.engine import make_url
 
 from easyaudit_next.infrastructure.database import libpq_connect_kwargs
+from easyaudit_next.infrastructure.object_storage import head_bucket
 from easyaudit_next.infrastructure.observability import (
     APP_LOGGER,
     ExceptionDetails,
     describe_exception,
 )
 from easyaudit_next.platform.settings import DEFAULT_DATABASE_URL, Settings
+from easyaudit_next.review_core.application.evidence_storage import (
+    ObjectStoreNotConfiguredError,
+)
 
 CheckStatus = Literal["ok", "fail"]
 
@@ -141,7 +148,7 @@ async def _probe_database(settings: Settings, opened: list[AsyncConnection]) -> 
         return DatabaseState(False, None, (Failure.of("database", "unreachable", exc),))
 
 
-def _consume(task: "asyncio.Future[DatabaseState]") -> None:
+def _consume(task: "asyncio.Future[Any]") -> None:
     if not task.cancelled():
         task.exception()  # mark as retrieved; the probe reports its own failures
 
@@ -172,13 +179,42 @@ async def fetch_database_state(settings: Settings) -> DatabaseState:
             await asyncio.wait({probe}, timeout=CLEANUP_GRACE_SECONDS)
 
 
+async def _probe_object_storage(settings: Settings) -> Failure | None:
+    try:
+        await asyncio.to_thread(head_bucket, settings)
+    except ObjectStoreNotConfiguredError:
+        return Failure("object_storage", "not_configured")
+    except Exception as exc:
+        return Failure.of("object_storage", "unreachable", exc)
+    return None
+
+
+async def fetch_object_storage_failure(settings: Settings) -> Failure | None:
+    """None means the bucket answered HeadBucket. The deadline is enforced from outside; the
+    probe thread itself is bounded by the client's socket timeouts (see module docstring)."""
+    probe = asyncio.ensure_future(_probe_object_storage(settings))
+    probe.add_done_callback(_consume)
+    try:
+        done, _ = await asyncio.wait({probe}, timeout=settings.readiness_timeout_seconds)
+        if probe in done:
+            return probe.result()
+        return Failure("object_storage", "deadline_exceeded")
+    finally:
+        if not probe.done():
+            probe.cancel()
+
+
 async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessResult:
     failures: list[Failure] = []
     config_failure = check_configuration(settings)
     if config_failure is not None:
         failures.append(config_failure)
-    state = await fetch_database_state(settings)
+    state, storage_failure = await asyncio.gather(
+        fetch_database_state(settings), fetch_object_storage_failure(settings)
+    )
     failures.extend(state.failures)
+    if storage_failure is not None:
+        failures.append(storage_failure)
 
     migrations_ok = False
     if state.revisions is not None:
@@ -200,6 +236,7 @@ async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessR
         "configuration": "fail" if config_failure else "ok",
         "database": "ok" if state.reachable else "fail",
         "migrations": "ok" if migrations_ok else "fail",
+        "object_storage": "fail" if storage_failure else "ok",
     }
     return ReadinessResult(checks, tuple(failures))
 
@@ -215,7 +252,12 @@ async def _bounded(settings: Settings, expected_head: str | None) -> ReadinessRe
     except TimeoutError:
         configuration: CheckStatus = "fail" if check_configuration(settings) else "ok"
         return ReadinessResult(
-            {"configuration": configuration, "database": "fail", "migrations": "fail"},
+            {
+                "configuration": configuration,
+                "database": "fail",
+                "migrations": "fail",
+                "object_storage": "fail",
+            },
             (Failure("readiness", "evaluation_deadline_exceeded"),),
         )
 

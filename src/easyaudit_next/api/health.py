@@ -27,7 +27,7 @@ async def get_health_live() -> LiveResponse:
     operation_id="getHealthReady",
 )
 async def get_health_ready(request: Request) -> JSONResponse:
-    """Database reachable, alembic at head, required configuration present."""
+    """Database reachable, alembic at head, required configuration present, bucket reachable."""
     result = await run_readiness(
         get_settings(),
         getattr(request.app.state, "expected_head", None),  # set by lifespan; None = unavailable

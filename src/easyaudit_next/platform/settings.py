@@ -33,6 +33,24 @@ class Settings(BaseSettings):
     db_lock_timeout_ms: int = Field(default=5_000, ge=1)
     db_idle_in_transaction_timeout_ms: int = Field(default=30_000, ge=1)
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
+    object_storage_endpoint: str = ""
+    object_storage_bucket: str = "easyaudit-evidence"
+    object_storage_region: str = "garage"
+    # Credentials come from files (Docker secrets), never from the environment or the image.
+    object_storage_access_key_id_file: str = ""
+    object_storage_secret_access_key_file: str = ""
+    object_storage_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    object_storage_read_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    object_storage_max_attempts: int = Field(default=3, ge=1, le=10)
+    evidence_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+    # Comma-separated; every entry must be a type the upload policy knows an extension for.
+    evidence_allowed_content_types: str = (
+        "application/pdf,image/png,image/jpeg,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation,"
+        "text/plain,text/csv"
+    )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @model_validator(mode="after")

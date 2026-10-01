@@ -63,6 +63,7 @@ ALLOWED_FIELDS = frozenset(
         "current_revision",
         "expected_revision",
         "throttle_scope",
+        "storage_key",
     }
 )
 _MAX_VALUE_CHARS = 200
