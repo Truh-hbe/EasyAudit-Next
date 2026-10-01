@@ -35,7 +35,7 @@ src/easyaudit_next/
 
 ## 事务与并发
 
-- 一个请求一个事务：实体变更、Activity、Notification 在同一个事务内提交或回滚。唯一的例外是 Evidence 上传（见"证据文件上传"）：流式写对象期间不允许持有任何事务，所以它是"预授权事务 → 写对象 → 登记事务"三段。
+- 一个请求一个事务：实体变更、Activity、Notification 在同一个事务内提交或回滚。唯一的例外是 Evidence 上传（见"证据文件上传"）：流式写对象期间不允许持有任何事务，所以它是"预授权事务 → 写对象 → 登记事务"三段。Evidence 下载同理：短只读事务授权后立即结束，流式读取期间不持有事务。
 - 单行状态变更使用 CAS：`UPDATE ... WHERE id = :id AND lifecycle = :expected`。无匹配行时返回 409，且不写 Activity。
 - 跨行不变量使用父行 `SELECT ... FOR NO KEY UPDATE`，固定加锁顺序，**禁止反向加锁**（见下方“父行锁强度”）：
   - 创建幂等：`IdempotencyKey → Organization → …`。带 `Idempotency-Key` 的创建请求在事务**第一条语句**抢占幂等键，之后才进入下面任何一条锁顺序（见"创建幂等"）。
@@ -122,13 +122,14 @@ src/easyaudit_next/
 | 状态码 | 含义 |
 |---|---|
 | 403 | 已认证，但缺少所需的业务关系 |
-| 404 | 组织范围内查不到，或未授权且不应暴露对象是否存在 |
+| 404 | 组织范围内查不到，或未授权且不应暴露对象是否存在（Evidence 下载：不存在、跨组织、无读权限都是同一个 404） |
 | 422 | 请求、Scenario 数据、工作流或业务规则校验失败；管理导出的行数超过 `EXPORT_MAX_ROWS` |
 | 409 | 过期的生命周期、并发冲突、唯一性冲突；创建时 `Idempotency-Key` 被不同请求复用 |
 | 413 | Evidence 超过 `EVIDENCE_MAX_BYTES`（只用于上传） |
 | 415 | Evidence 的类型不在白名单，或扩展名与声明的类型不一致（只用于上传） |
 | 429 | 登录尝试过多（只用于 `login`，响应与账号无关） |
-| 503 | 数据库 `statement_timeout` / `lock_timeout` 到期，带 `Retry-After`；对象存储不可用或未配置（上传，不带 `Retry-After`） |
+| 500 | 未处理异常；Evidence 下载时元数据存在而对象缺失（数据丢失，见"Evidence 下载"） |
+| 503 | 数据库 `statement_timeout` / `lock_timeout` 到期，带 `Retry-After`；对象存储不可用或未配置（上传与下载，不带 `Retry-After`） |
 
 `openapi/openapi.json` 是稳定接口的基线，由 `scripts/check_openapi.py` 校验。
 
@@ -200,23 +201,45 @@ src/easyaudit_next/
 - 恢复只写入空目标（DB 无表、bucket 为空），不提供覆盖开关；`database`、`objects`、`environment` 三个入口在写入之前都要求 manifest 的 release 等于检出的 HEAD 和 `EASYAUDIT_RELEASE`（以及已有 api 容器的镜像 label），整环境恢复在写入之前先确认 DB 和 bucket 都为空，且 `alembic current` 等于 manifest revision 和该 release 的 head。
 - 备份/恢复工具是接入 `backend` 网络的一次性容器（非 root、`cap_drop: ALL`、不发布端口），不在长驻容器里写文件，也不给 postgres 发布端口。
 - secrets 和 TLS 证书不进备份包；和数据同盘的备份不算备份，异地拷贝由运维负责。
-- 恢复演练（`deploy/backup/drill.sh`，CI job `backup-restore-drill`）是备份恢复的验收；演练通过网关 API 上传真实文件（含一个超过 part 大小的多段上传）来生成 Evidence，并从 bucket 读回对象核对 sha256；Pilot-4B 上线下载端点后，必须把"通过 API 下载 Evidence"加进演练。
+- 恢复演练（`deploy/backup/drill.sh`，CI job `backup-restore-drill`）是备份恢复的验收；演练通过网关 API 上传真实文件（含一个超过 part 大小的多段上传）来生成 Evidence，并从 bucket 读回对象核对 sha256；恢复后通过 API 下载每个 Evidence，把字节的 sha256 与元数据、与上传前本地文件的 sha256 比对，再跑 `verify-evidence` 和 `cleanup-evidence-orphans --dry-run`；故意删掉一个对象后，下载必须是带 request_id 的 500、`verify-evidence` 必须点名它。
 
 ## 证据文件上传
 
 Evidence 元数据（`evidences` 表、`register_evidence`）早已存在；文件字节走对象存储。`POST /api/v1/action-items/{id}/evidence-uploads` 是登记 Evidence 的**唯一**入口，旧的 JSON 登记接口已删除（storage key、sha256、size 都由客户端提供，不可信）。
 
-- **端口与适配器**：应用层的 `EvidenceObjectStore`（`put_stream` / `delete` / `exists`，`review_core/application/evidence_storage.py`）；S3 适配器在 `infrastructure/object_storage.py`（boto3）。适配器把 SDK 异常换成不带 endpoint、bucket、凭证的 `ObjectStoreError`；凭证只从 `OBJECT_STORAGE_*_FILE` 指向的文件读取，只存在于 botocore 客户端里。botocore 显式配置 `connect_timeout`、`read_timeout`（单次 socket 操作的空闲上限，不是总截止时间）、`retries`（standard，`total_max_attempts = OBJECT_STORAGE_MAX_ATTEMPTS`，含首次请求；botocore 的 `max_attempts` 只算重试次数，不能用；part 是内存里的 bytes，重试安全）、path-style 寻址，并设 `proxies={}`（内部端点不走环境里的 HTTP(S)_PROXY）；校验和只在 API 要求时计算（`when_required`），因为我们自己对流计算 sha256，各 S3 兼容实现对 SDK 默认的尾部校验和支持不一。同步 SDK 的每次调用都在 `asyncio.to_thread` 里，不阻塞事件循环。
+- **端口与适配器**：应用层的 `EvidenceObjectStore`（`put_stream` / `delete` / `exists` / `open_stream`，`review_core/application/evidence_storage.py`）；S3 适配器在 `infrastructure/object_storage.py`（boto3）。适配器把 SDK 异常换成不带 endpoint、bucket、凭证的 `ObjectStoreError`；凭证只从 `OBJECT_STORAGE_*_FILE` 指向的文件读取，只存在于 botocore 客户端里。botocore 显式配置 `connect_timeout`、`read_timeout`（单次 socket 操作的空闲上限，不是总截止时间）、`retries`（standard，`total_max_attempts = OBJECT_STORAGE_MAX_ATTEMPTS`，含首次请求；botocore 的 `max_attempts` 只算重试次数，不能用；part 是内存里的 bytes，重试安全）、path-style 寻址，并设 `proxies={}`（内部端点不走环境里的 HTTP(S)_PROXY）；校验和只在 API 要求时计算（`when_required`），因为我们自己对流计算 sha256，各 S3 兼容实现对 SDK 默认的尾部校验和支持不一。同步 SDK 的每次调用都在 `asyncio.to_thread` 里，不阻塞事件循环。
 - **请求体就是文件字节**，不用 multipart：Starlette 的 multipart 会先把整个 body 落到临时文件，handler 才开始，大小限制来得太晚，且可以填满磁盘。`Content-Type` 是文件类型，`X-Evidence-Filename` 是 percent-encoded UTF-8 的原始文件名，`description` 是 query 参数。**文件名只是元数据**：去掉路径成分、控制字符和双向控制符，限制 255 字符，永远不参与存储 key。
 - **三段事务**（`api/review_evidence_uploads.py`）：
   1. 认证后在短事务里**预授权**（`authorize_evidence_registration`：与 `register_evidence` 相同的权限与 Action 校验，不加锁），随即 `commit()` + `expunge_all()`。此后到响应前，这个请求不持有任何事务，也不占着池里的连接——否则大文件上传会被 `idle_in_transaction_session_timeout`（30s）杀掉连接。`tests/integration/test_evidence_upload_api.py` 在对象存储的 `put_stream` 里查 `pg_stat_activity` 断言这一点（含真实 Cookie 认证链路）。
   2. 流式写对象：`request.stream()` 逐块读取，边读边算 SHA-256 和大小，满 8 MiB 就作为一个 part 上传（小于一个 part 的文件用单次 `PutObject`）。内存上限是约一个 part 加一个输入块，与文件大小无关；不先读进内存，也不先落盘。key 由服务端生成：`org/{organization_id}/evidence/{uuid4}`，只写一次，不覆盖（备份一致性模型的前提）。
   3. 新的短事务调用 `register_evidence`，传入**服务端计算的** key、size、sha256。它重新取用户（上传期间可能已被停用）、重新授权、按 `Finding → Action` 加锁、写元数据和 Activity，然后提交。
-- **对象只在登记确定回滚时才删除**：登记在工作线程里跑，线程无法停止，请求被取消不等于登记没发生。所以登记线程**自己持有 Session**（线程内创建、提交或回滚、关闭，不碰请求作用域的 Session），`_register_and_settle` 用 task 包住它：已提交 → 保留对象；确定回滚 → 删除；**`COMMIT` 报错一律视为结果未知 → 保留对象**（之后的 `rollback` 只是尽力清理，它自己报错也只记日志，不能改变这个结论），记 `evidence_registration_outcome_unknown`。请求被取消后等待登记结果的时间**有上限**：`DB_STATEMENT_TIMEOUT_MS + DB_LOCK_TIMEOUT_MS + 5s`；超时同样按结果未知处理——保留对象，记 `evidence_registration_unsettled`（只有 `storage_key`），重新抛出取消，线程留在后台自己跑完。永远不会出现"有元数据、没对象"，最坏是没有元数据的孤儿对象，交给 4B。后台线程的寿命受"数据库黑洞下业务请求没有客户端截止时间"这一已接受风险（见"数据库预算"）约束，不另加机制。
-- **失败清理**：写对象失败或中途超限，适配器 abort multipart，什么都不留；第 3 段失败（授权变化 403/404、生命周期变化 409/422、DB 错误），**尽力删除**刚写的对象，再返回原来的错误。删除也失败时对象成为孤儿，记 WARNING `evidence_object_orphaned`，字段只有 `storage_key`（日志白名单为此新增了 `storage_key`；key 里没有文件名和用户输入），留给 Pilot-4B 的孤儿清理。进程崩溃遗留的未完成 multipart 同样由 4B 处理。
+- **对象只在登记确定回滚时才删除**：登记在工作线程里跑，线程无法停止，请求被取消不等于登记没发生。所以登记线程**自己持有 Session**（线程内创建、提交或回滚、关闭，不碰请求作用域的 Session），`_register_and_settle` 用 task 包住它：已提交 → 保留对象；确定回滚 → 删除；**`COMMIT` 报错一律视为结果未知 → 保留对象**（之后的 `rollback` 只是尽力清理，它自己报错也只记日志，不能改变这个结论），记 `evidence_registration_outcome_unknown`。请求被取消后等待登记结果的时间**有上限**：`DB_STATEMENT_TIMEOUT_MS + DB_LOCK_TIMEOUT_MS + 5s`；超时同样按结果未知处理——保留对象，记 `evidence_registration_unsettled`（只有 `storage_key`），重新抛出取消，线程留在后台自己跑完。永远不会出现"有元数据、没对象"，最坏是没有元数据的孤儿对象，由孤儿清理处理。后台线程的寿命受"数据库黑洞下业务请求没有客户端截止时间"这一已接受风险（见"数据库预算"）约束，不另加机制。
+- **失败清理**：写对象失败或中途超限，适配器 abort multipart，什么都不留；第 3 段失败（授权变化 403/404、生命周期变化 409/422、DB 错误），**尽力删除**刚写的对象，再返回原来的错误。删除也失败时对象成为孤儿，记 WARNING `evidence_object_orphaned`，字段只有 `storage_key`（日志白名单为此新增了 `storage_key`；key 里没有文件名和用户输入），由孤儿清理处理（见下）。进程崩溃遗留的未完成 multipart 同样如此。
 - **限制**：`EVIDENCE_MAX_BYTES`（默认 25 MiB）。`Content-Length` 超限在读 body 之前就 413；没有 `Content-Length`（chunked）时累计到超限立即中止并 413。网关 Caddy 对 `/api/v1/*` 设 `request_body max_size`（26 MiB，略大于应用上限，纵深防御：它在上游读取 body 时才生效，所以不替代应用自己的 `Content-Length` 检查；改应用上限时同步改 `deploy/Caddyfile`，`tests/unit/test_deploy_compose.py` 检查两者关系，`smoke.sh` 用登录接口验证它真的生效）。类型白名单 `EVIDENCE_ALLOWED_CONTENT_TYPES`（默认 pdf、png、jpeg、docx、xlsx、pptx、txt、csv；只能是代码里有扩展名映射的类型，启动时校验）；不在白名单或扩展名与类型不一致 → 415；文件名为空或编码非法、空文件 → 422。
 - **提前拒绝的代价**：413/415/422/403 在读 body 之前就返回，客户端可能还在发送，此时连接会被关闭，浏览器看到的可能是网络错误而不是状态码；前端对此有专门提示，且不自动重试。
 - 对象存储不可用或未配置：上传 503（`object_storage_operation_failed` WARNING，字段只有 `component`、`reason`），不写元数据。
+
+## Evidence 下载
+
+`GET /api/v1/evidences/{evidence_id}/content`（`api/review_evidence_downloads.py`）。
+
+- **授权**：按 `(actor.organization_id, evidence_id)` 查元数据（不按全局 id 查），再对其 Action/Finding 上下文做与 `list_evidences` 相同的 `view_finding` 判断（`RectificationService.get_evidence_for_download`）。不存在、跨组织、无权限（含未激活用户）**一律同一个 404**（`Evidence not found`），并且这些情况下完全没有访问对象存储。不用 403：403 会告诉调用者"这个 id 存在但你不能看"，Evidence UUID 因此可以被拿来探测对象是否存在。知道 storage_key 没有任何用处：它不是路由参数，对象存储也不对外。
+- **事务边界与上传一致**：`_authorize` 在短事务里完成认证、授权、读元数据，然后 `commit()` + `expunge_all()`。**对象是在响应对象被发送时才打开的**（`EvidenceDownloadResponse.__call__`），此时所有 `scope="function"` 的依赖（含 DB Session 与 Session `touch`）都已退出，所以流式期间不持有任何事务、不占池里的连接；`tests/integration/test_evidence_download_api.py` 在流式读取的每个块之间查 `pg_stat_activity`（含真实 Cookie 认证链路）。
+- **流式与资源释放**：端口 `open_stream(key)` 是 async 方法，先发出 `GetObject`，对象缺失（`ObjectNotFoundError`）或存储失败（`ObjectStoreError`）在**第一个块之前**就抛出，所以响应状态还能选择；返回的流按 64 KiB 一块读取（每次读在 `asyncio.to_thread` 里，内存与对象大小无关），必须 `aclose()`。响应在正常结束、客户端断开（ASGI 2.3 的 disconnect 监听与 ≥2.4 的 `OSError` 两种）、取消、异常的**所有**出口都 `aclose()`：close 在被 `asyncio.shield` 保护的线程调用里执行，不会被取消打断；被取消的那次读线程由 botocore 的 `read_timeout` 兜底结束，结果丢弃。
+- **响应头**：`Content-Disposition: attachment; filename="<ASCII 回退>"; filename*=UTF-8''<percent-encoded>`（回退里非 ASCII、引号、反斜杠、分号、`%` 一律换成 `_`，真实文件名只出现在 percent-encoded 的 `filename*` 里，所以带引号或分号的名字不能破坏头）；`X-Content-Type-Options: nosniff`；`Cache-Control: private, no-store`；防御性的 `Content-Security-Policy: default-src 'none'; sandbox`；`Content-Length` 取元数据的 `size_bytes`；`Content-Type` 是元数据里的类型（仅当它属于代码里 `EXTENSIONS_BY_CONTENT_TYPE` 的白名单），否则 `application/octet-stream`。
+- **元数据存在但对象缺失是 Evidence 丢失**，属于试点停止条件，必须被监控发现：返回 **500**（`{"detail", "request_id"}`）并记 ERROR `evidence_object_missing`（字段只有 `evidence_id`、`storage_key`，两者都在日志白名单里）。**不返回 404**：404 会把数据丢失伪装成"没有这个文件"。授权在前，所以无权限的人看到的仍然只是 404。对象存储本身不可用是 503（WARNING `object_storage_operation_failed`），与丢失区分开。
+- **下载不重算 sha256。** 重算要把对象读两遍、且下载已经开始发送字节，没法再改变响应；若对象与元数据的长度不符，Content-Length 不一致会让连接被中止，由客户端发现。完整性由 `verify-evidence` 负责。
+
+## Evidence 孤儿清理与完整性校验
+
+两个运维命令（`review_core/application/evidence_maintenance.py`，由 `cli.py` 接线；都不在请求路径上，也都不在读对象时持有数据库事务）。
+
+- **`easyaudit-next cleanup-evidence-orphans [--min-age-hours 24] [--dry-run]`**：只处理 `org/*/evidence/` 前缀。分批列出对象，与 `evidences.storage_key` 比对，**未被引用且 `LastModified` 早于 min-age** 的才是可删除的孤儿。**删除前逐个 key 在新的短事务里再查一次**，仍未被引用才删。任何情况下被引用的对象都不删。输出一行 JSON：`scanned`、`orphans`（未被引用的，含太年轻的）、`deleted`、`kept_young`、`multipart_stale`、`multipart_aborted`、`skipped_referenced`（复查时发现已被引用）、`failed`；`failed > 0` 时退出码为 1。`--min-age-hours` 最小 1，更小的值会和进行中的上传竞争，参数解析直接拒绝。
+  - **为什么是 min-age 加逐 key 复查**：孤儿判定是"此刻没有行引用它"，但"此刻"有两类例外——还在进行的上传（对象已写完、登记事务尚未提交）以及 4A 的"结果未知"（登记线程无法取消，可能晚提交，等待它的时间上限是 `DB_STATEMENT_TIMEOUT_MS + DB_LOCK_TIMEOUT_MS + 5s`）。min-age（默认 24 小时，远大于这些时间）让这两类都不会被碰到；逐 key 复查再收窄"列举之后、删除之前"的窗口。复查之后到 `DeleteObject` 之间仍有极短的窗口：它只在"一个已存在超过 min-age 的对象恰好此刻被登记"时才有影响，而 key 由服务端生成、只写一次，登记总是紧跟在上传之后，所以实际不会发生；这也是 min-age 不能很小的原因。`evidences.storage_key` 没有索引，试点规模下的顺序扫描可以接受，数据量大了再加。
+  - **未完成的 multipart**：同一个命令通过 `ListMultipartUploads` 中止 `Initiated` 早于 min-age 的上传（同样只限 evidence 前缀）。没有改用 bucket lifecycle 的 `AbortIncompleteMultipartUpload`：Garage v2.4.1 对它的支持无法在本仓库的环境里验证（官方兼容性文档只说"部分实现"且已多年未更新），而且 lifecycle 的粒度是天、需要在 Garage 容器里额外配置 S3 客户端；CLI 方式可以用 moto 测试、粒度是小时、与对象清理共用 min-age。
+  - **和备份一致性模型（1B）的关系**：备份先 `pg_dump` 再镜像对象，所以备份里的对象集合是 DB 引用集合的超集。从备份恢复后，bucket 里多出来的对象就是孤儿，它们在 min-age 之后被这个命令正确清理；恢复本身不需要处理它们。
+  - **运维注意**：命令只看"数据库引用了什么"。指向了错误的数据库（例如空库）时，所有超过 min-age 的对象都会被当作孤儿，所以第一次在新环境运行请先 `--dry-run`。
+- **`easyaudit-next verify-evidence [--organization-id UUID] [--limit N]`**：对每条 Evidence 确认对象存在、流式重算 sha256 与大小并与元数据比较（数据库按 id 分批读取，每批读完事务即结束）。输出一行 JSON：`checked` 和 `problems`（`evidence_id` + `missing` / `size_mismatch` / `sha256_mismatch` / `read_error`），有任何不一致退出码为 1。用于恢复后的验证和故障诊断；它读全部对象，不是例行监控。与 `deploy/backup/verify.sh`（以某份备份的 manifest 为基准，校验备份包和"环境是否还原成这份备份"）互补：`verify-evidence` 不需要备份包，只检查线上对象与数据库元数据是否一致。
 
 ## 可观测性
 
