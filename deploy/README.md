@@ -87,7 +87,7 @@ systemctl list-timers easyaudit-reminder-sweep.timer     # 确认下次触发时
 两个命令都经 `$DC run --rm --no-deps -T api easyaudit-next ...` 运行（需要 postgres 和 object-storage 已启动），向 stdout 输出一行 JSON。
 
 ```bash
-# 孤儿清理：删除没有任何 Evidence 行引用、且早于 --min-age-hours（默认 24，最小 1）的对象，
+# 孤儿清理：删除没有任何 Evidence 行引用、且早于 --min-age-hours（默认 24；删除时必须 ≥ 24，--dry-run 允许 ≥ 1）的对象，
 # 并中止同样超龄的未完成 multipart。被引用的对象永远不删。第一次在新环境先 --dry-run。
 $DC run --rm --no-deps -T api easyaudit-next cleanup-evidence-orphans --dry-run
 $DC run --rm --no-deps -T api easyaudit-next cleanup-evidence-orphans
@@ -96,9 +96,15 @@ $DC run --rm --no-deps -T api easyaudit-next cleanup-evidence-orphans
 $DC run --rm --no-deps -T api easyaudit-next verify-evidence [--organization-id UUID] [--limit N]
 ```
 
-- `cleanup-evidence-orphans` 输出 `scanned`、`orphans`（含还太年轻的）、`deleted`、`kept_young`、`multipart_stale`、`multipart_aborted`、`skipped_referenced`、`failed`；删除或中止失败时退出码为 1。`deploy/easyaudit-cleanup-evidence-orphans.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。从备份恢复后，bucket 比数据库引用的多出一些对象（见"备份"的一致性说明），它们在 min-age 之后被这个命令清理。
+- `cleanup-evidence-orphans` 输出 `scanned`、`orphans`（含还太年轻的）、`deleted`、`kept_young`、`multipart_stale`、`multipart_aborted`、`skipped_referenced`、`failed`、`max_delete`、`deleted_but_registered`、`refused`；`failed`、`refused`、`deleted_but_registered` 任一非零时退出码为 1。`deploy/easyaudit-cleanup-evidence-orphans.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。从备份恢复后，bucket 比数据库引用的多出一些对象（见"备份"的一致性说明），它们在 min-age 之后被这个命令清理。
+- **三条整体拒绝保护**（非 dry-run；先完整列举、算出完整候选集，再决定是否开始删除，任何一条触发就一个对象都不删、也不中止 multipart，退出码 1，JSON `refused` 写原因）：
+  1. `no_evidence_rows`：数据库 `evidences` 是 0 行而桶里有 evidence 对象——几乎肯定连错了库，或恢复没有完成。先确认 `DATABASE_URL` 指向正确的库、恢复已完成，再重跑。
+  2. `revision_mismatch`：数据库的 alembic revision 不等于当前代码的 head——先 `$DC run --rm migrate`（或确认镜像与数据库是同一个 release）。
+  3. `too_many_deletions`：要删的对象数超过 `--max-delete`（默认 100）。正常孤儿很少，一次很多说明出问题；先用 `--dry-run` 看清是什么，确认确实该删之后用 `--max-delete N` 调大上限重跑。
+- **已知窗口**：一条登记若在逐 key 复查之后、删除之前提交（需要登记被延迟超过 24 小时，只有 DB 黑洞类故障才可能），对象会被删而元数据保留。每次删除后命令会再查一次：命中则 JSON 里 `deleted_but_registered > 0`、写 ERROR 日志 `evidence_object_deleted_while_registered`（`storage_key`、`evidence_id`）、退出码非零（timer 显示 failed）。处理：从最近一份备份把该 key 的对象拷回 bucket，再用 `verify-evidence` 确认。
+- **时钟与耗时**：min-age 依赖 Garage 与运行命令的主机时钟一致，部署时保持时钟同步；multipart 的年龄不代表它不活跃，所以单次上传的耗时必须远小于 min-age。
 - **`verify-evidence` 与 `deploy/backup/verify.sh` 的区别**：`verify.sh BACKUP_DIR` 以**某一份备份包的 manifest** 为基准——先校验备份包本身，再（不加 `--bundle-only`）把线上 bucket 与 DB 对照这份 manifest，用于"这个环境是否还原成了这份备份"；`verify-evidence` 不需要备份包，只检查**线上**对象存储的每个对象与数据库里的 Evidence 元数据（存在、大小、sha256）是否一致，走应用自己的 S3 客户端、可按组织/数量限制，用于恢复后的验证和平时的故障诊断。它读取全部对象，不是例行监控；Evidence 丢失还会在下载时以 500 + `evidence_object_missing` 日志暴露。
-- 下载（`GET /api/v1/evidences/{id}/content`）不重算 sha256，完整性只由 `verify-evidence`（线上）和备份时的核对（备份）保证。
+- 下载（`GET /api/v1/evidences/{id}/content`）不重算 sha256；它只在发送响应头之前比较存储报告的大小与元数据（不一致 → 500 + ERROR `evidence_object_size_mismatch`，不发送内容）。内容层面的完整性由 `verify-evidence`（线上）和备份时的核对（备份）保证。
 
 ## 备份
 
