@@ -64,10 +64,13 @@ FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS = {
     "transition_case",
 }
 # Credential rows are leaf rows (nothing references them), so FOR UPDATE is harmless there.
-FOR_UPDATE_ALLOWED_FUNCTIONS = {
-    (SOURCE_ROOT / "platform" / "persistence" / "repositories.py", "lock_by_login_name"),
-    (SOURCE_ROOT / "platform" / "persistence" / "repositories.py", "lock_by_user_id"),
+# Allowlisted by (file, class, method) so a same-named method elsewhere is not exempted.
+_PLATFORM_REPOSITORIES = SOURCE_ROOT / "platform" / "persistence" / "repositories.py"
+FOR_UPDATE_ALLOWED_METHODS = {
+    (_PLATFORM_REPOSITORIES, "SqlAlchemyLocalCredentialRepository", "lock_by_login_name"),
+    (_PLATFORM_REPOSITORIES, "SqlAlchemyLocalCredentialRepository", "lock_by_user_id"),
 }
+LOCK_MODE_KEYWORDS = ("read", "key_share")
 
 
 def imported_modules(tree: ast.AST) -> list[str]:
@@ -88,39 +91,58 @@ def imports_name(tree: ast.AST, module: str, name: str) -> bool:
     return False
 
 
-def keyword_is_true(call: ast.Call, name: str) -> bool:
-    return any(
-        keyword.arg == name
-        and isinstance(keyword.value, ast.Constant)
-        and keyword.value.value is True
-        for keyword in call.keywords
-    )
+def _literal_bool(value: ast.expr) -> bool | None:
+    if isinstance(value, ast.Constant) and isinstance(value.value, bool):
+        return value.value
+    return None
+
+
+def is_key_share_lock(call: ast.Call) -> bool:
+    """True only if the lock mode is statically `key_share=True`.
+
+    `read` / `key_share` must be literal booleans and `**` expansion is rejected, otherwise the
+    generated lock mode cannot be known from the source.
+    """
+
+    key_share = False
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            return False
+        if keyword.arg in LOCK_MODE_KEYWORDS:
+            literal = _literal_bool(keyword.value)
+            if literal is None:
+                return False
+            if keyword.arg == "key_share":
+                key_share = literal
+    return key_share
 
 
 def parent_lock_violations(path: Path, tree: ast.AST) -> list[str]:
-    """Row locks must not conflict with FK KEY SHARE: any `key_share=True` is allowed.
+    """Row locks must not conflict with FK KEY SHARE: only literal `key_share=True` is allowed.
 
     That is FOR NO KEY UPDATE, or FOR KEY SHARE with `read=True`. Bare `with_for_update()` (FOR
-    UPDATE) and `read=True` alone (FOR SHARE) are rejected.
+    UPDATE), `read=True` alone (FOR SHARE) and non-literal lock-mode arguments are rejected.
     """
 
     violations: list[str] = []
 
-    def visit(node: ast.AST, function: str | None) -> None:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    def visit(node: ast.AST, class_name: str | None, function: str | None) -> None:
+        if isinstance(node, ast.ClassDef):
+            class_name, function = node.name, None
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             function = node.name
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "with_for_update"
-            and (path, function) not in FOR_UPDATE_ALLOWED_FUNCTIONS
-            and not keyword_is_true(node, "key_share")
+            and (path, class_name, function) not in FOR_UPDATE_ALLOWED_METHODS
+            and not is_key_share_lock(node)
         ):
             violations.append(f"{path}:{node.lineno}")
         for child in ast.iter_child_nodes(node):
-            visit(child, function)
+            visit(child, class_name, function)
 
-    visit(tree, None)
+    visit(tree, None, None)
     return violations
 
 

@@ -14,7 +14,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
@@ -26,6 +26,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from easyaudit_next.composition import (
+    build_automatic_reminder_evaluator,
     build_case_team_coordinator,
     build_manual_nudge_service,
     build_notification_orchestrator,
@@ -56,6 +57,19 @@ NOTIFICATION_INSERT = re.compile(r"INSERT INTO notifications")
 _writer = threading.local()
 
 
+class _Backend:
+    """PostgreSQL backend PID of the manager's connection.
+
+    Recorded from the first statement run by any thread that is not the paused writer (the HTTP
+    manager runs in the TestClient's own thread, so a thread-local would not see it).
+    """
+
+    pid: int | None = None
+
+
+_manager_backend: _Backend | None = None
+
+
 class _Pause:
     def __init__(self) -> None:
         self.reached = threading.Event()
@@ -79,6 +93,9 @@ def engines() -> Iterator[tuple[Engine, Engine, str]]:
     @event.listens_for(app_engine, "before_cursor_execute")
     def pause_writer(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
         pause: _Pause | None = getattr(_writer, "pause", None)
+        backend = _manager_backend
+        if pause is None and backend is not None and backend.pid is None:
+            backend.pid = conn.connection.dbapi_connection.info.backend_pid
         if pause is not None and NOTIFICATION_INSERT.search(statement):
             if not pause.reached.is_set():
                 pause.reached.set()
@@ -122,20 +139,28 @@ def _outcome(call: Callable[[], Any]) -> str:
     return "ok"
 
 
-def _wait_until_done_or_blocked(observer: Engine, name: str, manager: Any) -> None:
+def _wait_until_done_or_blocked(
+    observer: Engine, manager_backend: _Backend, manager: Future[str]
+) -> None:
+    """Fail unless the manager finishes or *its own backend* is waiting on a lock."""
+
     deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and not manager.done():
-        with observer.connect() as connection:
-            blocked = connection.scalar(
-                text(
-                    "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE application_name = :name AND wait_event_type = 'Lock'"
-                ),
-                {"name": name},
-            )
-        if blocked:
+    while time.monotonic() < deadline:
+        if manager.done():
             return
+        if manager_backend.pid is not None:
+            with observer.connect() as connection:
+                blocked = connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity "
+                        "WHERE pid = :pid AND wait_event_type = 'Lock'"
+                    ),
+                    {"pid": manager_backend.pid},
+                )
+            if blocked:
+                return
         time.sleep(0.05)
+    pytest.fail("manager neither finished nor blocked on a lock within 15s")
 
 
 def _race(
@@ -143,19 +168,25 @@ def _race(
     writer: Callable[[], Any],
     manager: Callable[[], Any],
 ) -> tuple[str, str]:
-    _, observer, name = engines
+    _, observer, _ = engines
     pause = _Pause()
+    manager_backend = _Backend()
 
     def run_writer() -> str:
         _writer.pause = pause
         return _outcome(writer)
 
+    global _manager_backend
     with ThreadPoolExecutor(max_workers=2) as pool:
         writer_future = pool.submit(run_writer)
         assert pause.reached.wait(30), "writer never reached its Notification INSERT"
-        manager_future = pool.submit(lambda: _outcome(manager))
-        _wait_until_done_or_blocked(observer, name, manager_future)
-        pause.release.set()
+        _manager_backend = manager_backend
+        try:
+            manager_future = pool.submit(lambda: _outcome(manager))
+            _wait_until_done_or_blocked(observer, manager_backend, manager_future)
+        finally:
+            pause.release.set()
+            _manager_backend = None
         return writer_future.result(40), manager_future.result(40)
 
 
@@ -319,7 +350,7 @@ def test_http_member_add_returns_201_while_a_nudge_is_in_flight(
 def test_parent_row_locks_compile_to_for_no_key_update(
     engines: tuple[Engine, Engine, str],
 ) -> None:
-    """Every parent-row lock is FOR NO KEY UPDATE (the lock mode, not just the call shape)."""
+    """All 8 parent-row locks are FOR NO KEY UPDATE (the lock mode, not just the call shape)."""
 
     engine, _, _ = engines
     captured: list[str] = []
@@ -341,7 +372,12 @@ def test_parent_row_locks_compile_to_for_no_key_update(
         verification.lock_case_for_closure(organization_id, case_id)
         verification.lock_finding_for_verification(organization_id, fixture.finding_id)
         verification.lock_finding_for_rectification(organization_id, fixture.finding_id)
+        # Private on purpose: the guard SELECTs are the only way to reach these two locks
+        # without scheduling a real overdue occurrence.
+        evaluator = build_automatic_reminder_evaluator(session)
+        evaluator._load_case(organization_id, case_id, guard=True)
+        evaluator._load_action(organization_id, fixture.action_item_id, guard=True)
     locks = [statement for statement in captured if " FOR " in statement]
-    assert len(locks) == 6
+    assert len(locks) == 8
     for statement in locks:
         assert statement.rstrip().endswith("FOR NO KEY UPDATE"), statement
