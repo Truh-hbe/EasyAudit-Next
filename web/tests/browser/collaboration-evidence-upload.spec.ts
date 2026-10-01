@@ -162,6 +162,33 @@ for (const failure of failures) {
   })
 }
 
+test('files over the limit or of a disallowed type are refused locally without a request', async ({ page }) => {
+  let attempts = 0
+  await stubActionPage(page, () => [])
+  await page.route((url) => url.pathname === UPLOAD_PATH, (route) => {
+    attempts += 1
+    return fulfillJson(route, 201, evidenceResponse('x.pdf', 1))
+  })
+
+  await page.goto('/action-items/action-1')
+  await page.getByLabel('证据文件').setInputFiles({
+    name: 'huge.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.alloc(25 * 1024 * 1024 + 1),
+  })
+  await page.getByRole('button', { name: '上传证据' }).click()
+  await expect(page.getByRole('alert')).toContainText('文件超过大小上限，未上传。')
+
+  await page.getByLabel('证据文件').setInputFiles({
+    name: 'tool.exe',
+    mimeType: 'application/x-msdownload',
+    buffer: Buffer.from('MZ'),
+  })
+  await page.getByRole('button', { name: '上传证据' }).click()
+  await expect(page.getByRole('alert')).toContainText('文件类型不被允许')
+  expect(attempts).toBe(0)
+})
+
 test('a dropped connection is reported as unconfirmed and not retried', async ({ page }) => {
   let attempts = 0
   await stubActionPage(page, () => [])

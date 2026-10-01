@@ -10,6 +10,7 @@ import {
   getActionItem,
   getActionItemActivities,
   getFinding,
+  precheckEvidenceFile,
   getReviewCase,
   searchActionAssigneeCandidates,
   transitionActionItem,
@@ -64,12 +65,14 @@ function actorKindText(actorKind: 'user' | 'department'): string {
   return actorKind === 'user' ? '用户' : '部门'
 }
 
+const TOO_LARGE_TEXT = '文件超过大小上限，未上传。'
+const TYPE_NOT_ALLOWED_TEXT =
+  '文件类型不被允许，或扩展名与类型不一致。允许：PDF、PNG、JPEG、DOCX、XLSX、PPTX、TXT、CSV。'
+
 function uploadErrorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 413) return '文件超过大小上限，未上传。'
-    if (error.status === 415) {
-      return '文件类型不被允许，或扩展名与类型不一致。允许：PDF、PNG、JPEG、DOCX、XLSX、PPTX、TXT、CSV。'
-    }
+    if (error.status === 413) return TOO_LARGE_TEXT
+    if (error.status === 415) return TYPE_NOT_ALLOWED_TEXT
     if (error.status === 409) return '数据已过期，已刷新。未上传成功，请确认后重新选择文件上传。'
     if (error.status === 422) return `无法登记证据：${error.detail}`
     if (error.status === 503) return '证据存储暂不可用，未上传。请稍后手动重试。'
@@ -291,6 +294,11 @@ export function ActionItemDetailPage() {
   async function submitEvidence(event: FormEvent<HTMLFormElement>, currentActionId: string) {
     event.preventDefault()
     if (uploadFile === null || uploadBusy) return
+    const precheck = precheckEvidenceFile(uploadFile)
+    if (precheck !== null) {
+      setUploadMessage({ kind: 'error', text: precheck === 'too_large' ? TOO_LARGE_TEXT : TYPE_NOT_ALLOWED_TEXT })
+      return
+    }
     const uploadActionItemId = actionItemId
     setUploadBusy(true)
     setUploadMessage(null)

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { evidenceContentType, uploadActionEvidence } from './product'
+import { EVIDENCE_MAX_BYTES, evidenceContentType, precheckEvidenceFile, uploadActionEvidence } from './product'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -62,5 +62,18 @@ describe('Evidence upload request', () => {
       uploadActionEvidence('a1', new File(['x'], 'a.txt', { type: 'text/plain' })),
     ).rejects.toMatchObject({ status: 413 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('pre-checks size and type locally', () => {
+    const big = new File(['x'], 'big.pdf', { type: 'application/pdf' })
+    Object.defineProperty(big, 'size', { value: EVIDENCE_MAX_BYTES + 1 })
+    const exact = new File(['x'], 'ok.pdf', { type: 'application/pdf' })
+    Object.defineProperty(exact, 'size', { value: EVIDENCE_MAX_BYTES })
+
+    expect(precheckEvidenceFile(big)).toBe('too_large')
+    expect(precheckEvidenceFile(exact)).toBeNull()
+    expect(precheckEvidenceFile(new File(['x'], 'tool.exe'))).toBe('type_not_allowed')
+    expect(precheckEvidenceFile(new File(['x'], 'noextension'))).toBe('type_not_allowed')
+    expect(precheckEvidenceFile(new File(['x'], 'ROWS.CSV'))).toBeNull()
   })
 })

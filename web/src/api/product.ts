@@ -636,6 +636,22 @@ const EVIDENCE_CONTENT_TYPES: Record<string, string> = {
   csv: 'text/csv',
 }
 
+// Mirror of the backend defaults (EVIDENCE_MAX_BYTES, and the extension list above), used only
+// to refuse an obviously unacceptable file before sending it: a body the server rejects early
+// can surface in the browser as a dropped connection instead of a status code. Keep in sync
+// with `Settings.evidence_max_bytes` and `EXTENSIONS_BY_CONTENT_TYPE`; the server stays the
+// authority and re-checks everything (an operator-changed limit only makes this pre-check stale).
+export const EVIDENCE_MAX_BYTES = 25 * 1024 * 1024
+
+export type EvidencePrecheck = 'too_large' | 'type_not_allowed' | null
+
+export function precheckEvidenceFile(file: File): EvidencePrecheck {
+  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : undefined
+  if (!extension || !(extension in EVIDENCE_CONTENT_TYPES)) return 'type_not_allowed'
+  if (file.size > EVIDENCE_MAX_BYTES) return 'too_large'
+  return null
+}
+
 export function evidenceContentType(file: File): string {
   const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : undefined
   return (extension && EVIDENCE_CONTENT_TYPES[extension]) || file.type || 'application/octet-stream'
