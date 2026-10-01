@@ -1,0 +1,12 @@
+# Example unit: install next to easyaudit-reminder-status.service, then
+#   systemctl enable --now easyaudit-reminder-status.timer
+# Hourly. Start it after the first sweep has run, or it reports "never_run".
+[Unit]
+Description=EasyAudit reminder sweep freshness, hourly
+
+[Timer]
+OnCalendar=*-*-* *:20:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

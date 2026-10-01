@@ -17,7 +17,7 @@ from easyaudit_next.composition import (
 )
 from easyaudit_next.notifications.models import NotificationKind
 from easyaudit_next.notifications.persistence import NotificationRecord
-from easyaudit_next.notifications.service import NotificationService
+from easyaudit_next.notifications.service import DeliveryOutcome, NotificationService
 from easyaudit_next.platform.domain.ids import OrganizationId
 from easyaudit_next.review_core.persistence.models import (
     ActionItemRecord,
@@ -320,10 +320,10 @@ def test_case_final_guard_wins_before_deadline_push_serializes_delivery_first(
     mutation_backend_pid: list[int] = []
     original_deliver = NotificationService.deliver_automatic
 
-    def block_delivery(service: NotificationService, **kwargs: object) -> None:
+    def block_delivery(service: NotificationService, **kwargs: object) -> DeliveryOutcome:
         guard_held.set()
         assert release_delivery.wait(timeout=5)
-        original_deliver(service, **kwargs)
+        return original_deliver(service, **kwargs)
 
     monkeypatch.setattr(NotificationService, "deliver_automatic", block_delivery)
 
@@ -389,10 +389,10 @@ def test_action_final_guard_wins_before_deadline_clear_serializes_delivery_first
     mutation_backend_pid: list[int] = []
     original_deliver = NotificationService.deliver_automatic
 
-    def block_delivery(service: NotificationService, **kwargs: object) -> None:
+    def block_delivery(service: NotificationService, **kwargs: object) -> DeliveryOutcome:
         guard_held.set()
         assert release_delivery.wait(timeout=5)
-        original_deliver(service, **kwargs)
+        return original_deliver(service, **kwargs)
 
     monkeypatch.setattr(NotificationService, "deliver_automatic", block_delivery)
 

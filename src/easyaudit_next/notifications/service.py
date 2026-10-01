@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -22,6 +23,14 @@ from easyaudit_next.notifications.persistence import (
 )
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
 from easyaudit_next.review_core.domain.ids import ActionItemId, ActivityId, FindingId, ReviewCaseId
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryOutcome:
+    """`created` rows were inserted; `deduped` hit a unique index (ON CONFLICT DO NOTHING)."""
+
+    created: int
+    deduped: int
 
 
 class NotificationService:
@@ -66,7 +75,7 @@ class NotificationService:
         title: str,
         body: str,
         created_at: datetime | None = None,
-    ) -> None:
+    ) -> DeliveryOutcome:
         """Persist a timer/policy delivery without fabricating Review Activity provenance."""
 
         if kind not in {
@@ -74,7 +83,7 @@ class NotificationService:
             NotificationKind.AUTOMATIC_ACTION_REMINDER,
         }:
             raise ValueError("Automatic origin is only valid for automatic reminder kinds")
-        self._deliver(
+        return self._deliver(
             organization_id=organization_id,
             recipients=recipients,
             kind=kind,
@@ -96,7 +105,7 @@ class NotificationService:
         title: str,
         body: str,
         created_at: datetime | None,
-    ) -> None:
+    ) -> DeliveryOutcome:
         now = created_at or datetime.now(UTC)
         if now.utcoffset() is None:
             raise ValueError("Notification created_at must include UTC offset")
@@ -115,7 +124,8 @@ class NotificationService:
             )
             for recipient in unique_recipients
         )
-        self._repository.add_many(drafts)
+        created = self._repository.add_many(drafts)
+        return DeliveryOutcome(created=created, deduped=len(drafts) - created)
 
     def get_inbox(
         self,

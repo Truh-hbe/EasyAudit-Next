@@ -31,6 +31,8 @@ _ACTION_OVERDUE_LIFECYCLES = {"todo", "in_progress"}
 class AutomaticReminderEvaluation:
     eligible: bool
     recipient_count: int = 0
+    created_count: int = 0
+    deduped_count: int = 0
     automatic_origin_key: str | None = None
 
 
@@ -79,7 +81,7 @@ class AutomaticReminderEvaluator:
             deadline=current.planned_end_at,
             occurrence_key=occurrence_key,
         )
-        self._notifications.deliver_automatic(
+        outcome = self._notifications.deliver_automatic(
             organization_id=organization_id,
             recipients=recipients,
             kind=NotificationKind.AUTOMATIC_CASE_REMINDER,
@@ -92,6 +94,8 @@ class AutomaticReminderEvaluator:
         return AutomaticReminderEvaluation(
             eligible=True,
             recipient_count=len(recipients),
+            created_count=outcome.created,
+            deduped_count=outcome.deduped,
             automatic_origin_key=origin_key,
         )
 
@@ -137,7 +141,7 @@ class AutomaticReminderEvaluator:
             deadline=current.due_at,
             occurrence_key=occurrence_key,
         )
-        self._notifications.deliver_automatic(
+        outcome = self._notifications.deliver_automatic(
             organization_id=organization_id,
             recipients=recipients,
             kind=NotificationKind.AUTOMATIC_ACTION_REMINDER,
@@ -150,6 +154,8 @@ class AutomaticReminderEvaluator:
         return AutomaticReminderEvaluation(
             eligible=True,
             recipient_count=len(recipients),
+            created_count=outcome.created,
+            deduped_count=outcome.deduped,
             automatic_origin_key=origin_key,
         )
 

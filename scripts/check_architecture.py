@@ -43,6 +43,21 @@ OBSERVABILITY_CONSUMERS = (
 INFRASTRUCTURE_ROOT = SOURCE_ROOT / "infrastructure"
 OBJECT_STORAGE_SDK_PREFIXES = ("boto3", "botocore", "aioboto3", "aiobotocore", "minio")
 OBJECT_STORAGE_ADAPTER = "easyaudit_next.infrastructure.object_storage"
+# Scheduling lives outside the web process (systemd timer -> `easyaudit-next run-reminder-sweep`).
+# The HTTP edge must not import the sweep, the run records, the CLI, or a scheduler library.
+WEB_PROCESS_PATHS = (SOURCE_ROOT / "api", SOURCE_ROOT / "main.py", SOURCE_ROOT / "serve.py")
+FORBIDDEN_WEB_IMPORT_PREFIXES = (
+    "easyaudit_next.collaboration.reminder_sweep",
+    "easyaudit_next.collaboration.scheduler_runs",
+    "easyaudit_next.collaboration.automatic_reminder",
+    "easyaudit_next.cli",
+)
+FORBIDDEN_WEB_THIRD_PARTY = {"apscheduler", "celery", "schedule", "sched", "rq"}
+FORBIDDEN_WEB_COMPOSITION_NAMES = {
+    "build_automatic_reminder_sweep",
+    "build_per_candidate_reminder_sweep",
+    "build_automatic_reminder_evaluator",
+}
 FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS = {
     "submit_rectification",
     "update_assigned_action",
@@ -74,6 +89,89 @@ def string_literals(tree: ast.AST) -> set[str]:
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
+
+
+def is_web_process_file(path: Path) -> bool:
+    # Any HTTP adapter: src/.../api/**, per-module api.py routers, main.py, serve.py.
+    return path.name == "api.py" or any(
+        path == allowed or path.is_relative_to(allowed) for allowed in WEB_PROCESS_PATHS
+    )
+
+
+COMPOSITION_MODULE = "easyaudit_next.composition"
+
+
+def _current_package(path: Path) -> list[str]:
+    relative = path.resolve().relative_to(SOURCE_ROOT.parent).with_suffix("")
+    parts = list(relative.parts)
+    return parts if path.name == "__init__.py" else parts[:-1]
+
+
+def resolve_imports(tree: ast.AST, path: Path) -> tuple[list[str], dict[str, str]]:
+    """Absolute dotted names every import statement can bring in, plus the local alias map.
+
+    Relative imports are resolved against `path`; `from pkg import name` yields both `pkg` and
+    `pkg.name`, because `name` may itself be a module.
+    """
+    names: list[str] = []
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.append(alias.name)
+                aliases[alias.asname or alias.name.split(".")[0]] = (
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                package = _current_package(path)
+                base_parts = package[: len(package) - (node.level - 1)]
+                base = ".".join([*base_parts, *(node.module.split(".") if node.module else [])])
+            else:
+                base = node.module or ""
+            if base:
+                names.append(base)
+            for alias in node.names:
+                full = f"{base}.{alias.name}" if base else alias.name
+                names.append(full)
+                aliases[alias.asname or alias.name] = full
+    return names, aliases
+
+
+def _dotted(node: ast.AST, aliases: dict[str, str]) -> str | None:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(aliases.get(node.id, node.id))
+    return ".".join(reversed(parts))
+
+
+def _is_forbidden_web_name(name: str) -> bool:
+    return any(
+        name == prefix or name.startswith(prefix + ".") for prefix in FORBIDDEN_WEB_IMPORT_PREFIXES
+    ) or name.split(".")[0] in FORBIDDEN_WEB_THIRD_PARTY
+
+
+def check_web_process_has_no_scheduler(path: Path, tree: ast.AST) -> None:
+    names, aliases = resolve_imports(tree, path)
+    for name in names:
+        if _is_forbidden_web_name(name):
+            raise SystemExit(
+                f"Web process must not host a scheduler or sweep (use the CLI): {path}: {name}"
+            )
+        module, _, member = name.rpartition(".")
+        if module == COMPOSITION_MODULE and member in FORBIDDEN_WEB_COMPOSITION_NAMES:
+            raise SystemExit(f"Web process must not wire the reminder sweep: {path}: {name}")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_WEB_COMPOSITION_NAMES:
+            owner = _dotted(node.value, aliases)
+            if owner == COMPOSITION_MODULE:
+                raise SystemExit(
+                    f"Web process must not wire the reminder sweep: {path}: {owner}.{node.attr}"
+                )
 
 
 def main() -> None:
@@ -133,6 +231,9 @@ def main() -> None:
                     "Review Core must not depend on collaboration/read-side modules: "
                     f"{path}: {module}"
                 )
+
+        if is_web_process_file(path):
+            check_web_process_has_no_scheduler(path, tree)
 
         if path.is_relative_to(COLLABORATION_ROOT) and imports_name(
             tree,

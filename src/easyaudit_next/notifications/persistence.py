@@ -157,9 +157,10 @@ class SqlAlchemyNotificationRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add_many(self, drafts: tuple[NotificationDraft, ...]) -> None:
+    def add_many(self, drafts: tuple[NotificationDraft, ...]) -> int:
+        """Insert, skipping rows that hit a unique index; returns how many were inserted."""
         if not drafts:
-            return
+            return 0
         values: list[dict[str, object]] = []
         for draft in drafts:
             subject_columns = self._subject_columns(draft.subject)
@@ -178,7 +179,10 @@ class SqlAlchemyNotificationRepository:
                 }
             )
         statement = postgresql_insert(NotificationRecord).values(values)
-        self._session.execute(statement.on_conflict_do_nothing())
+        inserted = self._session.execute(
+            statement.on_conflict_do_nothing().returning(NotificationRecord.id)
+        )
+        return len(inserted.all())
 
     def list_for_recipient(
         self,
