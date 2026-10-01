@@ -66,6 +66,7 @@ ALLOWED_FIELDS = frozenset(
         "storage_key",
         "export_format",
         "row_count",
+        "evidence_id",
     }
 )
 _MAX_VALUE_CHARS = 200

@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import threading
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -13,6 +14,7 @@ from easyaudit_next.infrastructure.object_storage import S3EvidenceObjectStore
 from easyaudit_next.platform.settings import Settings
 from easyaudit_next.review_core.application.evidence_storage import (
     EvidenceTooLargeError,
+    ObjectNotFoundError,
     ObjectStoreError,
     limit_stream,
 )
@@ -276,3 +278,122 @@ def test_probe_reaches_an_ipv6_literal_endpoint(fake_s3: FakeS3) -> None:
     server.close()
 
     assert failure is None
+
+
+def test_open_stream_reads_in_bounded_chunks_and_closes_the_body_at_the_end(
+    fake_s3: FakeS3,
+) -> None:
+    data = bytes(range(256)) * 1000
+    fake_s3.client().put_object(Bucket=fake_s3.bucket, Key="org/o/evidence/d", Body=data)
+    store = make_store(fake_s3)
+
+    async def scenario() -> tuple[bytes, list[int], Any]:
+        stream = await store.open_stream("org/o/evidence/d")
+        body = stream._body
+        closed: list[bool] = []
+        original_close = body.close
+        body.close = lambda: (closed.append(True), original_close())[1]
+        sizes: list[int] = []
+        received = bytearray()
+        async for chunk in stream:
+            sizes.append(len(chunk))
+            received.extend(chunk)
+        return bytes(received), sizes, closed
+
+    received, sizes, closed = asyncio.run(scenario())
+
+    assert received == data
+    assert max(sizes) <= 64 * 1024 and len(sizes) > 3
+    assert closed == [True]
+
+
+def test_open_stream_of_an_absent_key_raises_not_found_before_any_chunk(fake_s3: FakeS3) -> None:
+    store = make_store(fake_s3)
+
+    with pytest.raises(ObjectNotFoundError):
+        asyncio.run(store.open_stream("org/o/evidence/absent"))
+
+
+def test_closing_a_stream_early_or_cancelling_a_read_closes_the_body(fake_s3: FakeS3) -> None:
+    fake_s3.client().put_object(
+        Bucket=fake_s3.bucket, Key="org/o/evidence/e", Body=b"x" * (300 * 1024)
+    )
+    store = make_store(fake_s3)
+
+    async def early_close() -> bool:
+        stream = await store.open_stream("org/o/evidence/e")
+        closed = False
+        original = stream._body.close
+
+        def close() -> None:
+            nonlocal closed
+            closed = True
+            original()
+
+        stream._body.close = close
+        await anext(stream)
+        await stream.aclose()
+        await stream.aclose()  # idempotent
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        return closed
+
+    async def cancelled_read() -> bool:
+        stream = await store.open_stream("org/o/evidence/e")
+        in_read, release = threading.Event(), threading.Event()
+        original = stream._body.read
+
+        def blocked_read(amount: int) -> bytes:
+            in_read.set()
+            release.wait(5)
+            return original(amount)
+
+        stream._body.read = blocked_read
+        task = asyncio.ensure_future(anext(stream))
+        await asyncio.to_thread(in_read.wait, 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        return stream._closed
+
+    assert asyncio.run(early_close()) is True
+    assert asyncio.run(cancelled_read()) is True
+
+
+def test_listing_objects_and_multipart_uploads_pages_through_everything(
+    fake_s3: FakeS3,
+) -> None:
+    client = fake_s3.client()
+    for index in range(7):
+        client.put_object(Bucket=fake_s3.bucket, Key=f"org/o/evidence/{index}", Body=b"x")
+    uploads = [
+        client.create_multipart_upload(Bucket=fake_s3.bucket, Key=f"org/o/evidence/mp{index}")[
+            "UploadId"
+        ]
+        for index in range(3)
+    ]
+    store = make_store(fake_s3)
+    inventory: Any = store
+    original = store._client.list_objects_v2
+    pages: list[int] = []
+
+    def small_pages(**kwargs: Any) -> Any:
+        pages.append(1)
+        return original(**{**kwargs, "MaxKeys": 3})
+
+    store._client.list_objects_v2 = small_pages  # type: ignore[method-assign]
+
+    async def scenario() -> tuple[list[str], list[str]]:
+        objects = [item.key async for item in inventory.list_objects("org/")]
+        listed = [item async for item in inventory.list_multipart_uploads("org/")]
+        for item in listed:
+            await inventory.abort_multipart_upload(item.key, item.upload_id)
+        return objects, [item.upload_id for item in listed]
+
+    objects, found = asyncio.run(scenario())
+
+    assert sorted(objects) == sorted(f"org/o/evidence/{i}" for i in range(7))
+    assert len(pages) == 3
+    assert sorted(found) == sorted(uploads)
+    assert fake_s3.open_uploads() == []

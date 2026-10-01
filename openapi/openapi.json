@@ -142,6 +142,13 @@
         "responses": ["201", "413", "415", "503"]
       }
     },
+    "/api/v1/evidences/{evidence_id}/content": {
+      "get": {
+        "operationId": "downloadEvidenceContent",
+        "tags": ["review-rectification"],
+        "responses": ["200", "404", "500", "503"]
+      }
+    },
     "/api/v1/findings/{finding_id}/rectification-submissions": {
       "get": {"operationId": "listRectificationSubmissions", "tags": ["review-rectification"]},
       "post": {"operationId": "submitRectification", "tags": ["review-rectification"]}

@@ -30,6 +30,14 @@ EXTENSIONS_BY_CONTENT_TYPE: dict[str, frozenset[str]] = {
 }
 
 
+def download_content_type(stored: str | None) -> str:
+    """The stored type if it is one the upload policy can ever have accepted, else a
+    type no browser will interpret. The stored value is data, not a promise."""
+    if stored is not None and stored in EXTENSIONS_BY_CONTENT_TYPE:
+        return stored
+    return "application/octet-stream"
+
+
 class UnsupportedEvidenceTypeError(Exception):
     """The declared type is not allowed, or the file extension does not match it."""
 
