@@ -37,12 +37,29 @@ src/easyaudit_next/
 - 一个请求一个事务：实体变更、Activity、Notification 在同一个事务内提交或回滚。
 - 单行状态变更使用 CAS：`UPDATE ... WHERE id = :id AND lifecycle = :expected`。无匹配行时返回 409，且不写 Activity。
 - 跨行不变量使用父行 `SELECT ... FOR UPDATE`，固定加锁顺序，**禁止反向加锁**：
+  - 创建幂等：`IdempotencyKey → Organization → …`。带 `Idempotency-Key` 的创建请求在事务**第一条语句**抢占幂等键，之后才进入下面任何一条锁顺序（见"创建幂等"）。
   - 整改（Action 增改、指派、证据、整改提交）：`Finding → Action / Assignee / Evidence / Submission`
   - 验证、重开、Case 关闭：`ReviewCase → Finding → Submission / Activity`
   - Case 成员增删、用户停用：`Organization → Case（按 ID 排序）→ User（按 ID 排序）`
 - 等待锁之后的决定性读取必须刷新 ORM 状态（`populate_existing=True`），不能使用锁前的 identity map 快照。
 - 锁后发现生命周期已变化，按并发冲突（409）处理，而不是按业务校验失败（422）处理。
 - 每个并发修复都要有 PostgreSQL 双 Session 竞争测试（`tests/integration/*race*`、`*concurrency*`）。
+
+## 创建幂等
+
+只覆盖 `POST /review-plans` 和 `POST /review-cases`，不是通用幂等框架。
+
+- 客户端用可选请求头 `Idempotency-Key`（1–128 个可打印 ASCII 字符，非法为 422）。不带头时行为与以前完全一样。
+- 表 `create_idempotency_records`，主键即唯一作用域 `(organization_id, actor_user_id, operation, idempotency_key)`。存 `request_fingerprint`（sha256）、`response_status`，结果资源用两个类型化可空 FK `review_plan_id` / `review_case_id`（组织感知的复合 FK，不用 Generic FK，见 ADR-0005），CHECK 要求恰好填一个且与 `operation` 一致。
+- **数据库唯一约束是最终仲裁，禁止"先 SELECT 再 INSERT"。** 创建事务的第一条语句是 `INSERT ... ON CONFLICT DO NOTHING RETURNING`：
+  - 抢到：用**预先生成**的资源 id 正常创建（同一事务写入资源与 Activity），提交。记录一开始就是完整的，所以不需要回填，CHECK 恒成立。
+  - 没抢到：PostgreSQL 的唯一索引插入会等待持有该键的事务结束。对方提交 → 读出记录：指纹相同则返回第一次创建的资源（201 + `Idempotent-Replayed: true`，不写 Activity，不产生任何副作用），指纹不同则 409（`Idempotency-Key reused with a different request`）；对方回滚 → 本事务的插入成功，正常创建。
+  - 创建失败（422、授权失败、异常）整个事务回滚，键不会被占用。
+- 重放按**当前**读取授权返回资源的当前表示（不存响应快照）；actor 已无权读取时按现有读取规则返回 403/404。
+- 指纹：校验后的请求体 `model_dump`，键排序、datetime 统一为 UTC ISO、无空白，再取 sha256；`operation` 不计入（已在作用域里）。Plan：`title`、`planned_start_at`、`planned_end_at`；Case：`plan_id`、`scenario_key`、`scenario_version`、`title`、`planned_start_at`、`planned_end_at`、`scenario_data`。
+- **该表所有外键都是 `DEFERRABLE INITIALLY DEFERRED`。** 立即检查的 FK 会在 claim 时对 Organization / User 行加 `FOR KEY SHARE`，两个并发创建各持一份后都要升级为 `FOR UPDATE`（`_lock_actor`），互相等待而死锁。延迟到提交时检查，此时本事务已持有 `FOR UPDATE`。`test_concurrent_creations_with_different_keys_do_not_deadlock` 固定了这一点。
+- 不用 advisory lock：它需要自己的键空间与生命周期，而唯一索引已经给出等同语义，并且随事务回滚自动释放。
+- **保留期**：试点期不清理幂等记录（规模很小）；并入"数据保留"一起设计。记录有 FK 指向资源与用户，清理前需要先确定这些行的删除规则。
 
 ## 数据库预算
 
@@ -99,7 +116,7 @@ src/easyaudit_next/
 | 403 | 已认证，但缺少所需的业务关系 |
 | 404 | 组织范围内查不到，或未授权且不应暴露对象是否存在 |
 | 422 | 请求、Scenario 数据、工作流或业务规则校验失败 |
-| 409 | 过期的生命周期、并发冲突、唯一性冲突 |
+| 409 | 过期的生命周期、并发冲突、唯一性冲突；创建时 `Idempotency-Key` 被不同请求复用 |
 | 429 | 登录尝试过多（只用于 `login`，响应与账号无关） |
 | 503 | 数据库 `statement_timeout` / `lock_timeout` 到期，带 `Retry-After` |
 
@@ -132,7 +149,7 @@ src/easyaudit_next/
 - 前后端同源：`/api/v1/*` 与 SPA 同源，没有 CORS，没有浏览器可读的 token。
 - 所有请求走 `web/src/api/client.ts`，不散落 `fetch()`。
 - 场景相关的 UI 通过适配器按精确的 `(scenario_key, scenario_version)` 解析。版本未知时拒绝显示，不回退到其他版本。
-- 409 表示数据已过期：刷新后让用户重试。禁止自动重放写请求，包括结果未知的创建请求。
+- 409 表示数据已过期：刷新后让用户重试。禁止自动重放写请求，包括结果未知的创建请求。创建页在表单生命周期内持有一个 `Idempotency-Key`，用户手动重试、双击和网络失败后重新提交复用同一个键；键被不同请求复用（409）时提示刷新，不自动重放。
 - 不在本地长期保存业务状态的影子副本，写操作成功后刷新相关查询。
 
 ## 部署
