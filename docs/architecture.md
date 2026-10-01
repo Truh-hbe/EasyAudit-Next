@@ -117,7 +117,7 @@ src/easyaudit_next/
 |---|---|
 | 403 | 已认证，但缺少所需的业务关系 |
 | 404 | 组织范围内查不到，或未授权且不应暴露对象是否存在 |
-| 422 | 请求、Scenario 数据、工作流或业务规则校验失败 |
+| 422 | 请求、Scenario 数据、工作流或业务规则校验失败；管理导出的行数超过 `EXPORT_MAX_ROWS` |
 | 409 | 过期的生命周期、并发冲突、唯一性冲突；创建时 `Idempotency-Key` 被不同请求复用 |
 | 413 | Evidence 超过 `EVIDENCE_MAX_BYTES`（只用于上传） |
 | 415 | Evidence 的类型不在白名单，或扩展名与声明的类型不一致（只用于上传） |
@@ -134,6 +134,15 @@ src/easyaudit_next/
   - Action 逾期：`due_at < as_of`，且状态为 `todo` / `in_progress`。
   - 即将到期窗口为 7 天，只用于展示。
 - 查询次数按资源类别固定，不随数据量线性增长；有测试比较 5 条与 100 条数据时的 SQL 次数。
+- **一致快照**：管理视图的多条加载查询在 `snapshot_read`（`REPEATABLE READ, READ ONLY`）事务里执行。READ COMMITTED 下每条语句各取一份快照，并发提交会让计数和生命周期来自不同时刻。隔离级别必须在事务第一条语句之前设置，而请求事务已经做过认证查询，所以 `snapshot_read` 先提交（只读，无副作用），再在**同一条连接**上开新事务，退出时提交，之后 Session touch 照常在读写事务里执行。不另开连接，避免一个请求占两条连接。列表、进度、导出都使用它。
+- **管理导出**（`GET /management/review-cases/export?format=csv|xlsx` + 与列表相同的筛选）：
+  - 行来自与 JSON 列表同一个"授权快照 → 过滤 → 排序"方法（`_filtered_summaries`），只是不分页。禁止另写指标算法；三种输出逐行逐字段一致由 `test_management_export_api.py` 固定。
+  - 过滤后行数超过 `EXPORT_MAX_ROWS`（默认 10000）整体失败（422），不截断；响应在序列化完成后一次性返回，没有部分输出。
+  - 时间一律按 `EXPORT_TIMEZONE`（默认 `Asia/Shanghai`）输出带 offset 的 ISO 8601；元数据含 generated_at、as_of、组织名称、筛选条件、时区、行数。
+  - 表格公式注入：所有文本单元格以 `= + - @ \t \r` 开头时加 `'` 前缀（CSV 与 XLSX 一致）；XLSX 文本显式写成字符串类型；计数保持数字。XML 不可表示的控制字符替换为 U+FFFD。
+  - CSV 为 UTF-8 + BOM；前几行是 `key,value` 元数据，空一行，再是表头与数据。XLSX 为 `review_cases` 与 `metadata` 两个 sheet。
+  - 响应头：`Content-Disposition: attachment`（带时间戳的文件名）、`X-Content-Type-Options: nosniff`、`Cache-Control: no-store`。
+  - 导出是数据外发：写一条 INFO `management_export`（`export_format`、`row_count`、`organization_id`、`actor_user_id`），不含任何行内容。暂不写平台审计事件。
 - 管理范围：用户需要是 Case 的直接成员，并在该 Case 上持有 `manage_case_members` 与 `view_case`。子 Finding 仍需逐个检查 `view_finding`。
 
 ## 通知与提醒
@@ -218,7 +227,7 @@ Evidence 元数据（`evidences` 表、`register_evidence`）早已存在；文�
 - 日志消息必须是常量事件名（`tests/unit/test_logging_conventions.py` 强制），变量数据放 `extra={"fields": ...}`，不用 `%s` 参数或 f-string，因为 formatter 会原样输出 message。我们不提供 WebSocket，`uvicorn.run(ws="none")`；uvicorn/第三方 logger 最低 INFO（即使 `LOG_LEVEL=DEBUG`），避免协议层 DEBUG 日志回显原始请求。响应已开始后才失败（后台任务、流式响应）时，access 日志保留已发送的状态码并置 `error: true`，异常另记一条。
 - **禁止记录**：密码、Cookie、session token/id、Authorization、secret、请求体、Evidence 内容；任何请求头和请求体都不写日志。
 - 异常只记录 `exception_type` 和 `file:line:function` 堆栈，**不记录 `str(exc)`**（SQLAlchemy 异常的 message 带 SQL 和参数）。`ExceptionDetails` 里没有 message 字段，任何异常类型（包括领域异常）都不记录 message。
-- `observability`、`readiness` 只能被 `api/`、`main.py`、`serve.py` 使用，Review Core 与 Platform 不依赖它们（`scripts/check_architecture.py` 强制）。
+- `observability`、`readiness` 只能被 `api/`、`management/api.py`（HTTP 适配层）、`main.py`、`serve.py` 使用，Review Core 与 Platform 不依赖它们（`scripts/check_architecture.py` 强制）。
 
 ## 明确不做
 
