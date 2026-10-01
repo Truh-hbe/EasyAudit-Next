@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from easyaudit_next.api.health import health_router
+from easyaudit_next.api.review_evidence_downloads import review_evidence_download_router
 from easyaudit_next.api.review_evidence_uploads import review_evidence_upload_router
 from easyaudit_next.api.review_findings import review_findings_router
 from easyaudit_next.api.review_planning import review_planning_router
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(review_findings_router)
     app.include_router(review_rectification_router)
     app.include_router(review_evidence_upload_router)
+    app.include_router(review_evidence_download_router)
     app.include_router(review_verification_router)
     app.include_router(review_resource_query_router)
     app.include_router(workbench_router)

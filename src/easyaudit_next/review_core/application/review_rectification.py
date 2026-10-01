@@ -520,6 +520,24 @@ class RectificationService:
             raise ReviewAuthorizationError("ActionItem is not visible to this user")
         return self._repository.list_evidences(actor.organization_id, action_item.id)
 
+    def get_evidence_for_download(self, actor: User, evidence_id: EvidenceId) -> Evidence:
+        """Same read permission as `list_evidences`, looked up by `(organization, evidence)`.
+
+        Not found and not visible are indistinguishable to the caller on purpose: both raise
+        `LookupError`, so a download never reveals whether an Evidence exists.
+        """
+        self._require_active(actor)
+        evidence = self._repository.get_evidence(actor.organization_id, evidence_id)
+        if evidence is None:
+            raise LookupError("Evidence not found")
+        try:
+            _, _, _, policy, context = self._action_context(actor, evidence.action_item_id)
+        except LookupError as exc:
+            raise LookupError("Evidence not found") from exc
+        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
+            raise LookupError("Evidence not found")
+        return evidence
+
     def submit_rectification(
         self,
         actor: User,

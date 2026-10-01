@@ -26,6 +26,7 @@ from easyaudit_next.review_case_queries.context_service import ReviewCaseContext
 from easyaudit_next.review_case_queries.query_service import ReviewCaseCollectionQueryService
 from easyaudit_next.review_case_queries.review_catalog import ReviewCatalogQueryService
 from easyaudit_next.review_core.application.create_idempotency import CreateIdempotencyService
+from easyaudit_next.review_core.application.evidence_maintenance import MaintenanceStore
 from easyaudit_next.review_core.application.evidence_policy import EvidenceUploadPolicy
 from easyaudit_next.review_core.application.evidence_storage import EvidenceObjectStore
 from easyaudit_next.review_core.application.review_closure_findings import (
@@ -145,6 +146,12 @@ def build_rectification_service(session: Session) -> RectificationService:
 
 def build_evidence_object_store(settings: Settings) -> EvidenceObjectStore:
     """Blocking (reads credential files); raises `ObjectStoreNotConfiguredError` if unset."""
+
+    return S3EvidenceObjectStore.from_settings(settings)
+
+
+def build_evidence_maintenance_store(settings: Settings) -> MaintenanceStore:
+    """For the operator commands: the same adapter, seen through the maintenance port."""
 
     return S3EvidenceObjectStore.from_settings(settings)
 

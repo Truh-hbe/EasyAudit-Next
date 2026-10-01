@@ -621,6 +621,12 @@ export function getActionEvidences(
   )
 }
 
+// A plain same-origin link: the browser sends the session cookie and saves the attachment
+// itself, so the bytes never pass through JavaScript memory.
+export function evidenceDownloadUrl(evidenceId: string): string {
+  return `/api/v1/evidences/${encodeURIComponent(evidenceId)}/content`
+}
+
 // The server only accepts these types, and only with a matching extension. Deriving the type
 // from the extension (not from the OS-reported file.type) keeps e.g. CSV files that Windows
 // reports as application/vnd.ms-excel uploadable.

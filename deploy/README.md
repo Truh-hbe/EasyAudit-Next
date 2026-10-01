@@ -82,6 +82,31 @@ systemctl list-timers easyaudit-reminder-sweep.timer     # 确认下次触发时
 - 运行记录在表 `scheduler_runs`（运维记录，不影响业务，也不决定是否跳过运行）。进程崩溃会留下一条 `running` 记录，它不会阻止下一次运行；`scheduler-status` 不把它当作失败，只看最近一次成功。
 - 排障：先看 `journalctl -u easyaudit-reminder-sweep` 里最近一次的 JSON，`error_summary` 只含异常类型和 SQLSTATE（如 `OperationalError/55P03` 是锁等待超时、`/40P01` 是死锁），不含 SQL 或数据；重跑即可补齐。
 
+## Evidence 维护
+
+两个命令都经 `$DC run --rm --no-deps -T api easyaudit-next ...` 运行（需要 postgres 和 object-storage 已启动），向 stdout 输出一行 JSON。
+
+```bash
+# 孤儿清理：删除没有任何 Evidence 行引用、且早于 --min-age-hours（默认 24；删除时必须 ≥ 24，--dry-run 允许 ≥ 1）的对象，
+# 并中止同样超龄的未完成 multipart。被引用的对象永远不删。第一次在新环境先 --dry-run。
+$DC run --rm --no-deps -T api easyaudit-next cleanup-evidence-orphans --dry-run
+$DC run --rm --no-deps -T api easyaudit-next cleanup-evidence-orphans
+
+# 完整性校验：读回每个对象，核对存在、大小、sha256。有任何不一致退出码为 1。
+$DC run --rm --no-deps -T api easyaudit-next verify-evidence [--organization-id UUID] [--limit N]
+```
+
+- `cleanup-evidence-orphans` 输出 `scanned`、`orphans`（含还太年轻的）、`deleted`、`kept_young`、`multipart_stale`、`multipart_aborted`、`skipped_referenced`、`failed`、`max_delete`、`deleted_but_registered`、`refused`；`failed`、`refused`、`deleted_but_registered` 任一非零时退出码为 1。`deploy/easyaudit-cleanup-evidence-orphans.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。从备份恢复后，bucket 比数据库引用的多出一些对象（见"备份"的一致性说明），它们在 min-age 之后被这个命令清理。
+- **三条整体拒绝保护**（非 dry-run；先完整列举、算出完整候选集，再决定是否开始删除，任何一条触发就一个对象都不删、也不中止 multipart，退出码 1，JSON `refused` 写原因）：
+  1. `no_evidence_rows`：数据库 `evidences` 是 0 行而桶里有 evidence 对象——几乎肯定连错了库，或恢复没有完成。先确认 `DATABASE_URL` 指向正确的库、恢复已完成，再重跑。
+  2. `revision_mismatch`：数据库的 alembic revision 不等于当前代码的 head——先 `$DC run --rm migrate`（或确认镜像与数据库是同一个 release）。
+  3. `too_many_deletions`：要删的对象数超过 `--max-delete`（默认 100）。正常孤儿很少，一次很多说明出问题；先用 `--dry-run` 看清是什么，确认确实该删之后用 `--max-delete N` 调大上限重跑。
+- **保护是启发式的，不绑定部署身份**：部署需确保 CLI 使用的数据库与对象存储配置属于同一环境；错桶 + 同 revision + 候选数不超限时，这三项保护拦不住。`revision_mismatch` 要求 `alembic_version` 的全部行恰好是当前 head。命令先列举完对象和 multipart，才开始任何删除或中止。
+- **已知窗口**：一条登记若在逐 key 复查之后、删除之前提交（需要登记被延迟超过 24 小时，只有 DB 黑洞类故障才可能），对象会被删而元数据保留。每次删除后命令会再查一次：命中则当场写 ERROR 日志 `evidence_object_deleted_while_registered`（`storage_key`、`evidence_id`），JSON 里 `deleted_but_registered > 0`，退出码非零（timer 显示 failed）；`DeleteObject` 报错时同样复查。命令中途异常失败时 JSON 仍输出已累计的计数，并带 `error`（异常类型）。处理：从最近一份备份把该 key 的对象拷回 bucket，再用 `verify-evidence` 确认。
+- **时钟与耗时**：min-age 依赖 Garage 与运行命令的主机时钟一致，部署时保持时钟同步；multipart 的年龄不代表它不活跃，所以单次上传的耗时必须远小于 min-age。
+- **`verify-evidence` 与 `deploy/backup/verify.sh` 的区别**：`verify.sh BACKUP_DIR` 以**某一份备份包的 manifest** 为基准——先校验备份包本身，再（不加 `--bundle-only`）把线上 bucket 与 DB 对照这份 manifest，用于"这个环境是否还原成了这份备份"；`verify-evidence` 不需要备份包，只检查**线上**对象存储的每个对象与数据库里的 Evidence 元数据（存在、大小、sha256）是否一致，走应用自己的 S3 客户端、可按组织/数量限制，用于恢复后的验证和平时的故障诊断。它读取全部对象，不是例行监控；Evidence 丢失还会在下载时以 500 + `evidence_object_missing` 日志暴露。
+- 下载（`GET /api/v1/evidences/{id}/content`）不重算 sha256；它只在发送响应头之前比较存储报告的大小与元数据（不一致 → 500 + ERROR `evidence_object_size_mismatch`，不发送内容）。内容层面的完整性由 `verify-evidence`（线上）和备份时的核对（备份）保证。
+
 ## 备份
 
 目标：RPO ≤ 24h，RTO ≤ 4h。工具在 `deploy/backup/`，全部通过一次性容器（`db-tool`、`object-tool`，只接入 `backend` 网络，不发布端口，非 root，`cap_drop: ALL`）访问数据库和对象存储。前置条件：docker compose、python3、flock，且用**非 root** 的运维账号（在 docker 组内，且拥有 0700 的 `deploy/secrets`）执行，容器以该账号的 uid 写备份目录。
@@ -92,7 +117,7 @@ EASYAUDIT_BACKUP_DIR=/srv/easyaudit-backups deploy/backup/backup.sh
 ```
 
 - 备份目录**权限必须是 0700**（脚本会检查，不满足就拒绝）。每次备份生成 `easyaudit-backup-<UTC 时间戳>/`，内含 `database.dump`（`pg_dump -Fc`）、`objects/`（bucket 的 S3 镜像，用固定版本的 rclone 经 S3 协议拷贝，不依赖 Garage 内部卷）和 `manifest.json`。备份先写到 `.partial` 目录，成功后才改名，因此看到的完整目录一定是成功的备份。
-- **一致性**：先 `pg_dump`，再镜像对象。对象由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守），所以 dump 之后拷贝的对象集合一定是 DB 引用集合的超集。多出来的是孤儿对象，由 Pilot-4B 的孤儿清理处理。备份时会核对 dump 里 Evidence 引用的对象：key 在存储里**不存在**，或 size/sha256 与对象**不一致**，都算完整性问题。备份**照常完成并保留**（不能因为个别坏数据让 RPO 失守），manifest 记 `"integrity": "degraded"` 并列出 `integrity_problems`，脚本以**退出码 3**结束（普通失败是 1，成功是 0），systemd 会显示 failed，运维能发现。`verify` 对 degraded 备份判失败；`restore` 允许恢复 degraded 备份，但开始前会醒目打印问题清单。
+- **一致性**：先 `pg_dump`，再镜像对象。对象由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守），所以 dump 之后拷贝的对象集合一定是 DB 引用集合的超集。多出来的是孤儿对象，由 `cleanup-evidence-orphans` 处理（见"Evidence 维护"）。备份时会核对 dump 里 Evidence 引用的对象：key 在存储里**不存在**，或 size/sha256 与对象**不一致**，都算完整性问题。备份**照常完成并保留**（不能因为个别坏数据让 RPO 失守），manifest 记 `"integrity": "degraded"` 并列出 `integrity_problems`，脚本以**退出码 3**结束（普通失败是 1，成功是 0），systemd 会显示 failed，运维能发现。`verify` 对 degraded 备份判失败；`restore` 允许恢复 degraded 备份，但开始前会醒目打印问题清单。
 - **manifest**：`backup_timestamp`（UTC，dump 开始时刻）、`release_sha`（读运行中 api 镜像的 revision label，不信任环境变量；api/web/object-storage 三个镜像的 label 必须一致且等于当前检出）、`alembic_revision`（取自 dump 内的 `alembic_version`）、dump 的 sha256、每个对象的 key/size/sha256、各服务的镜像 tag、开始时间与耗时。
 - **保留策略**：默认保留 14 天，`EASYAUDIT_BACKUP_RETENTION_DAYS` 可改。新备份成功之后才清理过期备份。degraded 备份照常按天数过期，但**最近一份 `integrity: ok` 的备份永远不删**（否则对象持续缺失时，14 天后会把最后一份健康备份清掉）；过期的陈旧 `.partial` 会清理，名字不符合 `easyaudit-backup-<时间戳>` 格式的目录不会被碰。
 - **退出码**：`backup.sh` 0=成功；1=失败、没有产出备份；3=备份已产出但完整性 degraded（见上）。timer 对非零都会显示 failed，需要处理 degraded 时看备份里的 `manifest.json`。
@@ -131,7 +156,7 @@ deploy/backup/restore.sh environment BACKUP_DIR    # 整个新环境，见下
 
 `deploy/backup/drill.sh` 走完整流程：临时证书和 secrets 部署 → migrate、`bootstrap-admin`（用 stdin 传密码，`getpass` 在没有 TTY 时读 stdin）→ 通过网关的真实 API 建 ReviewPlan、Case、Finding、Action，并**上传三个真实文件**作为 Evidence（最大的一个 9 MiB，超过 8 MiB 的 part 大小，走多段上传；服务端算出的 size/sha256 必须与本地一致），再从 bucket 读回对象，确认 bucket 里恰好是这三个对象且 sha256 一致 → `backup.sh` → `down -v` → 生成新 secrets 和证书 → `restore.sh environment` → 验证（`alembic current` 等于 head、原账号登录、打开原 Case 和 Finding、Evidence 元数据、`verify.sh`），并确认恢复会拒绝非空目标，以及 release 不匹配（`database`、`objects`、`environment` 三个入口都测）；最后故意删掉一个已登记的对象再备份，断言退出码为 3、备份被保留、manifest 标记 degraded、`verify` 判失败，`check-freshness.sh` 只认更早那份 ok 备份；再拆掉环境、往 bucket 里放一个对象，断言 `restore.sh environment` 在写数据库之前就拒绝、数据库保持为空。实际 RTO 超过 `DRILL_RTO_LIMIT_SECONDS`（默认 14400）演练判失败；记录写不进去也判失败。输出 `restore-drill-record.json`（`restore_started_at`、`restore_completed_at`、`actual_rto_seconds`、`backup_timestamp`、`release_sha`、`result`）。CI 对应 `backup-restore-drill` job（不是 required check），记录作为 artifact 上传并打印在日志里。
 
-"通过 API 下载 Evidence"要等 Pilot-4B 的下载端点；`drill_api.py` 的 `check` 里留了扩展点，Pilot-4B 必须把它加进演练。在此之前用对象级 sha256 校验代替。
+恢复后 `drill_api.py check` 通过 API **下载每个 Evidence**（含 9 MiB 的多段上传文件），把字节的 sha256 与元数据以及上传前本地文件的 sha256 比对，并检查 `Content-Disposition`（`filename*` 解码后等于原文件名）和 `nosniff`；随后 `verify-evidence` 必须零不一致、`cleanup-evidence-orphans --dry-run` 必须找不到孤儿（顺便在真实的 Garage 上走一遍列举接口）。第 8 步故意删掉一个对象后，`drill_api.py lost` 断言它的下载是带 request_id 的 500（不是 404），`verify-evidence` 必须失败并点名该 Evidence。
 
 ## 冒烟测试
 
@@ -141,5 +166,5 @@ deploy/backup/restore.sh environment BACKUP_DIR    # 整个新环境，见下
 
 - 对象存储为 Garage（单节点）。API 用 `s3_access_key_id`/`s3_secret_access_key` 访问 bucket `easyaudit-evidence`（内部端点 `http://object-storage:3900`，region `garage`），凭证以 secrets 文件挂载，环境变量只给文件路径（`OBJECT_STORAGE_*_FILE`）。API 的 `/health/ready` 含 `object_storage`，只检查 endpoint 可达（不签名的 HEAD，任何 HTTP 状态都算通），**不校验凭证和 bucket**；凭证或 bucket 不对会在第一次上传时以 503 暴露。
 - Evidence 上传限制由 `EVIDENCE_MAX_BYTES`（默认 25 MiB）和 `EVIDENCE_ALLOWED_CONTENT_TYPES` 控制。网关的 `request_body max_size`（`Caddyfile`，26 MiB）要略大于应用上限：调大应用上限时同步改它。
-- 上传失败后可能留下孤儿对象（登记失败且删除也失败）或未完成的 multipart（进程崩溃）；它们不在任何 Evidence 行里引用，备份会把前者当作多出来的对象带走，清理由 Pilot-4B 的孤儿清理处理。
+- 上传失败后可能留下孤儿对象（登记失败且删除也失败）或未完成的 multipart（进程崩溃）；它们不在任何 Evidence 行里引用，备份会把前者当作多出来的对象带走，由 `cleanup-evidence-orphans` 清理（见"Evidence 维护"）。
 - API 只信任来自网关固定地址（`172.30.10.10`）的代理头。若该网段与内网冲突，同时修改 `compose.yaml` 中 `edge` 网段、网关 `ipv4_address` 和 `FORWARDED_ALLOW_IPS`（测试会检查后两项一致）。

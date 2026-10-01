@@ -144,11 +144,24 @@ heads="$("${DC[@]}" run --rm -T migrate alembic heads 2>/dev/null | awk '/^[0-9A
   || fail "alembic current='$current' head='$heads' manifest='$expected'"
 # The certificate is new, so trust the new one. The account, password hash and all data come from the backup.
 API_ARGS=(--base "$BASE" --cacert "$EASYAUDIT_CERTS_DIR/tls.crt" --login "$ADMIN_LOGIN" --password "$ADMIN_PASSWORD")
-# EXTENSION POINT (Pilot-4B): drill_api.py `check` must also download every Evidence through the
-# API and compare the bytes' sha256. Until the download endpoint exists, verify.sh (object-level
-# sha256 against the manifest, Evidence rows against objects) stands in for it.
+# `check` downloads every Evidence through the API and compares the bytes' sha256 with the
+# metadata and with the digest of the file before it was uploaded.
 "${DRILL_API[@]}" check "${API_ARGS[@]}" --state "$WORK/state.json"
 "$BACKUP_DIR_SRC/verify.sh" "$BACKUP"
+# The online check (reads every object back through the S3 API) agrees, and the orphan cleanup
+# runs against the real object store (dry run: it must find nothing unreferenced).
+"${DC[@]}" run --rm -T api easyaudit-next verify-evidence | tee "$WORK/verify-evidence.json"
+python3 - "$WORK/verify-evidence.json" <<'PY'
+import json, sys
+result = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+assert result["checked"] == 3 and result["problems"] == [], result
+PY
+"${DC[@]}" run --rm -T api easyaudit-next cleanup-evidence-orphans --dry-run | tee "$WORK/orphans.json"
+python3 - "$WORK/orphans.json" <<'PY'
+import json, sys
+result = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+assert (result["scanned"], result["orphans"], result["deleted"]) == (3, 0, 0), result
+PY
 RESTORE_COMPLETED_AT="$(now_utc)"
 RTO_SECONDS="$(( $(date +%s) - RESTORE_T0 ))"
 
@@ -171,6 +184,13 @@ done
 step "8. degraded backup: a registered object is lost, the backup is still kept"
 LOST_KEY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidences"][0]["storage_key"])' "$WORK/state.json")"
 object_tool_net deletefile "$S3_REMOTE/$LOST_KEY"
+# Evidence loss must be loud: the download is a 500 (not a 404), and verify-evidence names it.
+"${DRILL_API[@]}" lost "${API_ARGS[@]}" --state "$WORK/state.json"
+LOST_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidences"][0]["id"])' "$WORK/state.json")"
+verify_status=0
+"${DC[@]}" run --rm -T api easyaudit-next verify-evidence > "$WORK/verify-lost.json" || verify_status=$?
+[ "$verify_status" -ne 0 ] || fail "verify-evidence passed although an object is missing"
+grep -q "$LOST_ID" "$WORK/verify-lost.json" || fail "verify-evidence does not name the lost Evidence"
 degraded_status=0
 EASYAUDIT_BACKUP_DIR="$WORK/backups" "$BACKUP_DIR_SRC/backup.sh" || degraded_status=$?
 [ "$degraded_status" -eq 3 ] || fail "backup exit status $degraded_status, expected 3 (degraded)"

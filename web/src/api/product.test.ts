@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { EVIDENCE_MAX_BYTES, evidenceContentType, precheckEvidenceFile, uploadActionEvidence } from './product'
+import {
+  EVIDENCE_MAX_BYTES,
+  evidenceContentType,
+  evidenceDownloadUrl, precheckEvidenceFile,
+  uploadActionEvidence,
+} from './product'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -83,5 +88,12 @@ describe('Evidence upload request', () => {
       expect(evidenceContentType(new File(['x'], name, { type: 'text/plain' }))).toBe('text/plain')
       expect(evidenceContentType(new File(['x'], name))).toBe('application/octet-stream')
     }
+  })
+})
+
+describe('Evidence download link', () => {
+  it('points at the authorized content endpoint and encodes the id', () => {
+    expect(evidenceDownloadUrl('abc-1')).toBe('/api/v1/evidences/abc-1/content')
+    expect(evidenceDownloadUrl('a/b')).toBe('/api/v1/evidences/a%2Fb/content')
   })
 })

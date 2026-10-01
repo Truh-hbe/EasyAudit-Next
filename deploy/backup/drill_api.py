@@ -6,7 +6,8 @@ cookie is `__Host-`/Secure and must not depend on the client's cookie-jar policy
 
   drill_api.py whoami   --base URL ...          print the admin's organization id
   drill_api.py seed     --base URL ... --state state.json   (uploads real files as Evidence)
-  drill_api.py check    --base URL ... --state state.json
+  drill_api.py check    --base URL ... --state state.json   (downloads every Evidence)
+  drill_api.py lost     --base URL ... --state state.json   (a deleted object must be a loud 500)
 """
 
 import argparse
@@ -78,6 +79,17 @@ class Client:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")
             raise ApiError(f"POST {path} -> {exc.code}: {detail}") from exc
+
+    def download(self, path: str) -> tuple[int, Any, bytes]:
+        """GET without raising on an HTTP error status: callers assert on it."""
+        req = urllib.request.Request(
+            self.base + path, method="GET", headers={"cookie": f"{COOKIE}={self.token}"}
+        )
+        try:
+            with self.opener.open(req, timeout=120) as resp:
+                return resp.status, resp.headers, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers, exc.read()
 
     def login(self, login_name: str, password: str) -> Any:
         self.token = None
@@ -202,7 +214,11 @@ def seed(client: Client, args: argparse.Namespace) -> None:
         "finding": {"id": finding["id"], "title": finding["title"]},
         "action_item_id": action_item["id"],
         "evidences": [
-            {k: e[k] for k in ("id", "storage_key", "sha256", "size_bytes")} for e in evidences
+            {k: e[k] for k in ("id", "storage_key", "sha256", "size_bytes", "original_name")}
+            # The digest of the local file before it was uploaded: the one value no server-side
+            # step can have influenced.
+            | {"upload_sha256": spec["sha256"]}
+            for e, spec in zip(evidences, evidence_files(), strict=True)
         ],
     }
     Path(args.state).write_text(json.dumps(state, indent=2))
@@ -227,8 +243,6 @@ def check(client: Client, args: argparse.Namespace) -> None:
     finding = client.request("GET", f"/api/v1/findings/{state['finding']['id']}")
     expect("finding id", finding["id"], state["finding"]["id"])
     expect("finding title", finding["title"], state["finding"]["title"])
-    # EXTENSION POINT (Pilot-4B): once the download endpoint exists, fetch every Evidence
-    # through the API here and compare the downloaded bytes' sha256 with `sha256` below.
     evidences = client.request("GET", f"/api/v1/action-items/{state['action_item_id']}/evidences")
     expect(
         "evidence metadata",
@@ -237,16 +251,49 @@ def check(client: Client, args: argparse.Namespace) -> None:
             (e["id"], e["storage_key"], e["sha256"], e["size_bytes"]) for e in state["evidences"]
         ),
     )
+    # Download every Evidence through the API, as a person would, and compare the bytes with the
+    # metadata and with the digest of the file before it was ever uploaded.
+    for evidence in state["evidences"]:
+        status, headers, body = client.download(f"/api/v1/evidences/{evidence['id']}/content")
+        expect(f"download {evidence['id']} status", status, 200)
+        expect(f"download {evidence['id']} size", len(body), evidence["size_bytes"])
+        digest = hashlib.sha256(body).hexdigest()
+        expect(f"download {evidence['id']} sha256 vs metadata", digest, evidence["sha256"])
+        expect(f"download {evidence['id']} sha256 vs upload", digest, evidence["upload_sha256"])
+        nosniff = headers.get("x-content-type-options")
+        expect(f"download {evidence['id']} nosniff", nosniff, "nosniff")
+        disposition = headers.get("content-disposition") or ""
+        expect(f"download {evidence['id']} attachment", disposition.startswith("attachment;"), True)
+        encoded_name = disposition.partition("filename*=UTF-8''")[2]
+        expect(
+            f"download {evidence['id']} file name",
+            urllib.parse.unquote(encoded_name),
+            evidence["original_name"],
+        )
     if problems:
         print("\n".join(problems), file=sys.stderr)
         raise SystemExit(1)
-    print("API check ok: login, case, finding, evidence metadata")
+    downloads = len(state["evidences"])
+    print(f"API check ok: login, case, finding, evidence metadata, {downloads} downloads")
+
+
+def lost(client: Client, args: argparse.Namespace) -> None:
+    """The first Evidence's object was deleted from the bucket: the download must say so loudly
+    (500 with a request id), never 404."""
+    state = json.loads(Path(args.state).read_text())
+    client.login(args.login, args.password)
+    lost_id = state["evidences"][0]["id"]
+    status, headers, body = client.download(f"/api/v1/evidences/{lost_id}/content")
+    if status != 500 or "request_id" not in json.loads(body) or not headers.get("x-request-id"):
+        print(f"expected a 500 with a request id, got {status}: {body[:200]!r}", file=sys.stderr)
+        raise SystemExit(1)
+    print("lost object downloads as 500 with a request id")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("whoami", "seed", "check"):
+    for name in ("whoami", "seed", "check", "lost"):
         p = sub.add_parser(name)
         p.add_argument("--base", required=True)
         p.add_argument("--cacert")
@@ -260,8 +307,10 @@ def main() -> None:
         whoami(client, args.login, args.password)
     elif args.command == "seed":
         seed(client, args)
-    else:
+    elif args.command == "check":
         check(client, args)
+    else:
+        lost(client, args)
 
 
 if __name__ == "__main__":

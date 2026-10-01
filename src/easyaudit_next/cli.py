@@ -1,14 +1,18 @@
 import argparse
+import asyncio
 import getpass
 import json
 import sys
-from collections.abc import Callable
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from pwdlib import PasswordHash
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,6 +26,7 @@ from easyaudit_next.collaboration.scheduler_runs import (
     start_run,
 )
 from easyaudit_next.composition import (
+    build_evidence_maintenance_store,
     build_per_candidate_reminder_sweep,
     build_scenario_registry,
 )
@@ -29,6 +34,10 @@ from easyaudit_next.infrastructure.database import (
     create_database_engine,
     create_session_factory,
     session_scope,
+)
+from easyaudit_next.infrastructure.maintenance_logging import (
+    configure_cli_logging,
+    log_object_deleted_while_registered,
 )
 from easyaudit_next.platform.application.authentication import normalize_login_name
 from easyaudit_next.platform.application.login_throttle import (
@@ -56,8 +65,19 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyUserRepository,
 )
 from easyaudit_next.platform.settings import get_settings
+from easyaudit_next.review_core.application.evidence_maintenance import (
+    EvidenceReferences,
+    OrphanCleanupResult,
+    ReferencesScope,
+    cleanup_evidence_orphans,
+    verify_evidences,
+)
+from easyaudit_next.review_core.application.evidence_storage import ObjectStoreError
 from easyaudit_next.review_core.application.scenario_catalog import ScenarioCatalogService
 from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersion
+from easyaudit_next.review_core.persistence.evidence_maintenance_repository import (
+    SqlAlchemyEvidenceMaintenanceRepository,
+)
 from easyaudit_next.review_core.persistence.repositories import SqlAlchemyScenarioCatalogRepository
 
 
@@ -401,6 +421,123 @@ def _occurrence_key(value: str) -> str:
     return value
 
 
+DEFAULT_MAX_DELETE = 100
+MIN_AGE_FOR_DELETION = timedelta(hours=24)
+
+
+def _references_scope(factory: sessionmaker[Session]) -> ReferencesScope:
+    @contextmanager
+    def scope() -> Iterator[EvidenceReferences]:
+        with session_scope(factory) as session:  # a fresh short transaction per `with`
+            yield SqlAlchemyEvidenceMaintenanceRepository(session)
+
+    return scope
+
+
+def _code_head() -> str:
+    """Head of the alembic scripts in this image (cwd holds alembic.ini)."""
+    head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    if head is None:
+        raise RuntimeError("alembic scripts have no head")
+    return head
+
+
+def cleanup_evidence_orphans_command(
+    min_age: timedelta, dry_run: bool, max_delete: int = DEFAULT_MAX_DELETE
+) -> int:
+    if not dry_run and min_age < MIN_AGE_FOR_DELETION:
+        print(
+            json.dumps(
+                {
+                    "event": "cleanup_evidence_orphans",
+                    "error": "a deleting run needs --min-age-hours >= 24 (--dry-run allows >= 1)",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    settings = get_settings()
+    configure_cli_logging(settings.log_level)
+    result = OrphanCleanupResult()
+    error: str | None = None
+    engine = create_database_engine(settings)
+    try:
+        store = build_evidence_maintenance_store(settings)
+        asyncio.run(
+            cleanup_evidence_orphans(
+                store,
+                _references_scope(create_session_factory(engine)),
+                min_age=min_age,
+                now=datetime.now(UTC),
+                dry_run=dry_run,
+                expected_revision=_code_head(),
+                max_delete=max_delete,
+                result=result,
+                on_incident=lambda incident: log_object_deleted_while_registered(
+                    incident.storage_key, incident.evidence_id
+                ),
+            )
+        )
+    except Exception as exc:  # whatever was counted so far is still reported
+        error = type(exc).__name__
+    finally:
+        engine.dispose()
+    payload = asdict(result)
+    del payload["incidents"]
+    if error is not None:
+        payload["error"] = error
+    print(json.dumps({"event": "cleanup_evidence_orphans", "dry_run": dry_run, **payload}))
+    failed = result.failed or result.refused or result.deleted_but_registered or error
+    return 1 if failed else 0
+
+
+def verify_evidence_command(organization_id: UUID | None, limit: int | None) -> int:
+    settings = get_settings()
+    engine = create_database_engine(settings)
+    try:
+        store = build_evidence_maintenance_store(settings)
+        result = asyncio.run(
+            verify_evidences(
+                store,
+                _references_scope(create_session_factory(engine)),
+                organization_id=OrganizationId(organization_id) if organization_id else None,
+                limit=limit,
+            )
+        )
+    except ObjectStoreError as exc:
+        print(json.dumps({"event": "verify_evidence", "error": str(exc)}), file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    print(
+        json.dumps(
+            {
+                "event": "verify_evidence",
+                "checked": result.checked,
+                "problems": [
+                    {"evidence_id": str(item.evidence_id), "problem": item.problem}
+                    for item in result.problems
+                ],
+            }
+        )
+    )
+    return 1 if result.problems else 0
+
+
+def _min_age_hours(raw: str) -> float:
+    value = float(raw)
+    if value < 1:  # shorter than any upload or late registration could take: refuse
+        raise argparse.ArgumentTypeError("must be at least 1 hour")
+    return value
+
+
+def _positive_int(raw: str) -> int:
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="easyaudit-next")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -441,6 +578,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.add_argument("--job", default=JOB_AUTOMATIC_REMINDER_SWEEP)
     status.add_argument("--max-age-hours", type=float, default=26.0)
+    orphans = subparsers.add_parser(
+        "cleanup-evidence-orphans",
+        help="Delete unreferenced Evidence objects and abort stale multipart uploads",
+    )
+    orphans.add_argument(
+        "--min-age-hours",
+        type=_min_age_hours,
+        default=24.0,
+        help="Only touch objects/uploads older than this (default 24). A deleting run needs "
+        ">= 24; --dry-run accepts >= 1",
+    )
+    orphans.add_argument("--dry-run", action="store_true", help="Report only; delete nothing")
+    orphans.add_argument(
+        "--max-delete",
+        type=_positive_int,
+        default=DEFAULT_MAX_DELETE,
+        help="Refuse to delete anything if more objects than this are orphans (default 100)",
+    )
+    verify = subparsers.add_parser(
+        "verify-evidence",
+        help="Read every Evidence object back and compare size and SHA-256 with the metadata",
+    )
+    verify.add_argument("--organization-id", type=UUID, help="Only this Organization")
+    verify.add_argument("--limit", type=_positive_int, help="Check at most this many Evidences")
     return parser
 
 
@@ -460,6 +621,14 @@ def main() -> None:
         sys.exit(run_reminder_sweep(args.as_of, args.occurrence_key))
     elif args.command == "scheduler-status":
         sys.exit(scheduler_status(args.job, args.max_age_hours))
+    elif args.command == "cleanup-evidence-orphans":
+        sys.exit(
+            cleanup_evidence_orphans_command(
+                timedelta(hours=args.min_age_hours), args.dry_run, args.max_delete
+            )
+        )
+    elif args.command == "verify-evidence":
+        sys.exit(verify_evidence_command(args.organization_id, args.limit))
 
 
 if __name__ == "__main__":

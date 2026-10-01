@@ -12,6 +12,7 @@ types only).
 import asyncio
 import hashlib
 from collections.abc import AsyncIterator, Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +21,20 @@ from botocore.client import BaseClient
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
+from easyaudit_next.infrastructure.observability import APP_LOGGER, describe_exception
 from easyaudit_next.platform.settings import Settings
 from easyaudit_next.review_core.application.evidence_storage import (
+    ListedObject,
+    ListedUpload,
+    ObjectNotFoundError,
     ObjectStoreError,
     ObjectStoreNotConfiguredError,
     StoredObject,
 )
 
 DEFAULT_PART_SIZE = 8 * 1024 * 1024  # S3 requires >= 5 MiB for every part but the last
+DOWNLOAD_CHUNK_SIZE = 64 * 1024  # what a download holds in memory at once
+_NOT_FOUND_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
 
 
 def _read_secret(path: str) -> str:
@@ -85,6 +92,68 @@ async def _call[T](function: Callable[[], T]) -> T:
         return await asyncio.to_thread(function)
     except (BotoCoreError, ClientError) as exc:
         raise ObjectStoreError("Object storage operation failed") from exc
+
+
+def _close_abandoned_response(task: "asyncio.Future[Any]") -> None:
+    """Done-callback for a GET whose caller was cancelled before it returned: close the Body
+    the moment it exists. No bounded wait is needed, the close is tied to the GET finishing,
+    which botocore's connect/read timeouts bound per socket operation."""
+    if task.cancelled() or task.exception() is not None:
+        return
+    body = task.result().get("Body")
+    if body is not None:
+        # The close runs in the executor and handles its own errors: an exception left in a
+        # discarded Future would be printed by asyncio's default handler, message and all.
+        asyncio.get_running_loop().run_in_executor(None, _close_quietly, body)
+
+
+def _close_quietly(body: Any) -> None:
+    try:
+        body.close()
+    except Exception as exc:
+        APP_LOGGER.warning(
+            "object_stream_close_failed", extra={"exception_details": describe_exception(exc)}
+        )
+
+
+class _S3ObjectStream:
+    """Reads one `GetObject` body in small chunks, each in a worker thread.
+
+    Cancelling `__anext__` abandons a thread that is blocked in `read`; it ends on its own
+    (botocore's `read_timeout` bounds it) and its result is dropped. `aclose` closes the body
+    and cannot be interrupted half-way: the close runs in a shielded thread call.
+    """
+
+    def __init__(self, body: Any, chunk_size: int, content_length: int | None) -> None:
+        self.content_length = content_length
+        self._body = body
+        self._chunk_size = chunk_size
+        self._closed = False
+
+    def __aiter__(self) -> "_S3ObjectStream":
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            chunk: bytes = await _call(lambda: self._body.read(self._chunk_size))
+        except BaseException:
+            await self.aclose()
+            raise
+        if not chunk:
+            await self.aclose()
+            raise StopAsyncIteration
+        return chunk
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await asyncio.shield(asyncio.to_thread(self._body.close))
+        except Exception:
+            pass  # nothing useful to do: the connection is dropped either way
 
 
 class S3EvidenceObjectStore:
@@ -153,12 +222,71 @@ class S3EvidenceObjectStore:
         try:
             await asyncio.to_thread(lambda: self._client.head_object(Bucket=self._bucket, Key=key))
         except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+            if exc.response.get("Error", {}).get("Code") in _NOT_FOUND_CODES:
                 return False
             raise ObjectStoreError("Object storage operation failed") from exc
         except BotoCoreError as exc:
             raise ObjectStoreError("Object storage operation failed") from exc
         return True
+
+    async def open_stream(self, key: str) -> _S3ObjectStream:
+        task = asyncio.ensure_future(
+            asyncio.to_thread(lambda: self._client.get_object(Bucket=self._bucket, Key=key))
+        )
+        try:
+            # Shielded: a cancelled request cannot stop the worker thread, and whatever the GET
+            # returns afterwards owns a connection that someone has to close.
+            response = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(_close_abandoned_response)
+            raise
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in _NOT_FOUND_CODES:
+                raise ObjectNotFoundError("Object not found") from exc
+            raise ObjectStoreError("Object storage operation failed") from exc
+        except BotoCoreError as exc:
+            raise ObjectStoreError("Object storage operation failed") from exc
+        length = response.get("ContentLength")
+        return _S3ObjectStream(
+            response["Body"], DOWNLOAD_CHUNK_SIZE, int(length) if length is not None else None
+        )
+
+    async def list_objects(self, prefix: str) -> AsyncIterator[ListedObject]:
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": prefix}
+            if token is not None:
+                kwargs["ContinuationToken"] = token
+            page = await _call(partial(self._client.list_objects_v2, **kwargs))
+            for item in page.get("Contents", []):
+                yield ListedObject(item["Key"], item["LastModified"], int(item["Size"]))
+            if not page.get("IsTruncated"):
+                return
+            token = page["NextContinuationToken"]
+
+    async def list_multipart_uploads(self, prefix: str) -> AsyncIterator[ListedUpload]:
+        key_marker: str | None = None
+        upload_marker: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": prefix}
+            if key_marker is not None:
+                kwargs["KeyMarker"] = key_marker
+            if upload_marker is not None:
+                kwargs["UploadIdMarker"] = upload_marker
+            page = await _call(partial(self._client.list_multipart_uploads, **kwargs))
+            for item in page.get("Uploads", []):
+                yield ListedUpload(item["Key"], item["UploadId"], item["Initiated"])
+            if not page.get("IsTruncated"):
+                return
+            key_marker = page.get("NextKeyMarker")
+            upload_marker = page.get("NextUploadIdMarker")
+
+    async def abort_multipart_upload(self, key: str, upload_id: str) -> None:
+        await _call(
+            lambda: self._client.abort_multipart_upload(
+                Bucket=self._bucket, Key=key, UploadId=upload_id
+            )
+        )
 
     async def _create_multipart(self, key: str) -> str:
         response = await _call(
