@@ -65,8 +65,8 @@ IdempotencyKeyHeader = Annotated[
         alias="Idempotency-Key",
         min_length=1,
         max_length=128,
-        pattern=r"^[\x20-\x7e]+$",
-        description="1-128 printable ASCII characters; scoped to organization, user and operation.",
+        pattern=r"^[\x21-\x7e]+$",
+        description="1-128 non-space printable ASCII characters.",
     ),
 ]
 

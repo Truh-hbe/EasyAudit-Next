@@ -556,7 +556,7 @@ class CreateIdempotencyRecord(Base):
         UniqueConstraint("review_plan_id", name="uq_create_idempotency_review_plan"),
         UniqueConstraint("review_case_id", name="uq_create_idempotency_review_case"),
         CheckConstraint(
-            "idempotency_key ~ '^[\\x20-\\x7e]{1,128}$'", name="ck_create_idempotency_key"
+            "idempotency_key ~ '^[\\x21-\\x7e]{1,128}$'", name="ck_create_idempotency_key"
         ),
         CheckConstraint(
             "length(request_fingerprint) = 64", name="ck_create_idempotency_fingerprint"

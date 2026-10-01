@@ -49,7 +49,7 @@ src/easyaudit_next/
 
 只覆盖 `POST /review-plans` 和 `POST /review-cases`，不是通用幂等框架。
 
-- 客户端用可选请求头 `Idempotency-Key`（1–128 个可打印 ASCII 字符，非法为 422）。不带头时行为与以前完全一样。
+- 客户端用可选请求头 `Idempotency-Key`（1–128 个可打印非空白 ASCII 字符（0x21–0x7E，不含空格），非法为 422）。不带头时行为与以前完全一样。
 - 表 `create_idempotency_records`，主键即唯一作用域 `(organization_id, actor_user_id, operation, idempotency_key)`。存 `request_fingerprint`（sha256）、`response_status`，结果资源用两个类型化可空 FK `review_plan_id` / `review_case_id`（组织感知的复合 FK，不用 Generic FK，见 ADR-0005），CHECK 要求恰好填一个且与 `operation` 一致。
 - **数据库唯一约束是最终仲裁，禁止"先 SELECT 再 INSERT"。** 创建事务的第一条语句是 `INSERT ... ON CONFLICT DO NOTHING RETURNING`：
   - 抢到：用**预先生成**的资源 id 正常创建（同一事务写入资源与 Activity），提交。记录一开始就是完整的，所以不需要回填，CHECK 恒成立。

@@ -78,7 +78,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("review_plan_id", name="uq_create_idempotency_review_plan"),
         sa.UniqueConstraint("review_case_id", name="uq_create_idempotency_review_case"),
         sa.CheckConstraint(
-            "idempotency_key ~ '^[\\x20-\\x7e]{1,128}$'",
+            "idempotency_key ~ '^[\\x21-\\x7e]{1,128}$'",
             name="ck_create_idempotency_key",
         ),
         sa.CheckConstraint(

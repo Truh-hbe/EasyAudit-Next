@@ -216,7 +216,7 @@ def test_no_header_keeps_current_behaviour(postgres_engine: Engine) -> None:
     assert count_records(postgres_engine, organization_id) == 0
 
 
-@pytest.mark.parametrize("key", ["", "k" * 129, "密钥".encode(), "bad\x7fkey"])
+@pytest.mark.parametrize("key", ["", "k" * 129, "密钥".encode(), "bad\x7fkey", "has space"])
 def test_invalid_key_is_422(postgres_engine: Engine, key: str | bytes) -> None:
     organization_id, [(_, name)] = seed_org(postgres_engine)
     client = login(postgres_engine, name)
@@ -258,3 +258,31 @@ def test_key_cannot_read_another_organizations_resource(postgres_engine: Engine)
     assert plan_b.json()["id"] != plan_a.json()["id"]
     assert plan_b.json()["organization_id"] == str(org_b)
     assert clone(client_b).get(f"/api/v1/review-plans/{plan_a.json()['id']}").status_code == 404
+
+
+def test_failed_creation_with_a_key_can_be_retried_with_a_corrected_payload(
+    postgres_engine: Engine,
+) -> None:
+    """A 422 rolls back the claim, so the same key is free for the corrected request."""
+
+    organization_id, [(_, name)] = seed_org(postgres_engine)
+    client = login(postgres_engine, name)
+    headers = _key()
+    title = f"case-{uuid4()}"
+
+    rejected = client.post(
+        "/api/v1/review-cases",
+        json={**CASE_BODY, "title": title, "scenario_data": {"area_code": "area-a"}},
+        headers=headers,
+    )
+    assert rejected.status_code == 422
+    assert count_records(postgres_engine, organization_id) == 0
+
+    corrected = client.post(
+        "/api/v1/review-cases", json={**CASE_BODY, "title": title}, headers=headers
+    )
+
+    assert corrected.status_code == 201
+    assert REPLAYED not in corrected.headers
+    assert count_cases(postgres_engine, organization_id, title) == 1
+    assert count_records(postgres_engine, organization_id) == 1
