@@ -63,6 +63,11 @@ FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS = {
     "update_assigned_action",
     "transition_case",
 }
+# Credential rows are leaf rows (nothing references them), so FOR UPDATE is harmless there.
+FOR_UPDATE_ALLOWED_FUNCTIONS = {
+    (SOURCE_ROOT / "platform" / "persistence" / "repositories.py", "lock_by_login_name"),
+    (SOURCE_ROOT / "platform" / "persistence" / "repositories.py", "lock_by_user_id"),
+}
 
 
 def imported_modules(tree: ast.AST) -> list[str]:
@@ -81,6 +86,38 @@ def imports_name(tree: ast.AST, module: str, name: str) -> bool:
             if any(alias.name == name for alias in node.names):
                 return True
     return False
+
+
+def keyword_is_true(call: ast.Call, name: str) -> bool:
+    return any(
+        keyword.arg == name
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+        for keyword in call.keywords
+    )
+
+
+def parent_lock_violations(path: Path, tree: ast.AST) -> list[str]:
+    """Row locks must be FOR NO KEY UPDATE: `key_share=True` without `read=True`."""
+
+    violations: list[str] = []
+
+    def visit(node: ast.AST, function: str | None) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "with_for_update"
+            and (path, function) not in FOR_UPDATE_ALLOWED_FUNCTIONS
+            and not (keyword_is_true(node, "key_share") and not keyword_is_true(node, "read"))
+        ):
+            violations.append(f"{path}:{node.lineno}")
+        for child in ast.iter_child_nodes(node):
+            visit(child, function)
+
+    visit(tree, None)
+    return violations
 
 
 def string_literals(tree: ast.AST) -> set[str]:
@@ -234,6 +271,13 @@ def main() -> None:
 
         if is_web_process_file(path):
             check_web_process_has_no_scheduler(path, tree)
+
+        violations = parent_lock_violations(path, tree)
+        if violations:
+            raise SystemExit(
+                "Row locks must use with_for_update(key_share=True) (FOR NO KEY UPDATE); "
+                f"FOR UPDATE conflicts with FK FOR KEY SHARE: {violations}"
+            )
 
         if path.is_relative_to(COLLABORATION_ROOT) and imports_name(
             tree,

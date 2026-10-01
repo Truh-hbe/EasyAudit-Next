@@ -280,7 +280,7 @@ class SqlAlchemyReviewCoreRepository:
                 ReviewCaseRecord.organization_id == organization_id,
                 ReviewCaseRecord.id == case_id,
             )
-            .with_for_update()
+            .with_for_update(key_share=True)
             .execution_options(populate_existing=True)
         )
         return self._case_to_domain(record) if record is not None else None

@@ -37,11 +37,16 @@ src/easyaudit_next/
 
 - 一个请求一个事务：实体变更、Activity、Notification 在同一个事务内提交或回滚。唯一的例外是 Evidence 上传（见"证据文件上传"）：流式写对象期间不允许持有任何事务，所以它是"预授权事务 → 写对象 → 登记事务"三段。
 - 单行状态变更使用 CAS：`UPDATE ... WHERE id = :id AND lifecycle = :expected`。无匹配行时返回 409，且不写 Activity。
-- 跨行不变量使用父行 `SELECT ... FOR UPDATE`，固定加锁顺序，**禁止反向加锁**：
+- 跨行不变量使用父行 `SELECT ... FOR NO KEY UPDATE`，固定加锁顺序，**禁止反向加锁**（见下方“父行锁强度”）：
   - 创建幂等：`IdempotencyKey → Organization → …`。带 `Idempotency-Key` 的创建请求在事务**第一条语句**抢占幂等键，之后才进入下面任何一条锁顺序（见"创建幂等"）。
   - 整改（Action 增改、指派、证据、整改提交）：`Finding → Action / Assignee / Evidence / Submission`
   - 验证、重开、Case 关闭：`ReviewCase → Finding → Submission / Activity`
   - Case 成员增删、用户停用：`Organization → Case（按 ID 排序）→ User（按 ID 排序）`
+- **父行锁强度**：被外键引用的父行（Organization、User、Case、Finding、Action）一律用 `FOR NO KEY UPDATE`，SQLAlchemy 写作 `.with_for_update(key_share=True)`。
+  - 原因：子表 INSERT 会对被引用的父行加 `FOR KEY SHARE`，它与 `FOR UPDATE` 冲突、与 `FOR NO KEY UPDATE` 不冲突。用 `FOR UPDATE` 时，一个请求先 INSERT 了引用 User/Case 的行（持有 KEY SHARE），再 INSERT Notification（需要 Organization 的 KEY SHARE），就会和持有 Organization `FOR UPDATE`、正在等该 User/Case 的成员管理/停用请求形成隐式的反向加锁，PostgreSQL 报 40P01，Web 请求返回 500。`NO KEY UPDATE` 之间、与 `FOR UPDATE` 仍然互斥，所以显式的 `lock_*` 互斥语义不变。
+  - 只有事务里会修改该行主键或被引用唯一键时才允许 `FOR UPDATE`。目前没有这种情况；叶子行（`local_credentials`，没有 FK 引用它）可以保留 `FOR UPDATE`，在 `scripts/check_architecture.py` 里白名单。
+  - SQLAlchemy 陷阱：`with_for_update()` 是 `FOR UPDATE`；`key_share=True` 生成的是 `FOR NO KEY UPDATE`；`FOR KEY SHARE` 要写 `read=True, key_share=True`。
+  - `check_architecture.py` 禁止其他写法；`test_parent_lock_fk_race.py` 固定了 Case / User 两条边的双 Session 竞争，并断言各父行锁编译出的 SQL。
 - 等待锁之后的决定性读取必须刷新 ORM 状态（`populate_existing=True`），不能使用锁前的 identity map 快照。
 - 锁后发现生命周期已变化，按并发冲突（409）处理，而不是按业务校验失败（422）处理。
   - 自动提醒 sweep（每个候选一个事务）：`Organization(FOR KEY SHARE) → Case 或 Action → 收件人 User(KEY SHARE，由 Notification FK 隐式获得)`，与上面的顺序一致，见"通知与提醒"。
@@ -59,7 +64,7 @@ src/easyaudit_next/
   - 创建失败（422、授权失败、异常）整个事务回滚，键不会被占用。
 - 重放按**当前**读取授权返回资源的当前表示（不存响应快照）；actor 已无权读取时按现有读取规则返回 403/404。
 - 指纹：校验后的请求体 `model_dump`，键排序、datetime 统一为 UTC ISO、无空白，再取 sha256；`operation` 不计入（已在作用域里）。Plan：`title`、`planned_start_at`、`planned_end_at`；Case：`plan_id`、`scenario_key`、`scenario_version`、`title`、`planned_start_at`、`planned_end_at`、`scenario_data`。
-- **该表所有外键都是 `DEFERRABLE INITIALLY DEFERRED`。** 立即检查的 FK 会在 claim 时对 Organization / User 行加 `FOR KEY SHARE`，两个并发创建各持一份后都要升级为 `FOR UPDATE`（`_lock_actor`），互相等待而死锁。延迟到提交时检查，此时本事务已持有 `FOR UPDATE`。`test_concurrent_creations_with_different_keys_do_not_deadlock` 固定了这一点。
+- **该表所有外键都是 `DEFERRABLE INITIALLY DEFERRED`。** 立即检查的 FK 会在 claim 时对 Organization / User 行加 `FOR KEY SHARE`，两个并发创建各持一份后都要升级为行锁（`_lock_actor`），互相等待而死锁。延迟到提交时检查，此时本事务已持有行锁。（父行锁改为 `FOR NO KEY UPDATE` 后，升级本身不再与 `KEY SHARE` 冲突，延迟检查对这一点已不是必需，但保留无害。）`test_concurrent_creations_with_different_keys_do_not_deadlock` 固定了这一点。
 - 不用 advisory lock：它需要自己的键空间与生命周期，而唯一索引已经给出等同语义，并且随事务回滚自动释放。
 - **保留期**：试点期不清理幂等记录（规模很小）；并入"数据保留"一起设计。记录有 FK 指向资源与用户，清理前需要先确定这些行的删除规则。
 

@@ -171,7 +171,9 @@ class AutomaticReminderEvaluator:
             ReviewCaseRecord.id == review_case_id,
         )
         if guard:
-            statement = statement.with_for_update().execution_options(populate_existing=True)
+            statement = statement.with_for_update(key_share=True).execution_options(
+                populate_existing=True
+            )
         return self._session.scalar(statement)
 
     def _load_action(
@@ -186,7 +188,9 @@ class AutomaticReminderEvaluator:
             ActionItemRecord.id == action_item_id,
         )
         if guard:
-            statement = statement.with_for_update().execution_options(populate_existing=True)
+            statement = statement.with_for_update(key_share=True).execution_options(
+                populate_existing=True
+            )
         return self._session.scalar(statement)
 
     @staticmethod
