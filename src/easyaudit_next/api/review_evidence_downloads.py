@@ -78,6 +78,7 @@ class EvidenceDownloadResponse(Response):
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         evidence = self._evidence
+        evidence_id = f"{evidence.id}"  # computed here: log calls take constants and names only
         try:
             stream = await self._store.open_stream(evidence.storage_key)
         except ObjectNotFoundError as exc:
@@ -87,7 +88,7 @@ class EvidenceDownloadResponse(Response):
                 "evidence_object_missing",
                 extra={
                     "fields": {
-                        "evidence_id": str(evidence.id),
+                        "evidence_id": evidence_id,
                         "storage_key": evidence.storage_key,
                     },
                     "exception_details": describe_exception(exc),
