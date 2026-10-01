@@ -31,10 +31,11 @@ src/easyaudit_next/
 - 只有 `scenarios` 自身和 `composition.py` 可以 import `scenarios`。
 - `review_core` 不 import `collaboration`、`management`、`notifications`、`workbench`。
 - 通用收件人编排中不出现 `submit_rectification` 等场景权限字面量。
+- 对象存储 SDK（`boto3`、`botocore` 等）只能在 `infrastructure/` 里 import；`infrastructure.object_storage` 适配器只由 `composition.py` 接线。业务代码依赖应用层的 `EvidenceObjectStore` 端口。
 
 ## 事务与并发
 
-- 一个请求一个事务：实体变更、Activity、Notification 在同一个事务内提交或回滚。
+- 一个请求一个事务：实体变更、Activity、Notification 在同一个事务内提交或回滚。唯一的例外是 Evidence 上传（见"证据文件上传"）：流式写对象期间不允许持有任何事务，所以它是"预授权事务 → 写对象 → 登记事务"三段。
 - 单行状态变更使用 CAS：`UPDATE ... WHERE id = :id AND lifecycle = :expected`。无匹配行时返回 409，且不写 Activity。
 - 跨行不变量使用父行 `SELECT ... FOR UPDATE`，固定加锁顺序，**禁止反向加锁**：
   - 创建幂等：`IdempotencyKey → Organization → …`。带 `Idempotency-Key` 的创建请求在事务**第一条语句**抢占幂等键，之后才进入下面任何一条锁顺序（见"创建幂等"）。
@@ -117,8 +118,10 @@ src/easyaudit_next/
 | 404 | 组织范围内查不到，或未授权且不应暴露对象是否存在 |
 | 422 | 请求、Scenario 数据、工作流或业务规则校验失败 |
 | 409 | 过期的生命周期、并发冲突、唯一性冲突；创建时 `Idempotency-Key` 被不同请求复用 |
+| 413 | Evidence 超过 `EVIDENCE_MAX_BYTES`（只用于上传） |
+| 415 | Evidence 的类型不在白名单，或扩展名与声明的类型不一致（只用于上传） |
 | 429 | 登录尝试过多（只用于 `login`，响应与账号无关） |
-| 503 | 数据库 `statement_timeout` / `lock_timeout` 到期，带 `Retry-After` |
+| 503 | 数据库 `statement_timeout` / `lock_timeout` 到期，带 `Retry-After`；对象存储不可用或未配置（上传，不带 `Retry-After`） |
 
 `openapi/openapi.json` 是稳定接口的基线，由 `scripts/check_openapi.py` 校验。
 
@@ -159,7 +162,7 @@ src/easyaudit_next/
 - 只有 HTTPS 网关对外，且只发布 443。数据库、API、对象存储只在网络内部可达；`backend` 网络是 `internal`。
 - 数据库迁移必须显式执行（`migrate` 服务），API 启动时不迁移。
 - 所有容器非 root 运行；镜像固定到具体版本，不使用 `latest`。
-- 密钥只通过未提交的文件（Docker secrets / `*_FILE`）注入，不写进 compose 或镜像。
+- 密钥只通过未提交的文件（Docker secrets / `*_FILE`）注入，不写进 compose 或镜像。API 用 `s3_access_key_id`、`s3_secret_access_key`（Garage 导入的同一对）访问对象存储。
 - API 只信任网关的代理头，不使用 `--forwarded-allow-ips='*'`。
 - 自建镜像的 tag 是 `EASYAUDIT_RELEASE`（git commit SHA，必须设置，没有默认值），并带 OCI label `org.opencontainers.image.revision`。不使用 `latest`、`local`。
 
@@ -173,13 +176,28 @@ src/easyaudit_next/
 - 恢复只写入空目标（DB 无表、bucket 为空），不提供覆盖开关；`database`、`objects`、`environment` 三个入口在写入之前都要求 manifest 的 release 等于检出的 HEAD 和 `EASYAUDIT_RELEASE`（以及已有 api 容器的镜像 label），整环境恢复在写入之前先确认 DB 和 bucket 都为空，且 `alembic current` 等于 manifest revision 和该 release 的 head。
 - 备份/恢复工具是接入 `backend` 网络的一次性容器（非 root、`cap_drop: ALL`、不发布端口），不在长驻容器里写文件，也不给 postgres 发布端口。
 - secrets 和 TLS 证书不进备份包；和数据同盘的备份不算备份，异地拷贝由运维负责。
-- 恢复演练（`deploy/backup/drill.sh`，CI job `backup-restore-drill`）是备份恢复的验收；Pilot-4B 上线下载端点后，必须把"通过 API 下载 Evidence"加进演练。
+- 恢复演练（`deploy/backup/drill.sh`，CI job `backup-restore-drill`）是备份恢复的验收；演练通过网关 API 上传真实文件（含一个超过 part 大小的多段上传）来生成 Evidence，并从 bucket 读回对象核对 sha256；Pilot-4B 上线下载端点后，必须把"通过 API 下载 Evidence"加进演练。
+
+## 证据文件上传
+
+Evidence 元数据（`evidences` 表、`register_evidence`）早已存在；文件字节走对象存储。`POST /api/v1/action-items/{id}/evidence-uploads` 是登记 Evidence 的**唯一**入口，旧的 JSON 登记接口已删除（storage key、sha256、size 都由客户端提供，不可信）。
+
+- **端口与适配器**：应用层的 `EvidenceObjectStore`（`put_stream` / `delete` / `exists`，`review_core/application/evidence_storage.py`）；S3 适配器在 `infrastructure/object_storage.py`（boto3）。适配器把 SDK 异常换成不带 endpoint、bucket、凭证的 `ObjectStoreError`；凭证只从 `OBJECT_STORAGE_*_FILE` 指向的文件读取，只存在于 botocore 客户端里。botocore 显式配置 `connect_timeout`、`read_timeout`、`retries`（standard，`OBJECT_STORAGE_MAX_ATTEMPTS`）、path-style 寻址，并设 `proxies={}`（内部端点不走环境里的 HTTP(S)_PROXY）；校验和只在 API 要求时计算（`when_required`），因为我们自己对流计算 sha256，各 S3 兼容实现对 SDK 默认的尾部校验和支持不一。同步 SDK 的每次调用都在 `asyncio.to_thread` 里，不阻塞事件循环。
+- **请求体就是文件字节**，不用 multipart：Starlette 的 multipart 会先把整个 body 落到临时文件，handler 才开始，大小限制来得太晚，且可以填满磁盘。`Content-Type` 是文件类型，`X-Evidence-Filename` 是 percent-encoded UTF-8 的原始文件名，`description` 是 query 参数。**文件名只是元数据**：去掉路径成分、控制字符和双向控制符，限制 255 字符，永远不参与存储 key。
+- **三段事务**（`api/review_evidence_uploads.py`）：
+  1. 认证后在短事务里**预授权**（`authorize_evidence_registration`：与 `register_evidence` 相同的权限与 Action 校验，不加锁），随即 `commit()` + `expunge_all()`。此后到响应前，这个请求不持有任何事务，也不占着池里的连接——否则大文件上传会被 `idle_in_transaction_session_timeout`（30s）杀掉连接。`tests/integration/test_evidence_upload_api.py` 在对象存储的 `put_stream` 里查 `pg_stat_activity` 断言这一点（含真实 Cookie 认证链路）。
+  2. 流式写对象：`request.stream()` 逐块读取，边读边算 SHA-256 和大小，满 8 MiB 就作为一个 part 上传（小于一个 part 的文件用单次 `PutObject`）。内存上限是约一个 part 加一个输入块，与文件大小无关；不先读进内存，也不先落盘。key 由服务端生成：`org/{organization_id}/evidence/{uuid4}`，只写一次，不覆盖（备份一致性模型的前提）。
+  3. 新的短事务调用 `register_evidence`，传入**服务端计算的** key、size、sha256。它重新取用户（上传期间可能已被停用）、重新授权、按 `Finding → Action` 加锁、写元数据和 Activity，然后提交。
+- **失败清理**：写对象失败或中途超限，适配器 abort multipart，什么都不留；第 3 段失败（授权变化 403/404、生命周期变化 409/422、DB 错误），**尽力删除**刚写的对象，再返回原来的错误。删除也失败时对象成为孤儿，记 WARNING `evidence_object_orphaned`，字段只有 `storage_key`（日志白名单为此新增了 `storage_key`；key 里没有文件名和用户输入），留给 Pilot-4B 的孤儿清理。进程崩溃遗留的未完成 multipart 同样由 4B 处理。
+- **限制**：`EVIDENCE_MAX_BYTES`（默认 25 MiB）。`Content-Length` 超限在读 body 之前就 413；没有 `Content-Length`（chunked）时累计到超限立即中止并 413。网关 Caddy 对 `/api/v1/*` 设 `request_body max_size`（26 MiB，略大于应用上限，纵深防御，改应用上限时同步改 `deploy/Caddyfile`，`tests/unit/test_deploy_compose.py` 检查两者关系）。类型白名单 `EVIDENCE_ALLOWED_CONTENT_TYPES`（默认 pdf、png、jpeg、docx、xlsx、pptx、txt、csv；只能是代码里有扩展名映射的类型，启动时校验）；不在白名单或扩展名与类型不一致 → 415；文件名为空或编码非法、空文件 → 422。
+- **提前拒绝的代价**：413/415/422/403 在读 body 之前就返回，客户端可能还在发送，此时连接会被关闭，浏览器看到的可能是网络错误而不是状态码；前端对此有专门提示，且不自动重试。
+- 对象存储不可用或未配置：上传 503（`object_storage_operation_failed` WARNING，字段只有 `component`、`reason`），不写元数据。
 
 ## 可观测性
 
 - **Health 不对外。** `/health/live`、`/health/ready` 挂在根路径，不在 `/api/v1` 下；网关只转发 `/api/v1/*`，所以外部访问不到（`deploy/smoke.sh` 断言）。旧的 `/health` 已删除。
-- `live` 只表示进程能响应，不访问数据库或任何外部依赖。`ready` 检查三项，全部通过才 200，否则 503：数据库 `SELECT 1`（连接和语句超时各 2 秒，用独立、不池化的 engine）、Alembic 当前 revision 等于镜像内脚本的 head、必需配置存在。响应体只有各项的 `ok`/`fail`，不带 DSN、revision、错误消息；细节写日志。
-- 对象存储暂不纳入 `ready`，因为应用尚未使用它；Pilot-4A 接入 Evidence 上传时再加进去。
+- `live` 只表示进程能响应，不访问数据库或任何外部依赖。`ready` 检查四项，全部通过才 200，否则 503：数据库 `SELECT 1`（连接和语句超时各 2 秒，用独立、不池化的 engine）、Alembic 当前 revision 等于镜像内脚本的 head、必需配置存在。响应体只有各项的 `ok`/`fail`，不带 DSN、revision、错误消息；细节写日志。
+- `ready` 另有第四项 `object_storage`：对 bucket 做一次 HeadBucket，未配置（`OBJECT_STORAGE_*` 缺失）同样是 fail。它在 `asyncio.to_thread` 的线程里与数据库探针并发执行，同一个 2 秒截止时间；线程无法被取消，所以探针用自己的 botocore 客户端：`connect_timeout`/`read_timeout` 等于截止时间、`max_attempts=1`，被放弃的线程在约两个截止时间内自己结束，不会拖住进程退出。客户端只存在于探针线程内，没有全局状态；响应只有 `ok`/`fail`，细节写 WARNING 日志（只有异常类型和 `file:line`，不含 endpoint、bucket、凭证）。
 - `ready` 的数据库探针是全 async 的（psycopg `AsyncConnection`，不走业务连接池、不占线程池），连接、查询、关闭共用一个 2 秒（`READINESS_TIMEOUT_SECONDS`）的客户端截止时间，超时后立即关闭 socket 并返回 503。探针连接参数由与业务 engine 相同的 SQLAlchemy dialect 转换（`libpq_connect_kwargs`），`sslmode`、`sslrootcert`、Unix socket、已有 `options` 原样保留（`options` 追加 statement_timeout 而不是覆盖），所以不会在业务要求 TLS 时明文探测。整个评估另有兜底总预算（超时 + 1 秒）；评估被取消同样立即关闭 socket。期望的 alembic head 只在 lifespan 启动时用 `asyncio.to_thread` 读一次，存进 `app.state`（不用模块级全局状态，多个 app 实例互不影响）；读取失败会写 ERROR 日志，该进程在重启之前 `ready` 一直报 migrations fail，`live` 不受影响。镜像里的脚本读不出来说明镜像本身坏了，应由运维重启或回滚，应用不自愈，也绝不在事件循环里同步读文件。并发探针采用 single-flight（in-flight 任务存在 `app.state`）：已有探针在跑时，后来者等待同一次结果，不再另开连接。`/health/live` 也是 `async def`。
 - **request_id 由服务端生成**（UUID4），通过 `X-Request-ID` 响应头返回；忽略客户端传来的同名请求头。未处理异常的 500 响应体带 `request_id`。
 - 日志是 stdout 上一行一个 JSON，只用标准库（`infrastructure/observability.py`），级别由 `LOG_LEVEL` 控制（默认 INFO）。uvicorn 通过 `python -m easyaudit_next.serve` 启动，使用同一个 formatter，自带 access log 关闭。
