@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 
-import { ApiError } from '../../api/client'
-import { createReviewPlan, getReviewCatalog } from '../../api/product'
+import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
+import { createReviewPlan, getReviewCatalog, newIdempotencyKey } from '../../api/product'
 import type { ReviewCatalogItemResponse, ReviewPlanResponse } from '../../api/product'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 
@@ -31,8 +31,17 @@ export function isDefinitivePlanRejection(error: unknown): boolean {
   return error instanceof ApiError
 }
 
+// An unknown outcome may be retried by hand: the retry reuses the form's Idempotency-Key, so the
+// server either creates the plan once or replays the first result. It is never retried automatically.
 export function canSubmitPlan(state: PlanSubmitState): boolean {
-  return state.status !== 'submitting' && state.status !== 'unknown'
+  return state.status !== 'submitting'
+}
+
+function planRejectionMessage(error: unknown): string {
+  if (isIdempotencyKeyReuse(error)) {
+    return '提交的内容与此前使用同一幂等键的请求不一致。请刷新页面后重试。'
+  }
+  return errorMessage(error, '审查计划创建被服务器拒绝，请修正后重试。')
 }
 
 export async function executePlanSubmission(
@@ -43,10 +52,10 @@ export async function executePlanSubmission(
   } catch (error: unknown) {
     return {
       state: isDefinitivePlanRejection(error)
-        ? { status: 'rejected', message: errorMessage(error, '审查计划创建被服务器拒绝，请修正后重试。') }
+        ? { status: 'rejected', message: planRejectionMessage(error) }
         : {
             status: 'unknown',
-            message: '审查计划创建结果未知。为避免重复创建，系统不会自动再次提交；请返回审查活动查看服务器结果。',
+            message: '审查计划创建结果未知。可以重试保存：同一次提交使用相同的幂等键，不会重复创建；系统不会自动再次提交。',
           },
     }
   }
@@ -60,6 +69,8 @@ export function ReviewPlanCreatePage() {
   const [plannedEndAt, setPlannedEndAt] = useState('')
   const [submitState, setSubmitState] = useState<PlanSubmitState>({ status: 'idle' })
   const submitting = submitState.status === 'submitting'
+  // One key per form lifetime: retries, double clicks and resubmits after a network failure share it.
+  const idempotencyKey = useRef(newIdempotencyKey())
 
   useEffect(() => {
     const controller = new AbortController()
@@ -90,8 +101,9 @@ export function ReviewPlanCreatePage() {
         title,
         planned_start_at: dateInputToApi(plannedStartAt),
         planned_end_at: dateInputToApi(plannedEndAt),
-      }))
+      }, idempotencyKey.current))
     if (result.plan !== undefined) {
+      idempotencyKey.current = newIdempotencyKey()
       await navigate(`/review-plans/${encodeURIComponent(result.plan.id)}/review-cases/new`)
     } else {
       setSubmitState(result.state)
@@ -166,7 +178,7 @@ export function ReviewPlanCreatePage() {
             >
               {submitting
                 ? '正在保存计划…'
-                : submitState.status === 'rejected'
+                : submitState.status === 'rejected' || submitState.status === 'unknown'
                   ? '重试保存计划'
                   : '保存计划并继续'}
             </button>

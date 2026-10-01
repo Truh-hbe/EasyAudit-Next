@@ -347,9 +347,17 @@ export function getReviewCatalog(signal?: AbortSignal): Promise<ReviewCatalogIte
   return sessionApiRequest<ReviewCatalogItemResponse[]>('/api/v1/review-catalog', { signal })
 }
 
-export function createReviewPlan(input: ReviewPlanCreateInput): Promise<ReviewPlanResponse> {
+export function newIdempotencyKey(): string {
+  return crypto.randomUUID()
+}
+
+export function createReviewPlan(
+  input: ReviewPlanCreateInput,
+  idempotencyKey: string,
+): Promise<ReviewPlanResponse> {
   return sessionApiRequest<ReviewPlanResponse>('/api/v1/review-plans', {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(input),
   })
 }
@@ -365,9 +373,13 @@ export function getReviewPlan(planId: string, signal?: AbortSignal): Promise<Rev
   )
 }
 
-export function createReviewCase(input: ReviewCaseCreateInput): Promise<ReviewCaseResponse> {
+export function createReviewCase(
+  input: ReviewCaseCreateInput,
+  idempotencyKey: string,
+): Promise<ReviewCaseResponse> {
   return sessionApiRequest<ReviewCaseResponse>('/api/v1/review-cases', {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(input),
   })
 }

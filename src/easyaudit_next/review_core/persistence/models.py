@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -509,3 +510,73 @@ class ActivityRecord(Base):
     action_item_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     submission_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSONB, default=dict)
+
+
+class CreateIdempotencyRecord(Base):
+    """Claim of an Idempotency-Key by one ReviewPlan / ReviewCase creation (ADR-0005: typed FKs).
+
+    The resource id is chosen before the claim, so the row is complete from its first write and
+    the resource FKs are deferred: they are verified at commit, after the creation has run.
+    """
+
+    __tablename__ = "create_idempotency_records"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id"],
+            ["organizations.id"],
+            name="fk_create_idempotency_organization",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["actor_user_id", "organization_id"],
+            ["users.id", "users.organization_id"],
+            name="fk_create_idempotency_actor_organization",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["review_plan_id", "organization_id"],
+            ["review_plans.id", "review_plans.organization_id"],
+            name="fk_create_idempotency_plan_organization",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["review_case_id", "organization_id"],
+            ["review_cases.id", "review_cases.organization_id"],
+            name="fk_create_idempotency_case_organization",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint("review_plan_id", name="uq_create_idempotency_review_plan"),
+        UniqueConstraint("review_case_id", name="uq_create_idempotency_review_case"),
+        CheckConstraint(
+            "idempotency_key ~ '^[\\x21-\\x7e]{1,128}$'", name="ck_create_idempotency_key"
+        ),
+        CheckConstraint(
+            "length(request_fingerprint) = 64", name="ck_create_idempotency_fingerprint"
+        ),
+        CheckConstraint("response_status = 201", name="ck_create_idempotency_status"),
+        CheckConstraint(
+            "(operation = 'create_review_plan' "
+            "AND review_plan_id IS NOT NULL AND review_case_id IS NULL) "
+            "OR (operation = 'create_review_case' "
+            "AND review_case_id IS NOT NULL AND review_plan_id IS NULL)",
+            name="ck_create_idempotency_resource",
+        ),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    actor_user_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    operation: Mapped[str] = mapped_column(String(32), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    review_plan_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    review_case_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    response_status: Mapped[int] = mapped_column(SmallInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

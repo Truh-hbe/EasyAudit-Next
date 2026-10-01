@@ -101,10 +101,11 @@ def get_current_identity(
         ) from exc
 
     bind_actor(user.organization_id, user.id)
-    try:
-        yield CurrentIdentity(auth_session=auth_session, user=user)
-    finally:
-        auth.touch(auth_session)
+    # Touch only on a normal exit. After a failed request the transaction may be aborted (e.g.
+    # lock_timeout): a touch UPDATE would raise InFailedSqlTransaction and replace the original
+    # error, turning a 503 into a 500. The exception propagates and the transaction rolls back.
+    yield CurrentIdentity(auth_session=auth_session, user=user)
+    auth.touch(auth_session)
 
 
 # CurrentIdentity reuses DatabaseSession in its exit path to touch the session. Keep both

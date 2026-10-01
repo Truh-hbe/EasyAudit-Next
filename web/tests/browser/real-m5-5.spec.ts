@@ -400,7 +400,8 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
       await firstPage.getByRole('button', { name: '创建案例' }).click()
       await expect(firstPage.getByRole('alert')).toContainText('结果未知')
       expect(casePostCount).toBe(beforeAmbiguousCasePosts + 1)
-      await expect(firstPage.getByRole('button', { name: '创建案例' })).toBeDisabled()
+      // Pilot-3: an unknown outcome is retried by hand (same Idempotency-Key), never automatically.
+      await expect(firstPage.getByRole('button', { name: '重试创建案例' })).toBeEnabled()
       expect(ambiguousPlanId).toMatch(/^[0-9a-f-]{36}$/)
     } finally {
       await firstPage.unroute('**/api/v1/review-cases', abortHandler)

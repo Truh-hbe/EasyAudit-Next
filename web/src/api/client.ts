@@ -38,6 +38,14 @@ export class ApiError extends Error {
   }
 }
 
+export function isIdempotencyKeyReuse(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 409 &&
+    error.detail === 'Idempotency-Key reused with a different request'
+  )
+}
+
 type SessionUnauthorizedHandler = () => void
 
 let sessionUnauthorizedHandler: SessionUnauthorizedHandler | null = null

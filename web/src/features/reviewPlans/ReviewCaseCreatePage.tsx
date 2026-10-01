@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 
-import { ApiError } from '../../api/client'
+import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
 import {
   createReviewCase,
   getReviewCatalog,
   getReviewPlan,
+  newIdempotencyKey,
 } from '../../api/product'
 import type {
   ReviewCaseCreateInput,
@@ -39,8 +40,10 @@ export function isDefinitiveRejection(error: unknown): boolean {
   return error instanceof ApiError
 }
 
+// An unknown outcome may be retried by hand: the retry reuses the form's Idempotency-Key, so the
+// server either creates the case once or replays the first result. It is never retried automatically.
 export function canSubmitCase(state: CaseSubmitState): boolean {
-  return state.status !== 'submitting' && state.status !== 'unknown'
+  return state.status !== 'submitting'
 }
 
 export function canCreateCase(
@@ -48,6 +51,13 @@ export function canCreateCase(
   state: CaseSubmitState,
 ): boolean {
   return adapter !== undefined && canSubmitCase(state)
+}
+
+function caseRejectionMessage(error: unknown): string {
+  if (isIdempotencyKeyReuse(error)) {
+    return '提交的内容与此前使用同一幂等键的请求不一致。请刷新页面后重试。'
+  }
+  return errorMessage(error, '案例创建被服务器拒绝，请修正后重试。')
 }
 
 export async function executeCaseSubmission(
@@ -58,10 +68,10 @@ export async function executeCaseSubmission(
   } catch (error: unknown) {
     return {
       state: isDefinitiveRejection(error)
-        ? { status: 'rejected', message: errorMessage(error, '案例创建被服务器拒绝，请修正后重试。') }
+        ? { status: 'rejected', message: caseRejectionMessage(error) }
         : {
             status: 'unknown',
-            message: '案例创建结果未知。为避免重复创建，系统不会自动再次提交；请返回审查活动查看服务器结果。',
+            message: '案例创建结果未知。可以重试创建：同一次提交使用相同的幂等键，不会重复创建；系统不会自动再次提交。',
           },
     }
   }
@@ -91,6 +101,8 @@ export function ReviewCaseCreatePage() {
   const [caseTitle, setCaseTitle] = useState('')
   const [scenarioValues, setScenarioValues] = useState<ScenarioFormValues>({})
   const [submitState, setSubmitState] = useState<CaseSubmitState>({ status: 'idle' })
+  // One key per form lifetime: retries, double clicks and resubmits after a network failure share it.
+  const idempotencyKey = useRef(newIdempotencyKey())
 
   useEffect(() => {
     if (planId === undefined || planId.trim() === '') {
@@ -100,6 +112,7 @@ export function ReviewCaseCreatePage() {
     const controller = new AbortController()
     setLoadState({ status: 'loading' })
     setSubmitState({ status: 'idle' })
+    idempotencyKey.current = newIdempotencyKey()
     void Promise.all([
       getReviewPlan(planId, controller.signal),
       getReviewCatalog(controller.signal),
@@ -154,8 +167,10 @@ export function ReviewCaseCreatePage() {
     setSubmitState({ status: 'submitting' })
     const result = await executeCaseSubmission(() => createReviewCase(
         buildCaseCreateInput(planId, selectedItem, caseTitle, scenarioAdapter, scenarioValues),
+        idempotencyKey.current,
       ))
     if (result.reviewCase !== undefined) {
+      idempotencyKey.current = newIdempotencyKey()
       await navigate(`/review-cases/${encodeURIComponent(result.reviewCase.id)}`)
     } else {
       setSubmitState(result.state)
@@ -249,7 +264,7 @@ export function ReviewCaseCreatePage() {
             <CaseCreateFields
               values={scenarioValues}
               onChange={onScenarioChange}
-              disabled={submitState.status === 'submitting' || submitState.status === 'unknown'}
+              disabled={submitState.status === 'submitting'}
             />
           )}
           {submitState.status === 'rejected' ? <p role="alert">{submitState.message}</p> : null}
@@ -260,7 +275,11 @@ export function ReviewCaseCreatePage() {
               type="submit"
               disabled={!canCreateCase(scenarioAdapter, submitState)}
             >
-              {submitState.status === 'submitting' ? '正在创建案例…' : '创建案例'}
+              {submitState.status === 'submitting'
+                ? '正在创建案例…'
+                : submitState.status === 'unknown'
+                  ? '重试创建案例'
+                  : '创建案例'}
             </button>
           </div>
           {submitState.status === 'unknown' ? (
