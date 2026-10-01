@@ -419,6 +419,35 @@ class RectificationService:
         )
         return updated
 
+    def authorize_evidence_registration(
+        self,
+        actor: User,
+        action_item_id: ActionItemId,
+    ) -> None:
+        """Pre-authorization for an upload: the permission and Action checks of
+        `register_evidence`, without the Finding lock.
+
+        Advisory only. It lets the caller refuse an unauthorized upload before any byte is
+        stored; `register_evidence` repeats every check under the lock and decides.
+        """
+        action_item, finding, review_case, policy, context = self._action_context(
+            actor,
+            action_item_id,
+        )
+        self._require_evidence_permission(policy, context)
+        policy.action_operations.validate_evidence_registration(
+            self._action_operation_context(review_case, finding, action_item)
+        )
+
+    @staticmethod
+    def _require_evidence_permission(
+        policy: ScenarioPolicy, context: AuthorizationContext
+    ) -> None:
+        if not policy.authorization.allows(ADD_RECTIFICATION_EVIDENCE_PERMISSION, context):
+            raise ReviewAuthorizationError(
+                "Finding owner or Action assignee role required to register Evidence"
+            )
+
     def register_evidence(
         self,
         actor: User,
@@ -436,10 +465,7 @@ class RectificationService:
             actor,
             action_item_id,
         )
-        if not policy.authorization.allows(ADD_RECTIFICATION_EVIDENCE_PERMISSION, context):
-            raise ReviewAuthorizationError(
-                "Finding owner or Action assignee role required to register Evidence"
-            )
+        self._require_evidence_permission(policy, context)
         finding = self._lock_expected_finding(actor, finding)
         action_item = self._reload_action(actor, action_item.id, finding.id)
         policy.action_operations.validate_evidence_registration(

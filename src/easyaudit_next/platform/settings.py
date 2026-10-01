@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,6 +34,24 @@ class Settings(BaseSettings):
     db_lock_timeout_ms: int = Field(default=5_000, ge=1)
     db_idle_in_transaction_timeout_ms: int = Field(default=30_000, ge=1)
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
+    object_storage_endpoint: str = ""
+    object_storage_bucket: str = "easyaudit-evidence"
+    object_storage_region: str = "garage"
+    # Credentials come from files (Docker secrets), never from the environment or the image.
+    object_storage_access_key_id_file: str = ""
+    object_storage_secret_access_key_file: str = ""
+    object_storage_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    object_storage_read_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    object_storage_max_attempts: int = Field(default=3, ge=1, le=10)
+    evidence_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+    # Comma-separated; every entry must be a type the upload policy knows an extension for.
+    evidence_allowed_content_types: str = (
+        "application/pdf,image/png,image/jpeg,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation,"
+        "text/plain,text/csv"
+    )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @model_validator(mode="after")
@@ -42,6 +61,32 @@ class Settings(BaseSettings):
         if self.db_pool_size + self.db_max_overflow < 2:
             raise ValueError("DB_POOL_SIZE + DB_MAX_OVERFLOW must be at least 2")
         return self
+
+    @field_validator("object_storage_endpoint")
+    @classmethod
+    def _endpoint_is_origin_only(cls, value: str) -> str:
+        """http(s)://host[:port] and nothing else: no path prefix, query, fragment or userinfo.
+        The readiness probe and the S3 client must agree on where the endpoint is."""
+        if value == "":
+            return value
+        try:
+            url = urlsplit(value)
+            url.port  # noqa: B018 - raises ValueError for an invalid port
+        except ValueError as exc:
+            raise ValueError("OBJECT_STORAGE_ENDPOINT is not a valid URL") from exc
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.path not in {"", "/"}
+            or url.query
+            or url.fragment
+            or url.username is not None
+            or url.password is not None
+        ):
+            raise ValueError(
+                "OBJECT_STORAGE_ENDPOINT must be http(s)://host[:port] without path or credentials"
+            )
+        return value
 
     @field_validator("log_level", mode="before")
     @classmethod

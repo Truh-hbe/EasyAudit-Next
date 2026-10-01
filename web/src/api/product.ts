@@ -621,6 +621,68 @@ export function getActionEvidences(
   )
 }
 
+// The server only accepts these types, and only with a matching extension. Deriving the type
+// from the extension (not from the OS-reported file.type) keeps e.g. CSV files that Windows
+// reports as application/vnd.ms-excel uploadable.
+const EVIDENCE_CONTENT_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  csv: 'text/csv',
+}
+
+// Mirror of the backend defaults (EVIDENCE_MAX_BYTES, and the extension list above), used only
+// to refuse an obviously unacceptable file before sending it: a body the server rejects early
+// can surface in the browser as a dropped connection instead of a status code. Keep in sync
+// with `Settings.evidence_max_bytes` and `EXTENSIONS_BY_CONTENT_TYPE`; the server stays the
+// authority and re-checks everything (an operator-changed limit only makes this pre-check stale).
+export const EVIDENCE_MAX_BYTES = 25 * 1024 * 1024
+
+export type EvidencePrecheck = 'too_large' | 'type_not_allowed' | null
+
+// Own properties only: `'constructor' in {}` and `'__proto__' in {}` are true.
+function knownEvidenceExtension(file: File): string | undefined {
+  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : undefined
+  return extension !== undefined && Object.hasOwn(EVIDENCE_CONTENT_TYPES, extension) ? extension : undefined
+}
+
+export function precheckEvidenceFile(file: File): EvidencePrecheck {
+  if (knownEvidenceExtension(file) === undefined) return 'type_not_allowed'
+  if (file.size > EVIDENCE_MAX_BYTES) return 'too_large'
+  return null
+}
+
+export function evidenceContentType(file: File): string {
+  const extension = knownEvidenceExtension(file)
+  return (extension && EVIDENCE_CONTENT_TYPES[extension]) || file.type || 'application/octet-stream'
+}
+
+// Raw body, not multipart. Size, SHA-256 and storage key are computed by the server; the
+// request carries only the file type, its name and an optional description.
+export function uploadActionEvidence(
+  actionItemId: string,
+  file: File,
+  description?: string,
+): Promise<EvidenceResponse> {
+  const query = description?.trim() ? `?description=${encodeURIComponent(description.trim())}` : ''
+  return sessionApiRequest<EvidenceResponse>(
+    `/api/v1/action-items/${encodeURIComponent(actionItemId)}/evidence-uploads${query}`,
+    {
+      method: 'POST',
+      body: file,
+      headers: {
+        'Content-Type': evidenceContentType(file),
+        'X-Evidence-Filename': encodeURIComponent(file.name),
+      },
+    },
+  )
+}
+
 export function getFindingSubmissions(
   findingId: string,
   signal?: AbortSignal,

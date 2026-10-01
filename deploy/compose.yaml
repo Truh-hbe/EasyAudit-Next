@@ -29,6 +29,14 @@ x-api-env: &api-env
   POSTGRES_USER: easyaudit
   POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
 
+# Evidence upload. The credentials are the same secrets Garage imports as its access key.
+x-object-storage-env: &object-storage-env
+  OBJECT_STORAGE_ENDPOINT: http://object-storage:3900
+  OBJECT_STORAGE_BUCKET: easyaudit-evidence
+  OBJECT_STORAGE_REGION: garage
+  OBJECT_STORAGE_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
+  OBJECT_STORAGE_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
+
 services:
   gateway:
     <<: *hardening
@@ -75,10 +83,10 @@ services:
     image: "easyaudit/api:${EASYAUDIT_RELEASE:?EASYAUDIT_RELEASE must be the git commit SHA}"
     user: "10001:10001"
     environment:
-      <<: *api-env
+      <<: [*api-env, *object-storage-env]
       # Trust proxy headers from the gateway only (fixed address on the edge network).
       FORWARDED_ALLOW_IPS: 172.30.10.10
-    secrets: [postgres_password]
+    secrets: [postgres_password, s3_access_key_id, s3_secret_access_key]
     healthcheck:
       test:
         - CMD

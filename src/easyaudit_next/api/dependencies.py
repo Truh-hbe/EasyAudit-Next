@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from easyaudit_next.infrastructure.database import create_database_engine, create_session_factory
 from easyaudit_next.infrastructure.observability import bind_actor
@@ -29,6 +29,11 @@ from easyaudit_next.platform.settings import get_settings
 
 _engine = create_database_engine()
 _session_factory = create_session_factory(_engine)
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    """For work that must own its Session, such as a worker thread that outlives its request."""
+    return _session_factory
 
 
 def get_database_session() -> Iterator[Session]:

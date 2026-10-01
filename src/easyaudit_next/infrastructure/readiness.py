@@ -9,13 +9,23 @@ instead of opening another connection. Rationale: overlapping probes (orchestrat
 human) get a consistent answer, at most one probe connection exists at any time, and nobody
 receives a false 503 merely because probes overlapped.
 
-Object storage is deliberately not checked: the application does not use it yet. Pilot-4A adds
-it here together with Evidence upload.
+Object storage is probed for reachability only: a plain asyncio TCP (TLS for https) connection
+and one unsigned `HEAD /{bucket}`; any well-formed HTTP status line counts as reachable, whether
+200, 403 or 404. It runs concurrently with the database probe under the same deadline, with no
+worker thread (a thread cannot be cancelled and botocore's timeouts are per-socket-operation,
+not a total deadline: a server dripping bytes could keep one alive and delay process exit).
+Credentials and the bucket itself are deliberately not validated here; a wrong key or bucket
+shows up as an error on the first upload. Nothing is kept in module state.
 """
 
 import asyncio
+import ipaddress
+import re
+import socket
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import quote, urlsplit
 
 import psycopg
 from alembic.config import Config
@@ -172,13 +182,118 @@ async def fetch_database_state(settings: Settings) -> DatabaseState:
             await asyncio.wait({probe}, timeout=CLEANUP_GRACE_SECONDS)
 
 
+_STATUS_LINE = re.compile(rb"^HTTP/1\.[01] [1-5][0-9]{2}(?: |$)")
+_CLOSE_GRACE_SECONDS = 0.25
+
+
+async def _resolve(host: str, port: int) -> str:
+    """Resolve in a daemon thread of our own. `getaddrinfo` cannot be interrupted: on the default
+    executor a stuck resolver would delay the event loop's shutdown, whereas a daemon thread
+    never blocks interpreter exit. A cancelled (timed-out) wait simply discards the result."""
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[list[Any]] = loop.create_future()
+
+    def deliver(addresses: list[Any] | None, error: BaseException | None) -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(addresses or [])
+
+    def work() -> None:
+        try:
+            outcome: tuple[list[Any] | None, BaseException | None] = (
+                socket.getaddrinfo(host, port, type=socket.SOCK_STREAM),
+                None,
+            )
+        except BaseException as exc:
+            outcome = (None, exc)
+        try:
+            loop.call_soon_threadsafe(deliver, *outcome)
+        except RuntimeError:
+            pass  # the loop is gone; nobody is waiting
+
+    threading.Thread(target=work, daemon=True, name="readiness-resolve").start()
+    infos = await future
+    if not infos:
+        raise OSError("name did not resolve")
+    return str(infos[0][4][0])
+
+
+def _head_request(settings: Settings) -> bytes:
+    url = urlsplit(settings.object_storage_endpoint)
+    host = f"[{url.hostname}]" if ":" in (url.hostname or "") else url.hostname
+    host_header = host if url.port is None else f"{host}:{url.port}"
+    bucket = quote(settings.object_storage_bucket, safe="")
+    return f"HEAD /{bucket} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n".encode()
+
+
+async def _http_head_reachable(settings: Settings) -> None:
+    """Raises on anything but a well-formed HTTP status line. Bounded by the caller's timeout;
+    the socket is always closed, with a bounded wait. The endpoint format (origin only) is
+    enforced by `Settings`."""
+    url = urlsplit(settings.object_storage_endpoint)
+    assert url.hostname is not None
+    https = url.scheme == "https"
+    port = url.port or (443 if https else 80)
+    address = await _resolve(url.hostname, port)
+    # Connect to the resolved address, but verify TLS (SNI and certificate) against the name.
+    reader, writer = await asyncio.open_connection(
+        address,
+        port,
+        ssl=True if https else None,
+        server_hostname=url.hostname if https else None,
+        limit=4096,
+    )
+    try:
+        writer.write(_head_request(settings))
+        await writer.drain()
+        if not _STATUS_LINE.match(await reader.readline()):
+            raise ValueError("not an HTTP response")
+    finally:
+        writer.close()
+        try:
+            async with asyncio.timeout(_CLOSE_GRACE_SECONDS):
+                await writer.wait_closed()
+        except Exception:
+            pass
+
+
+async def fetch_object_storage_failure(settings: Settings) -> Failure | None:
+    """None means the endpoint answered HTTP within the readiness deadline."""
+    if not (
+        settings.object_storage_endpoint
+        and settings.object_storage_bucket
+        and settings.object_storage_access_key_id_file
+        and settings.object_storage_secret_access_key_file
+    ):
+        return Failure("object_storage", "not_configured")
+    try:
+        async with asyncio.timeout(settings.readiness_timeout_seconds):
+            await _http_head_reachable(settings)
+    except TimeoutError:
+        return Failure("object_storage", "deadline_exceeded")
+    except Exception as exc:
+        return Failure.of("object_storage", "unreachable", exc)
+    return None
+
+
 async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessResult:
     failures: list[Failure] = []
     config_failure = check_configuration(settings)
     if config_failure is not None:
         failures.append(config_failure)
-    state = await fetch_database_state(settings)
+    state, storage_failure = await asyncio.gather(
+        fetch_database_state(settings), fetch_object_storage_failure(settings)
+    )
     failures.extend(state.failures)
+    if storage_failure is not None:
+        failures.append(storage_failure)
 
     migrations_ok = False
     if state.revisions is not None:
@@ -200,6 +315,7 @@ async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessR
         "configuration": "fail" if config_failure else "ok",
         "database": "ok" if state.reachable else "fail",
         "migrations": "ok" if migrations_ok else "fail",
+        "object_storage": "fail" if storage_failure else "ok",
     }
     return ReadinessResult(checks, tuple(failures))
 
@@ -215,7 +331,12 @@ async def _bounded(settings: Settings, expected_head: str | None) -> ReadinessRe
     except TimeoutError:
         configuration: CheckStatus = "fail" if check_configuration(settings) else "ok"
         return ReadinessResult(
-            {"configuration": configuration, "database": "fail", "migrations": "fail"},
+            {
+                "configuration": configuration,
+                "database": "fail",
+                "migrations": "fail",
+                "object_storage": "fail",
+            },
             (Failure("readiness", "evaluation_deadline_exceeded"),),
         )
 

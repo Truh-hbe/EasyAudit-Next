@@ -99,10 +99,21 @@ API_ARGS=(--base "$BASE" --cacert "$EASYAUDIT_CERTS_DIR/tls.crt" --login "$ADMIN
 ORG_ID="$("${DRILL_API[@]}" whoami "${API_ARGS[@]}")"
 "${DC[@]}" run --rm -T api easyaudit-next publish-scenario --organization-id "$ORG_ID" --key process_review --version 1
 
-step "2. create data through the gateway: plan, case, finding, action, evidence"
-"${DRILL_API[@]}" prepare-objects "$WORK/objs"
-object_tool "$WORK/objs" ro copy /data "$S3_REMOTE"
-"${DRILL_API[@]}" seed "${API_ARGS[@]}" --objects "$WORK/objects.json" --state "$WORK/state.json"
+step "2. create data through the gateway: plan, case, finding, action, Evidence uploaded as real files"
+"${DRILL_API[@]}" seed "${API_ARGS[@]}" --state "$WORK/state.json"
+step "2b. read the uploaded objects back from the bucket and compare with what the API reported"
+object_tool_net hashsum sha256 --download "$S3_REMOTE" > "$WORK/bucket-hashes.txt"
+python3 - "$WORK/state.json" "$WORK/bucket-hashes.txt" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+in_bucket = {}
+for line in open(sys.argv[2]):
+    digest, _, key = line.strip().partition("  ")
+    in_bucket[key] = digest
+expected = {e["storage_key"]: e["sha256"] for e in state["evidences"]}
+assert in_bucket == expected, f"bucket {in_bucket} != registered Evidence {expected}"
+print(f"bucket holds exactly the {len(expected)} registered objects, sha256 equal to the server's")
+PY
 
 step "3. backup"
 EASYAUDIT_BACKUP_DIR="$WORK/backups" "$BACKUP_DIR_SRC/backup.sh"
@@ -176,7 +187,9 @@ python3 "$BACKUP_DIR_SRC/manifest.py" latest-ok "$WORK/backups" --max-age-hours 
 step "9. environment restore refuses a non-empty bucket before it writes the database"
 "${DC[@]}" "${ALL_PROFILES[@]}" down -v --remove-orphans
 "${DC[@]}" up -d --wait object-storage
-object_tool "$WORK/objs" ro copy /data "$S3_REMOTE"
+mkdir -p "$WORK/marker"
+echo "not part of any backup" > "$WORK/marker/stray.txt"
+object_tool "$WORK/marker" ro copy /data "$S3_REMOTE"
 expect_refusal "bucket $BUCKET is not empty" "$BACKUP_DIR_SRC/restore.sh" environment "$BACKUP"
 tables="$(db_scalar "select count(*) from information_schema.tables where table_schema not in ('pg_catalog','information_schema')")"
 [ "$tables" = "0" ] || fail "the database was written to ($tables tables) although the bucket was not empty"

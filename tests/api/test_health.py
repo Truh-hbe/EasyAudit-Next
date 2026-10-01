@@ -54,7 +54,12 @@ def test_ready_fails_with_opaque_body_when_database_is_unreachable(
     assert response.status_code == 503
     assert response.json() == {
         "status": "fail",
-        "checks": {"configuration": "ok", "database": "fail", "migrations": "fail"},
+        "checks": {
+            "configuration": "ok",
+            "database": "fail",
+            "migrations": "fail",
+            "object_storage": "ok",
+        },
     }
     assert_opaque(response.text)
 
@@ -71,6 +76,7 @@ def test_ready_fails_on_revision_mismatch_without_revealing_revisions(
         "configuration": "ok",
         "database": "ok",
         "migrations": "fail",
+        "object_storage": "ok",
     }
     assert "stale-rev" not in response.text
     assert_opaque(response.text)
@@ -119,7 +125,12 @@ def test_ready_is_ok_when_everything_checks_out(monkeypatch: pytest.MonkeyPatch)
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "checks": {"configuration": "ok", "database": "ok", "migrations": "ok"},
+        "checks": {
+            "configuration": "ok",
+            "database": "ok",
+            "migrations": "ok",
+            "object_storage": "ok",
+        },
     }
 
 

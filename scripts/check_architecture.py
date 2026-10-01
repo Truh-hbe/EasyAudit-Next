@@ -40,6 +40,9 @@ OBSERVABILITY_CONSUMERS = (
     SOURCE_ROOT / "main.py",
     SOURCE_ROOT / "serve.py",
 )
+INFRASTRUCTURE_ROOT = SOURCE_ROOT / "infrastructure"
+OBJECT_STORAGE_SDK_PREFIXES = ("boto3", "botocore", "aioboto3", "aiobotocore", "minio")
+OBJECT_STORAGE_ADAPTER = "easyaudit_next.infrastructure.object_storage"
 FORBIDDEN_GENERIC_RECIPIENT_PERMISSION_LITERALS = {
     "submit_rectification",
     "update_assigned_action",
@@ -107,6 +110,20 @@ def main() -> None:
             ):
                 raise SystemExit(
                     "Observability/readiness infrastructure may only be used by the API edge: "
+                    f"{path}: {module}"
+                )
+            if module.split(".")[0] in OBJECT_STORAGE_SDK_PREFIXES and not path.is_relative_to(
+                INFRASTRUCTURE_ROOT
+            ):
+                raise SystemExit(
+                    "Object storage SDKs may only be imported by infrastructure adapters; "
+                    f"business code depends on the EvidenceObjectStore port: {path}: {module}"
+                )
+            if module.startswith(OBJECT_STORAGE_ADAPTER) and not (
+                path.is_relative_to(INFRASTRUCTURE_ROOT) or path == COMPOSITION_ROOT
+            ):
+                raise SystemExit(
+                    "The object storage adapter may only be wired by the composition root: "
                     f"{path}: {module}"
                 )
             if path.is_relative_to(REVIEW_CORE_ROOT) and module.startswith(

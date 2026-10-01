@@ -7,7 +7,9 @@ from typing import Any
 
 import pytest
 
+from easyaudit_next.infrastructure import readiness
 from easyaudit_next.infrastructure.observability import build_log_config
+from easyaudit_next.platform.settings import Settings
 
 _LOGGER_NAMES = ("uvicorn", "uvicorn.error", "uvicorn.access", "easyaudit", "alembic")
 
@@ -63,3 +65,13 @@ def log_output() -> Iterator[CapturedLogs]:
         logger.setLevel(level)
         logger.propagate = propagate
         logger.disabled = disabled
+
+
+@pytest.fixture(autouse=True)
+def healthy_object_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """API tests have no object store; readiness tests of the bucket itself override this."""
+
+    async def healthy(_: Settings) -> None:
+        return None
+
+    monkeypatch.setattr(readiness, "fetch_object_storage_failure", healthy)

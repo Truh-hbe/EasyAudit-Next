@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
@@ -10,9 +10,11 @@ import {
   getActionItem,
   getActionItemActivities,
   getFinding,
+  precheckEvidenceFile,
   getReviewCase,
   searchActionAssigneeCandidates,
   transitionActionItem,
+  uploadActionEvidence,
 } from '../../api/product'
 import type {
   ActionAssigneeViewResponse,
@@ -63,6 +65,23 @@ function actorKindText(actorKind: 'user' | 'department'): string {
   return actorKind === 'user' ? '用户' : '部门'
 }
 
+const TOO_LARGE_TEXT = '文件超过大小上限，未上传。'
+const TYPE_NOT_ALLOWED_TEXT =
+  '文件类型不被允许，或扩展名与类型不一致。允许：PDF、PNG、JPEG、DOCX、XLSX、PPTX、TXT、CSV。'
+
+function uploadErrorText(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 413) return TOO_LARGE_TEXT
+    if (error.status === 415) return TYPE_NOT_ALLOWED_TEXT
+    if (error.status === 409) return '数据已过期，已刷新。未上传成功，请确认后重新选择文件上传。'
+    if (error.status === 422) return `无法登记证据：${error.detail}`
+    if (error.status === 503) return '证据存储暂不可用，未上传。请稍后手动重试。'
+    return errorMessage(error, '证据上传失败')
+  }
+  // fetch itself failed: the connection dropped. A refused oversized body can look like this.
+  return '上传中断，服务器未确认。文件可能超过大小上限，或网络中断；请确认后手动重试。'
+}
+
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
@@ -89,6 +108,11 @@ export function ActionItemDetailPage() {
   const [commandMessage, setCommandMessage] = useState<string | null>(null)
   const [nudgeBusy, setNudgeBusy] = useState(false)
   const [nudgeMessage, setNudgeMessage] = useState<string | null>(null)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadDescription, setUploadDescription] = useState('')
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadMessage, setUploadMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     candidateSearchSequenceRef.current += 1
@@ -100,6 +124,11 @@ export function ActionItemDetailPage() {
     setCommandMessage(null)
     setNudgeBusy(false)
     setNudgeMessage(null)
+    setUploadFile(null)
+    setUploadDescription('')
+    setUploadBusy(false)
+    setUploadMessage(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }, [actionItemId])
 
   useEffect(() => {
@@ -258,6 +287,42 @@ export function ActionItemDetailPage() {
     } finally {
       if (currentActionItemIdRef.current === commandActionItemId) {
         setNudgeBusy(false)
+      }
+    }
+  }
+
+  async function submitEvidence(event: FormEvent<HTMLFormElement>, currentActionId: string) {
+    event.preventDefault()
+    if (uploadFile === null || uploadBusy) return
+    const precheck = precheckEvidenceFile(uploadFile)
+    if (precheck !== null) {
+      setUploadMessage({ kind: 'error', text: precheck === 'too_large' ? TOO_LARGE_TEXT : TYPE_NOT_ALLOWED_TEXT })
+      return
+    }
+    const uploadActionItemId = actionItemId
+    setUploadBusy(true)
+    setUploadMessage(null)
+    try {
+      // Exactly one attempt: a failed or interrupted upload is never replayed automatically.
+      const evidence = await uploadActionEvidence(currentActionId, uploadFile, uploadDescription)
+      if (currentActionItemIdRef.current !== uploadActionItemId) return
+      setUploadMessage({
+        kind: 'ok',
+        text: `服务器已确认上传：${evidence.original_name} · ${formatBytes(evidence.size_bytes)} · SHA-256 ${evidence.sha256.slice(0, 12)}…`,
+      })
+      setUploadFile(null)
+      setUploadDescription('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      setRevision((value) => value + 1)
+    } catch (error) {
+      if (currentActionItemIdRef.current !== uploadActionItemId) return
+      setUploadMessage({ kind: 'error', text: uploadErrorText(error) })
+      if (error instanceof ApiError && [403, 404, 409, 422].includes(error.status)) {
+        setRevision((value) => value + 1)
+      }
+    } finally {
+      if (currentActionItemIdRef.current === uploadActionItemId) {
+        setUploadBusy(false)
       }
     }
   }
@@ -467,7 +532,42 @@ export function ActionItemDetailPage() {
             ))}
           </ul>
         ) : null}
-        <p className="empty-note">本阶段不提供 storage key / SHA 输入、二进制上传或下载。</p>
+        {action.lifecycle === 'cancelled' ? (
+          <p className="empty-note">当前 Action 已取消，不能上传证据。</p>
+        ) : (
+          <form onSubmit={(event) => void submitEvidence(event, action.id)} aria-label="上传证据">
+            <div className="form-grid">
+              <label>
+                证据文件
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx,.txt,.csv"
+                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                  disabled={uploadBusy}
+                />
+              </label>
+              <label>
+                说明（可选）
+                <input
+                  value={uploadDescription}
+                  maxLength={1000}
+                  onChange={(event) => setUploadDescription(event.target.value)}
+                  disabled={uploadBusy}
+                />
+              </label>
+            </div>
+            <button type="submit" disabled={uploadFile === null || uploadBusy}>
+              {uploadBusy ? '正在上传…' : '上传证据'}
+            </button>
+            <p className="empty-note">
+              文件大小、SHA-256 和存储位置由服务器计算与分配；上传失败不会自动重试。本阶段不提供下载。
+            </p>
+            {uploadMessage === null ? null : (
+              <p role={uploadMessage.kind === 'error' ? 'alert' : 'status'}>{uploadMessage.text}</p>
+            )}
+          </form>
+        )}
       </section>
 
       <section className="surface-card" aria-labelledby="action-activity-title">

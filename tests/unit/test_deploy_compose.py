@@ -234,3 +234,27 @@ def test_backup_timer_keeps_snapshots_well_inside_24_hours() -> None:
     assert calendar is not None, "expected two runs per day"
     first, second = int(calendar.group(1)), int(calendar.group(2))
     assert max(second - first, 24 - (second - first)) <= 12
+
+
+def test_api_gets_object_storage_wiring_from_secret_files(compose: dict[str, Any]) -> None:
+    api = _services(compose)["api"]
+    environment = api["environment"]
+    assert environment["OBJECT_STORAGE_ENDPOINT"] == "http://object-storage:3900"
+    assert environment["OBJECT_STORAGE_BUCKET"] == "easyaudit-evidence"
+    assert environment["OBJECT_STORAGE_REGION"] == "garage"
+    assert {"s3_access_key_id", "s3_secret_access_key"} <= set(api["secrets"])
+    for key in ("OBJECT_STORAGE_ACCESS_KEY_ID_FILE", "OBJECT_STORAGE_SECRET_ACCESS_KEY_FILE"):
+        assert environment[key].startswith("/run/secrets/")
+    assert "object-storage" in api["depends_on"]
+    # Only the API holds the app credentials; the one-shot migrate job does not need them.
+    assert "s3_access_key_id" not in _services(compose)["migrate"]["secrets"]
+
+
+def test_gateway_caps_request_bodies_just_above_the_application_limit() -> None:
+    from easyaudit_next.platform.settings import Settings
+
+    caddyfile = (COMPOSE_PATH.parent / "Caddyfile").read_text()
+    api_block = caddyfile[caddyfile.index("handle /api/v1/*") :]
+    cap = int(re.search(r"max_size\s+(\d+)", api_block).group(1))  # type: ignore[union-attr]
+    limit = Settings().evidence_max_bytes
+    assert limit < cap <= limit + 2 * 1024 * 1024

@@ -4,9 +4,8 @@
 Stdlib only. Talks to the real HTTPS API; the session cookie is handled by hand because the
 cookie is `__Host-`/Secure and must not depend on the client's cookie-jar policy.
 
-  drill_api.py prepare-objects DIR              write deterministic test objects + objects.json
   drill_api.py whoami   --base URL ...          print the admin's organization id
-  drill_api.py seed     --base URL ... --objects objects.json --state state.json
+  drill_api.py seed     --base URL ... --state state.json   (uploads real files as Evidence)
   drill_api.py check    --base URL ... --state state.json
 """
 
@@ -16,6 +15,7 @@ import json
 import ssl
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,7 +24,9 @@ from typing import Any
 COOKIE = "__Host-easyaudit_session"
 OWNER_LOGIN = "drill-owner"
 OWNER_PASSWORD = "drill-owner-password-1"
-OBJECT_COUNT = 3
+# The last file is larger than the server's 8 MiB multipart part size, so the drill also
+# exercises a multi-part upload against the real object store.
+EVIDENCE_SIZES = (2_000, 60_000, 9 * 1024 * 1024)
 
 
 class ApiError(RuntimeError):
@@ -62,6 +64,21 @@ class Client:
                 self.token = value.split(";", 1)[0].split("=", 1)[1]
         return json.loads(raw) if raw else None
 
+    def upload(self, path: str, content: bytes, content_type: str, filename: str) -> Any:
+        """Raw-body upload, as the browser sends it (no multipart)."""
+        headers = {
+            "content-type": content_type,
+            "x-evidence-filename": urllib.parse.quote(filename),
+            "cookie": f"{COOKIE}={self.token}",
+        }
+        req = urllib.request.Request(self.base + path, data=content, method="POST", headers=headers)
+        try:
+            with self.opener.open(req, timeout=120) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")
+            raise ApiError(f"POST {path} -> {exc.code}: {detail}") from exc
+
     def login(self, login_name: str, password: str) -> Any:
         self.token = None
         return self.request(
@@ -69,32 +86,22 @@ class Client:
         )
 
 
-def object_specs(count: int = OBJECT_COUNT) -> list[dict[str, Any]]:
-    """Deterministic test objects; keys look like the server-generated keys of Pilot-4."""
-    specs = []
-    for index in range(count):
-        content = f"restore-drill evidence object {index}\n".encode() * (50 + index * 700)
-        specs.append(
+def evidence_files() -> list[dict[str, Any]]:
+    """Deterministic files to upload. Names are non-ASCII on purpose: they travel
+    percent-encoded and must never become part of a storage key."""
+    files = []
+    for index, size in enumerate(EVIDENCE_SIZES):
+        unit = f"restore-drill evidence file {index}\n".encode()
+        content = (unit * (size // len(unit) + 1))[:size]
+        files.append(
             {
-                "storage_key": f"drill/{index:02d}/{hashlib.sha256(content).hexdigest()[:16]}.txt",
-                "original_name": f"drill-evidence-{index}.txt",
+                "original_name": f"演练证据-{index}.txt",
+                "content": content,
                 "size_bytes": len(content),
                 "sha256": hashlib.sha256(content).hexdigest(),
-                "content": content,
             }
         )
-    return specs
-
-
-def prepare_objects(directory: Path) -> None:
-    directory.mkdir(parents=True, exist_ok=True)
-    listing = []
-    for spec in object_specs():
-        path = directory / spec["storage_key"]
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(spec.pop("content"))
-        listing.append(spec)
-    (directory.parent / "objects.json").write_text(json.dumps(listing, indent=2))
+    return files
 
 
 def whoami(client: Client, login: str, password: str) -> None:
@@ -102,7 +109,6 @@ def whoami(client: Client, login: str, password: str) -> None:
 
 
 def seed(client: Client, args: argparse.Namespace) -> None:
-    objects = json.loads(Path(args.objects).read_text())
     admin = client.login(args.login, args.password)["user"]
     department = client.request("POST", "/api/v1/admin/departments", {"name": "Drill Department"})
     owner = client.request(
@@ -173,14 +179,22 @@ def seed(client: Client, args: argparse.Namespace) -> None:
         client.request(
             "POST", f"/api/v1/action-items/{action_item['id']}/transitions", {"action": action}
         )
-    evidences = [
-        client.request(
-            "POST",
-            f"/api/v1/action-items/{action_item['id']}/evidences",
-            {**spec, "content_type": "text/plain", "description": "restore drill object"},
+    evidences = []
+    for spec in evidence_files():
+        evidence = client.upload(
+            f"/api/v1/action-items/{action_item['id']}/evidence-uploads?description=restore%20drill",
+            spec["content"],
+            "text/plain",
+            spec["original_name"],
         )
-        for spec in objects
-    ]
+        # The server computed these from the bytes it received; they must match ours.
+        if (evidence["size_bytes"], evidence["sha256"]) != (spec["size_bytes"], spec["sha256"]):
+            raise ApiError(f"server-computed metadata differs from the uploaded file: {evidence}")
+        if evidence["original_name"] != spec["original_name"]:
+            raise ApiError(f"original name was altered: {evidence['original_name']!r}")
+        if not evidence["storage_key"].startswith("org/") or "演练" in evidence["storage_key"]:
+            raise ApiError(f"unexpected storage key: {evidence['storage_key']!r}")
+        evidences.append(evidence)
     state = {
         "admin_user_id": admin["id"],
         "plan_id": plan["id"],
@@ -232,22 +246,15 @@ def check(client: Client, args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    prep = sub.add_parser("prepare-objects")
-    prep.add_argument("directory", type=Path)
     for name in ("whoami", "seed", "check"):
         p = sub.add_parser(name)
         p.add_argument("--base", required=True)
         p.add_argument("--cacert")
         p.add_argument("--login", required=True)
         p.add_argument("--password", required=True)
-        if name == "seed":
-            p.add_argument("--objects", required=True)
         if name != "whoami":
             p.add_argument("--state", required=True)
     args = parser.parse_args()
-    if args.command == "prepare-objects":
-        prepare_objects(args.directory)
-        return
     client = Client(args.base, args.cacert)
     if args.command == "whoami":
         whoami(client, args.login, args.password)
