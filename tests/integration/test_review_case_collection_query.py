@@ -477,11 +477,9 @@ def test_equal_created_at_uses_persisted_id_as_stable_tie_breaker(
     with Session(postgres_engine, expire_on_commit=False) as session, session.begin():
         organization_id, department_id, caller_id, _other_id = _seed_identity(session)
         version_id = _seed_process_review_version(session, organization_id)
-        ids = [
-            UUID("00000000-0000-0000-0000-000000000001"),
-            UUID("00000000-0000-0000-0000-000000000003"),
-            UUID("00000000-0000-0000-0000-000000000002"),
-        ]
+        # Inserted out of id order so the result order can only come from the id tie-breaker.
+        low, middle, high = sorted([uuid4(), uuid4(), uuid4()], key=lambda value: value.int)
+        ids = [low, high, middle]
         for index, case_id in enumerate(ids):
             review_case = _case(
                 session,

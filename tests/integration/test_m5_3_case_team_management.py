@@ -603,7 +603,7 @@ def test_failed_deactivation_is_atomic_and_keeps_sessions_and_audit_unchanged(
                 id=uuid4(),
                 organization_id=fixture.organization_id,
                 user_id=fixture.manager_id,
-                token_hash="b" * 64,
+                token_hash=uuid4().hex + uuid4().hex,
                 expires_at=NOW + timedelta(hours=1),
                 created_at=NOW,
             )

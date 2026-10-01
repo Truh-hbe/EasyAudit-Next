@@ -1,7 +1,7 @@
 import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import Engine, create_engine, func, select
@@ -231,9 +231,9 @@ def test_case_activity_read_is_subject_isolated_metadata_free_and_side_effect_fr
         session.add_all([action, submission])
         session.flush()
 
-        first_id = UUID("00000000-0000-0000-0000-000000000101")
-        second_id = UUID("00000000-0000-0000-0000-000000000102")
-        newest_id = UUID("00000000-0000-0000-0000-000000000103")
+        # first/second share occurred_at, so the id decides their order; keep first < second.
+        first_id, second_id = sorted([uuid4(), uuid4()], key=lambda value: value.int)
+        newest_id = uuid4()
         session.add_all(
             [
                 ActivityRecord(
