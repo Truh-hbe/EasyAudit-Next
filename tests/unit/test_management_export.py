@@ -154,7 +154,7 @@ def test_counters_stay_numeric_in_both_formats() -> None:
 
 
 def test_times_use_the_export_timezone_with_offset_and_metadata_names_it() -> None:
-    planned_end = datetime(2026, 10, 1, 16, 0, tzinfo=UTC)  # 2026-10-02T00:00+08:00
+    planned_end = datetime(2026, 10, 1, 16, 0, 0, 654321, tzinfo=UTC)
     snapshot = ManagementCaseExportSnapshot(
         as_of=AS_OF,
         organization_name="Acme",
@@ -168,11 +168,11 @@ def test_times_use_the_export_timezone_with_offset_and_metadata_names_it() -> No
     metadata, table = _read_csv(_render(snapshot, ExportFormat.CSV).content)
 
     header, row = table
-    assert row[header.index("planned_end_at")] == "2026-10-02T00:00:00+08:00"
+    assert row[header.index("planned_end_at")] == "2026-10-02T00:00:00.654321+08:00"
     assert row[header.index("planned_start_at")] == ""
     assert dict(metadata) == {
         "generated_at": "2026-10-02T09:30:05+08:00",
-        "as_of": "2026-10-02T09:29:59+08:00",
+        "as_of": "2026-10-02T09:29:59.123456+08:00",
         "timezone": "Asia/Shanghai",
         "organization_name": "Acme",
         "filter_review_plan_id": "",
@@ -224,3 +224,23 @@ def test_empty_export_still_has_metadata_and_header() -> None:
 
     assert dict(metadata)["row_count"] == "0"
     assert table == [list(EXPORT_COLUMNS)]
+
+
+@pytest.mark.parametrize("char", ["\ufffe", "\uffff", "\x01", "\x1f", "\x0b"])
+def test_xml_illegal_characters_are_replaced_and_both_formats_stay_readable(char: str) -> None:
+    title = f"a{char}b"
+    snapshot = _snapshot([title], organization_name=title)
+
+    csv_metadata, csv_table = _read_csv(_render(snapshot, ExportFormat.CSV).content)
+    assert csv_table[1][csv_table[0].index("title")] == "a\ufffdb"
+    assert dict(csv_metadata)["organization_name"] == "a\ufffdb"
+
+    workbook = load_workbook(io.BytesIO(_render(snapshot, ExportFormat.XLSX).content))
+    cell = workbook["review_cases"].cell(row=2, column=EXPORT_COLUMNS.index("title") + 1)
+    assert cell.value == "a\ufffdb"
+    assert workbook["metadata"]["B4"].value == "a\ufffdb"
+
+
+def test_legal_boundary_characters_are_preserved() -> None:
+    for char in ("\t", "\n", "\ud7ff", "\ue000", "\ufffd", "\U00010000", "\U0010ffff"):
+        assert protect_text(f"a{char}b") == f"a{char}b"

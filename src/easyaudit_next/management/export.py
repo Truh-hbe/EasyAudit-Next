@@ -28,8 +28,9 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 
 # A text cell starting with one of these may be evaluated as a formula by spreadsheet software.
 _FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
-# Control characters that XML 1.0 (and therefore XLSX) cannot represent.
-_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+# Everything outside the XML 1.0 `Char` production (and therefore not representable in XLSX):
+# allowed are #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF].
+_XML_ILLEGAL = re.compile("[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
 Cell = str | int | None
 
@@ -59,7 +60,7 @@ def protect_text(value: str) -> str:
 
 
 def _iso(value: datetime | None, tz: ZoneInfo) -> str | None:
-    return None if value is None else value.astimezone(tz).isoformat(timespec="seconds")
+    return None if value is None else value.astimezone(tz).isoformat()
 
 
 # (column name, extractor). Extractors return int for counters, else raw text or None.

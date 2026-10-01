@@ -128,9 +128,11 @@ def snapshot_read(session: Session) -> Iterator[None]:
     Under READ COMMITTED every statement takes its own snapshot, so a multi-query projection can
     mix states from before and after a concurrent commit. Isolation can only be chosen before
     the transaction's first statement, but the request transaction has already authenticated
-    the caller, so the pending (read-only) work is committed first and the snapshot reuses the
-    same pooled connection. The snapshot is committed on exit so later writes in the request
-    (the session touch) start a fresh read-write transaction.
+    the caller, so the pending (read-only) work is committed first, which releases the connection
+    to the pool; the snapshot then checks one out again (not necessarily the same physical
+    connection). The request therefore holds at most one connection at any moment. The snapshot
+    is committed on exit so later writes in the request (the session touch) start a fresh
+    read-write transaction.
     """
     session.commit()
     session.connection(

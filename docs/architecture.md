@@ -134,7 +134,7 @@ src/easyaudit_next/
   - Action 逾期：`due_at < as_of`，且状态为 `todo` / `in_progress`。
   - 即将到期窗口为 7 天，只用于展示。
 - 查询次数按资源类别固定，不随数据量线性增长；有测试比较 5 条与 100 条数据时的 SQL 次数。
-- **一致快照**：管理视图的多条加载查询在 `snapshot_read`（`REPEATABLE READ, READ ONLY`）事务里执行。READ COMMITTED 下每条语句各取一份快照，并发提交会让计数和生命周期来自不同时刻。隔离级别必须在事务第一条语句之前设置，而请求事务已经做过认证查询，所以 `snapshot_read` 先提交（只读，无副作用），再在**同一条连接**上开新事务，退出时提交，之后 Session touch 照常在读写事务里执行。不另开连接，避免一个请求占两条连接。列表、进度、导出都使用它。
+- **一致快照**：管理视图的多条加载查询在 `snapshot_read`（`REPEATABLE READ, READ ONLY`）事务里执行。READ COMMITTED 下每条语句各取一份快照，并发提交会让计数和生命周期来自不同时刻。隔离级别必须在事务第一条语句之前设置，而请求事务已经做过认证查询，所以 `snapshot_read` 先提交（只读，无副作用），提交会把连接还回池，随后重新取一条连接开新事务（不保证是同一条物理连接，快照一致性不受影响），退出时提交，之后 Session touch 照常在读写事务里执行。任何时刻一个请求最多占一条连接，不会因为同时持有两条而在池耗尽时互等。列表、进度、导出都使用它。
 - **管理导出**（`GET /management/review-cases/export?format=csv|xlsx` + 与列表相同的筛选）：
   - 行来自与 JSON 列表同一个"授权快照 → 过滤 → 排序"方法（`_filtered_summaries`），只是不分页。禁止另写指标算法；三种输出逐行逐字段一致由 `test_management_export_api.py` 固定。
   - 过滤后行数超过 `EXPORT_MAX_ROWS`（默认 10000）整体失败（422），不截断；响应在序列化完成后一次性返回，没有部分输出。

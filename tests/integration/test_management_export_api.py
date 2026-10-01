@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
-from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,7 +35,6 @@ from easyaudit_next.review_core.persistence.models import (
 )
 from tests.integration.test_management_api import _identity
 
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 EXPORT_URL = "/api/v1/management/review-cases/export"
 LIST_URL = "/api/v1/management/review-cases"
 CSV_TYPE = "text/csv; charset=utf-8"
@@ -73,7 +71,7 @@ CASE_TITLES = [
 
 
 def _seed(engine: Engine) -> Seed:
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=123456)
     organization_id = OrganizationId(uuid4())
     other_org_id = OrganizationId(uuid4())
     lead_id, second_lead_id, observer_id, outsider_id = (UserId(uuid4()) for _ in range(4))
@@ -269,14 +267,34 @@ def _client(engine: Engine, organization_id: OrganizationId, user_id: UserId) ->
     return TestClient(app)
 
 
-def _iso(value: str | None) -> str:
-    if value is None:
+TIME_COLUMNS = (
+    EXPORT_COLUMNS.index("planned_start_at"),
+    EXPORT_COLUMNS.index("planned_end_at"),
+)
+
+
+def _instant(value: str | None) -> datetime | str:
+    """Time cell as an exact instant; the export must carry the +08:00 offset."""
+    if not value:
         return ""
-    return datetime.fromisoformat(value).astimezone(SHANGHAI).isoformat(timespec="seconds")
+    parsed = datetime.fromisoformat(value)
+    assert parsed.utcoffset() == timedelta(hours=8), value
+    return parsed
+
+
+def _with_instants(row: list[Any]) -> list[Any]:
+    return [
+        _instant(value) if index in TIME_COLUMNS else value for index, value in enumerate(row)
+    ]
 
 
 def _guard(value: str) -> str:
     return "'" + value if value.startswith(("=", "+", "-", "@", "\t", "\r")) else value
+
+
+def _json_instant(value: str | None) -> datetime | str:
+    # The UI JSON is the reference: compare the exact instant, whatever offset it is written in.
+    return "" if value is None else datetime.fromisoformat(value)
 
 
 def _row_from_json(item: dict[str, Any]) -> list[str | int]:
@@ -289,8 +307,8 @@ def _row_from_json(item: dict[str, Any]) -> list[str | int]:
         item["scenario_key"],
         item["scenario_version"],
         item["lifecycle"],
-        _iso(item["planned_start_at"]),
-        _iso(item["planned_end_at"]),
+        _json_instant(item["planned_start_at"]),
+        _json_instant(item["planned_end_at"]),
         item["deadline_bucket"],
         findings["total"],
         findings["open"],
@@ -332,7 +350,9 @@ def _csv_rows(client: TestClient, query: str = "") -> list[list[str | int]]:
     numeric = {i for i, name in enumerate(EXPORT_COLUMNS) if name.startswith(counters)}
     numeric.add(EXPORT_COLUMNS.index("scenario_version"))
     return [
-        [int(value) if index in numeric else value for index, value in enumerate(row)]
+        _with_instants(
+            [int(value) if index in numeric else value for index, value in enumerate(row)]
+        )
         for row in data
     ]
 
@@ -343,7 +363,7 @@ def _xlsx_rows(client: TestClient, query: str = "") -> list[list[str | int]]:
     sheet = load_workbook(io.BytesIO(response.content))["review_cases"]
     header, *data = [[cell.value for cell in row] for row in sheet.iter_rows()]
     assert header == list(EXPORT_COLUMNS)
-    return [["" if value is None else value for value in row] for row in data]
+    return [_with_instants(["" if value is None else value for value in row]) for row in data]
 
 
 @pytest.mark.parametrize(
@@ -440,6 +460,7 @@ def test_export_metadata_carries_organization_filters_and_timezone(
     assert metadata["filter_deadline_status"] == "all"
     assert metadata["generated_at"].endswith("+08:00")
     assert metadata["as_of"].endswith("+08:00")
+    assert "." in metadata["as_of"]  # sub-second precision is kept
 
 
 def _with_max_rows(monkeypatch: pytest.MonkeyPatch, max_rows: int) -> None:
