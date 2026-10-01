@@ -526,7 +526,7 @@ export function ActionItemDetailPage() {
             {evidenceState.data.map((evidence) => (
               <li key={evidence.id}>
                 <strong>{evidence.original_name}</strong>
-                <a href={evidenceDownloadUrl(evidence.id)}>下载 {evidence.original_name}</a>
+                <a href={evidenceDownloadUrl(evidence.id)} aria-label={`下载 ${evidence.original_name}`}>下载</a>
                 <span>{evidence.content_type ?? 'unknown type'} · {formatBytes(evidence.size_bytes)}</span>
                 <span>{evidence.description ?? '无说明'}</span>
                 <span>上传人 {evidence.uploaded_by} · {formatDateTime(evidence.created_at)}</span>
