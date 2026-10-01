@@ -2,7 +2,9 @@
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any, ClassVar
@@ -14,6 +16,7 @@ from pwdlib import PasswordHash
 from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
+from easyaudit_next import cli
 from easyaudit_next.api import dependencies
 from easyaudit_next.main import create_app
 from easyaudit_next.platform.application import authentication
@@ -32,6 +35,7 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyAuthSessionRepository,
     SqlAlchemyLocalCredentialRepository,
     SqlAlchemyLoginThrottleRepository,
+    SqlAlchemyLoginThrottleUnitOfWork,
     SqlAlchemyPlatformAuditRepository,
     SqlAlchemyUserRepository,
 )
@@ -286,7 +290,7 @@ def test_concurrent_attempts_on_one_key_never_exceed_the_limit(postgres_engine: 
                 SqlAlchemyUserRepository(session),
                 SqlAlchemyPlatformAuditRepository(session),
                 login_throttle=LoginThrottleService(
-                    SqlAlchemyLoginThrottleRepository(session), policy
+                    SqlAlchemyLoginThrottleUnitOfWork(postgres_engine), policy
                 ),
                 password_hash=hasher,  # type: ignore[arg-type]
             )
@@ -331,7 +335,8 @@ def test_purge_removes_expired_windows_and_keeps_the_current_one(
 
     with Session(postgres_engine) as session, session.begin():
         removed = LoginThrottleService(
-            SqlAlchemyLoginThrottleRepository(session), LoginThrottlePolicy(window=WINDOW)
+            lambda: nullcontext(SqlAlchemyLoginThrottleRepository(session)),
+            LoginThrottlePolicy(window=WINDOW),
         ).purge_expired(now=now)
     assert removed >= 1
 
@@ -344,3 +349,82 @@ def test_purge_removes_expired_windows_and_keeps_the_current_one(
             )
         )
     assert remaining == {keys["new"]}
+
+
+class _SlowHash(_CountingHash):
+    def __init__(self, entered: threading.Event, seconds: float) -> None:
+        super().__init__()
+        self._entered = entered
+        self._seconds = seconds
+
+    def verify(self, password: str, hashed: str) -> bool:
+        self._entered.set()
+        time.sleep(self._seconds)
+        return super().verify(password, hashed)
+
+
+def _service_with(engine: Engine, session: Session, hasher: Any) -> AuthenticationService:
+    return AuthenticationService(
+        SqlAlchemyLocalCredentialRepository(session),
+        SqlAlchemyAuthSessionRepository(session),
+        SqlAlchemyUserRepository(session),
+        SqlAlchemyPlatformAuditRepository(session),
+        login_throttle=LoginThrottleService(
+            SqlAlchemyLoginThrottleUnitOfWork(engine),
+            LoginThrottlePolicy(window=WINDOW, login_name_limit=LIMIT, ip_limit=1000),
+        ),
+        password_hash=hasher,
+    )
+
+
+def test_a_slow_password_check_does_not_block_other_logins_from_the_same_ip(
+    postgres_engine: Engine,
+) -> None:
+    first = _account("wrong_password", postgres_engine)
+    second = _account("wrong_password", postgres_engine)
+    ip = _random_ip()
+    entered = threading.Event()
+    slow_seconds = 2.0
+
+    def slow_login() -> None:
+        with Session(postgres_engine) as session:
+            service = _service_with(postgres_engine, session, _SlowHash(entered, slow_seconds))
+            try:
+                service.login(first, WRONG, client_ip=ip)
+            except InvalidCredentialsError:
+                pass
+            session.commit()
+
+    worker = threading.Thread(target=slow_login)
+    worker.start()
+    try:
+        assert entered.wait(timeout=10)  # the first login is now inside its (slow) Argon2
+        started = time.monotonic()
+        with Session(postgres_engine) as session:
+            service = _service_with(postgres_engine, session, _CountingHash())
+            with pytest.raises(InvalidCredentialsError):
+                service.login(second, WRONG, client_ip=ip)
+            session.commit()
+        elapsed = time.monotonic() - started
+    finally:
+        worker.join(timeout=15)
+
+    # Sharing a transaction would have queued this behind the first login's open ip row lock.
+    assert elapsed < slow_seconds / 2
+
+
+def test_clearing_a_login_name_unblocks_it(postgres_engine: Engine, clock: type[_Clock]) -> None:
+    login_name = _account("wrong_password", postgres_engine)
+    client = _client()
+    for _ in range(LIMIT):
+        _post(client, login_name, WRONG)
+    assert _post(client, login_name, P0).status_code == 429
+
+    with Session(postgres_engine) as session, session.begin():
+        counts = cli.cleanup_auth_in_session(
+            session, window=WINDOW, now=T0, clear_login_name=f"  {login_name.upper()} "
+        )
+
+    assert counts["login_name_cleared"] == 1
+    assert _count(postgres_engine, "login_name", login_name) is None
+    assert _post(client, login_name, P0).status_code == 200

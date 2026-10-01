@@ -72,10 +72,11 @@ src/easyaudit_next/
 
 - 计数存在 PostgreSQL 表 `login_throttle(scope, key_hash, window_start, attempt_count, updated_at)`，主键 `(scope, key_hash, window_start)`。**限流计数属于运维记录，不是业务真相**：丢了只会放宽限制，不影响任何业务事实，也不进备份语义；表里只有 `sha256(规范化 login_name)` 与 `sha256(client ip)`，没有明文。
 - 不用 Redis 或进程内存：进程内存在多 worker 之间不一致（限额被放大为 N 倍），重启后清零（攻击者可借重启重置）；Redis 是为这一项新增的外部依赖，而 PostgreSQL 已经是唯一的持久层，并且计数可以和失败审计在同一个事务里提交。
-- **先计数后校验**：`AuthenticationService.login` 在任何凭证查询和 Argon2 之前，用单条 `INSERT ... ON CONFLICT DO UPDATE SET attempt_count = attempt_count + 1 RETURNING` 给两个维度各加 1：规范化后的 `login_name`（与 `login()` 的 normalize 一致，账号存不存在都计数）和 `request.client.host`（uvicorn 只信任网关的代理头，所以是真实客户端 IP）。任一维度 `> 上限` 就抛 `LoginThrottledError`，不做 Argon2。行锁持有到请求事务结束，同一 key 的并发尝试被串行化，计数精确、进入密码校验的次数不会超过上限。固定加锁顺序：先 `login_name` 后 `ip`。
+- **先计数后校验**：`AuthenticationService.login` 在任何凭证查询和 Argon2 之前，用单条 `INSERT ... ON CONFLICT DO UPDATE SET attempt_count = attempt_count + 1 RETURNING` 给两个维度各加 1：规范化后的 `login_name`（与 `login()` 的 normalize 一致，账号存不存在都计数）和 `request.client.host`（uvicorn 只信任网关的代理头，所以是真实客户端 IP）。任一维度 `> 上限` 就抛 `LoginThrottledError`，不做 Argon2。**计数在独立的短事务里执行并立即提交**（独立 Session，不与请求事务共用），行锁只在那两条 upsert 期间持有，所以 Argon2 期间不会阻塞同 IP 的其他登录；单条 upsert 原子，同一 key 并发得到互不相同的计数，进入密码校验的次数不超过上限。固定加锁顺序：先 `login_name` 后 `ip`。登录成功清零 `login_name` 计数同样用独立短事务；失败审计仍在请求事务里提交。独立事务意味着请求在进入校验前不占用连接，而成功清零时会短暂同时占用第二条连接（池耗尽的前提是同时有 `pool_size + max_overflow` 个成功登录）。
 - 默认：固定窗口 15 分钟（按 epoch 对齐，边界只由时间决定），`login_name` 5 次，IP 50 次（`LOGIN_THROTTLE_*`）。登录成功清零该 `login_name` 当前窗口的计数；**IP 计数不动**——若成功时回减，攻击者可用自己的有效账号 1:1 抵消对他人账号的猜测。
-- **429 与账号无关**：固定 body `{"detail": "Too many login attempts"}`，`Retry-After` 为当前窗口剩余秒数；401 的三种情况（账号不存在、密码错、停用）保持同一个响应。路由在 429 分支里先 `commit` 计数再返回。被限流的尝试不写审计（避免攻击者灌满审计表），只写 WARNING `login_throttled`，字段只有 `throttle_scope`，不含 key 或 key_hash。
-- 清理：`easyaudit-next cleanup-auth` 删除早于当前窗口的行（见 `deploy/backup/` 同风格的 systemd timer）。
+- **429 与账号无关**：固定 body `{"detail": "Too many login attempts"}`，`Retry-After` 为当前窗口剩余秒数；401 的三种情况（账号不存在、密码错、停用）保持同一个响应。429 分支返回前，计数已经独立提交。被限流的尝试不写审计（避免攻击者灌满审计表），只写 WARNING `login_throttled`，字段只有 `throttle_scope`，不含 key 或 key_hash。
+- 清理：`easyaudit-next cleanup-auth` 删除早于当前窗口的行（见 `deploy/` 下的 systemd timer）。
+- **运维逃生口**：限流可被用来封锁已知登录名（对某名发超限请求即可，试点期私网内接受此风险）。`easyaudit-next cleanup-auth --clear-login-name <name>` 按规范化后的名字算 hash，删除它所有窗口的计数，立即解封。
 
 ## 授权
 

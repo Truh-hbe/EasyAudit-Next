@@ -64,7 +64,7 @@ $DC run --rm api easyaudit-next bootstrap-admin \
 
 ## 认证维护
 
-`$DC run --rm --no-deps -T api easyaudit-next cleanup-auth` 删除过期的 `login_throttle` 窗口（运维计数，不是业务数据），向 stdout 输出一行 JSON：删除条数和已过期 Session 的计数。**不删除也不修改任何 Session**：`auth_sessions` 是审计事件的 FK 锚点，试点期只增不删，过期靠 `expires_at` 保证不可用。`deploy/easyaudit-cleanup-auth.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。
+`$DC run --rm --no-deps -T api easyaudit-next cleanup-auth` 删除过期的 `login_throttle` 窗口（运维计数，不是业务数据），向 stdout 输出一行 JSON：删除条数和已过期 Session 的计数。**不删除也不修改任何 Session**：`auth_sessions` 是审计事件的 FK 锚点，试点期只增不删，过期靠 `expires_at` 保证不可用。某个登录名被限流误封（或被他人故意封锁）时，运维用 `$DC run --rm --no-deps -T api easyaudit-next cleanup-auth --clear-login-name <name>` 立即解封（名字会按登录规则规范化；输出里 `login_name_cleared` 是删除的窗口数）。`deploy/easyaudit-cleanup-auth.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。
 
 ## 备份
 

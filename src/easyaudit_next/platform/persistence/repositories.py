@@ -1,7 +1,9 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
+from sqlalchemy import Connection, Engine, func, or_, select
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -443,6 +445,18 @@ class SqlAlchemyPlatformAuditRepository:
         self._session.flush()
 
 
+class SqlAlchemyLoginThrottleUnitOfWork:
+    """Opens a short transaction of its own on the same database as `bind`, commits on exit."""
+
+    def __init__(self, bind: Engine | Connection) -> None:
+        self._bind = bind
+
+    @contextmanager
+    def __call__(self) -> Iterator["SqlAlchemyLoginThrottleRepository"]:
+        with Session(self._bind, expire_on_commit=False) as session, session.begin():
+            yield SqlAlchemyLoginThrottleRepository(session)
+
+
 class SqlAlchemyLoginThrottleRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -483,6 +497,15 @@ class SqlAlchemyLoginThrottleRepository:
     def delete_before(self, window_start: datetime) -> int:
         result = self._session.execute(
             sa_delete(LoginThrottleRecord).where(LoginThrottleRecord.window_start < window_start),
+            execution_options={"synchronize_session": False},
+        )
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+    def delete_key(self, scope: str, key_hash: str) -> int:
+        result = self._session.execute(
+            sa_delete(LoginThrottleRecord).where(
+                LoginThrottleRecord.scope == scope, LoginThrottleRecord.key_hash == key_hash
+            ),
             execution_options={"synchronize_session": False},
         )
         return int(result.rowcount or 0)  # type: ignore[attr-defined]

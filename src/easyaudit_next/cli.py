@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import json
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ from easyaudit_next.infrastructure.database import (
     create_session_factory,
     session_scope,
 )
+from easyaudit_next.platform.application.authentication import normalize_login_name
 from easyaudit_next.platform.application.login_throttle import (
     LoginThrottlePolicy,
     LoginThrottleService,
@@ -149,31 +151,48 @@ def publish_scenario(
 
 
 def cleanup_auth_in_session(
-    session: Session, *, window: timedelta, now: datetime | None = None
+    session: Session,
+    *,
+    window: timedelta,
+    now: datetime | None = None,
+    clear_login_name: str | None = None,
 ) -> dict[str, int]:
     """Delete expired login_throttle windows. Never touches auth_sessions: they are audit
     anchors (FK RESTRICT) and `expires_at` already makes an expired one unusable. The count of
     expired sessions is reported for scale only."""
     current = now or datetime.now(UTC)
-    deleted = LoginThrottleService(
-        SqlAlchemyLoginThrottleRepository(session), LoginThrottlePolicy(window=window)
-    ).purge_expired(now=current)
+    throttle = LoginThrottleService(
+        lambda: nullcontext(SqlAlchemyLoginThrottleRepository(session)),
+        LoginThrottlePolicy(window=window),
+    )
+    deleted = throttle.purge_expired(now=current)
+    counts: dict[str, int] = {}
+    if clear_login_name is not None:
+        counts["login_name_cleared"] = throttle.clear_login_name(
+            normalize_login_name(clear_login_name)
+        )
     expired_sessions = session.scalar(
         select(func.count()).select_from(AuthSessionRecord).where(
             AuthSessionRecord.expires_at <= current
         )
     )
-    return {"login_throttle_deleted": deleted, "expired_sessions": int(expired_sessions or 0)}
+    return {
+        "login_throttle_deleted": deleted,
+        **counts,
+        "expired_sessions": int(expired_sessions or 0),
+    }
 
 
-def cleanup_auth() -> None:
+def cleanup_auth(clear_login_name: str | None = None) -> None:
     settings = get_settings()
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     try:
         with session_scope(factory) as session:
             counts = cleanup_auth_in_session(
-                session, window=timedelta(seconds=settings.login_throttle_window_seconds)
+                session,
+                window=timedelta(seconds=settings.login_throttle_window_seconds),
+                clear_login_name=clear_login_name,
             )
     finally:
         engine.dispose()
@@ -200,6 +219,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "cleanup-auth",
         help="Delete expired login_throttle windows (sessions are kept; only counted)",
+    ).add_argument(
+        "--clear-login-name",
+        help="Also drop every login throttle counter of this login name (unblocks it)",
     )
     return parser
 
@@ -215,7 +237,7 @@ def main() -> None:
             ScenarioVersion(args.version),
         )
     elif args.command == "cleanup-auth":
-        cleanup_auth()
+        cleanup_auth(args.clear_login_name)
 
 
 if __name__ == "__main__":

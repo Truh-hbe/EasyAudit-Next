@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -32,9 +33,14 @@ class FakeRepository:
     def delete_before(self, window_start: datetime) -> int:
         return 0
 
+    def delete_key(self, scope: str, key_hash: str) -> int:
+        return 0
+
 
 def service(repo: FakeRepository, name_limit: int = 2, ip_limit: int = 3) -> LoginThrottleService:
-    return LoginThrottleService(repo, LoginThrottlePolicy(WINDOW, name_limit, ip_limit))
+    return LoginThrottleService(
+        lambda: nullcontext(repo), LoginThrottlePolicy(WINDOW, name_limit, ip_limit)
+    )
 
 
 def test_windows_are_epoch_aligned() -> None:
