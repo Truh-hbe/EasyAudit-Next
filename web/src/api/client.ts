@@ -2,15 +2,39 @@ interface ApiErrorPayload {
   detail?: unknown
 }
 
+function parseRetryAfter(
+  source?: number | Headers | { get(name: string): string | null } | null,
+): number | null {
+  if (typeof source === 'number' && Number.isFinite(source) && source > 0) {
+    return source
+  }
+  if (source !== null && typeof source === 'object' && typeof source.get === 'function') {
+    const raw = source.get('Retry-After')
+    if (raw !== null && raw !== undefined && raw.trim() !== '') {
+      const parsed = Number(raw)
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed
+      }
+    }
+  }
+  return null
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly detail: string
+  readonly retryAfter: number | null
 
-  constructor(status: number, detail: string) {
+  constructor(
+    status: number,
+    detail: string,
+    retryAfter?: number | Headers | { get(name: string): string | null } | null,
+  ) {
     super(detail)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
+    this.retryAfter = parseRetryAfter(retryAfter)
   }
 }
 
@@ -84,6 +108,7 @@ async function request<T>(
     throw new ApiError(
       response.status,
       safeDetail(payload, `Request failed with HTTP ${response.status}`),
+      response.headers,
     )
   }
 

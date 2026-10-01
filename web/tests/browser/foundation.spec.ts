@@ -112,6 +112,33 @@ test('login 401 stays an ordinary credential error', async ({ page }) => {
   await expect(page).toHaveURL(/\/login$/)
 })
 
+test('login 429 displays explicit rate limit message and does not auto retry', async ({ page }) => {
+  let loginAttempts = 0
+  await page.route('**/api/v1/me', (route) =>
+    fulfillJson(route, 401, { detail: 'Authentication required' }),
+  )
+  await page.route('**/api/v1/auth/login', async (route) => {
+    loginAttempts += 1
+    await route.fulfill({
+      status: 429,
+      contentType: 'application/json',
+      headers: { 'Retry-After': '900' },
+      body: JSON.stringify({ detail: 'Too many login attempts' }),
+    })
+  })
+
+  await page.goto('/login')
+  await page.getByLabel('登录名').fill('throttled-user')
+  await page.getByLabel('密码').fill('some-password')
+  await page.getByRole('button', { name: '登录' }).click()
+
+  await expect(page.getByRole('alert')).toHaveText('登录尝试过于频繁，请约 15 分钟后再试。')
+  await expect(page).toHaveURL(/\/login$/)
+
+  await page.waitForTimeout(500)
+  expect(loginAttempts).toBe(1)
+})
+
 test('authenticated password requirement wins over intended business route', async ({ page }) => {
   let loggedIn = false
   await page.route('**/api/v1/me', (route) =>

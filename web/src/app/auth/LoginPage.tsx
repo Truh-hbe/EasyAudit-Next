@@ -14,6 +14,22 @@ function hasUnconfirmedLogout(state: unknown): boolean {
   )
 }
 
+export function loginErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) {
+      return '登录名或密码无效'
+    }
+    if (error.status === 429) {
+      if (error.retryAfter !== null && error.retryAfter > 0) {
+        const minutes = Math.ceil(error.retryAfter / 60)
+        return `登录尝试过于频繁，请约 ${minutes} 分钟后再试。`
+      }
+      return '登录尝试过于频繁，请稍后再试。'
+    }
+  }
+  return '暂时无法完成登录，请重试'
+}
+
 export function LoginPage() {
   const { refresh } = useSession()
   const location = useLocation()
@@ -31,11 +47,7 @@ export function LoginPage() {
       setPassword('')
       await refresh()
     } catch (caught) {
-      if (caught instanceof ApiError && caught.status === 401) {
-        setError('登录名或密码无效')
-      } else {
-        setError('暂时无法完成登录，请重试')
-      }
+      setError(loginErrorMessage(caught))
     } finally {
       setSubmitting(false)
     }
