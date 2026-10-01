@@ -1,10 +1,11 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from easyaudit_next.application.case_team_coordination import CaseTeamUserCoordinator
 from easyaudit_next.collaboration.automatic_reminder import AutomaticReminderEvaluator
 from easyaudit_next.collaboration.notification_orchestration import NotificationOrchestrator
 from easyaudit_next.collaboration.nudge import ManualNudgeService
 from easyaudit_next.collaboration.reminder_sweep import AutomaticReminderSweep
+from easyaudit_next.infrastructure.database import session_scope
 from easyaudit_next.infrastructure.object_storage import S3EvidenceObjectStore
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
@@ -252,4 +253,16 @@ def build_automatic_reminder_evaluator(session: Session) -> AutomaticReminderEva
 def build_automatic_reminder_sweep(session: Session) -> AutomaticReminderSweep:
     """Wire one scheduler-neutral sweep; the caller still owns clock and cadence."""
 
-    return AutomaticReminderSweep(session, build_automatic_reminder_evaluator(session))
+    return AutomaticReminderSweep.in_caller_transaction(
+        session, build_automatic_reminder_evaluator(session)
+    )
+
+
+def build_per_candidate_reminder_sweep(
+    session_factory: sessionmaker[Session],
+) -> AutomaticReminderSweep:
+    """Sweep with one short transaction per discovery page and per candidate."""
+
+    return AutomaticReminderSweep.per_candidate(
+        lambda: session_scope(session_factory), build_automatic_reminder_evaluator
+    )
