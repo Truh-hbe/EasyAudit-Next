@@ -6,7 +6,7 @@ Deliberately organization-agnostic: a bucket holds every organization's objects,
 
 from collections.abc import Collection
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from easyaudit_next.platform.domain.ids import OrganizationId
@@ -32,6 +32,19 @@ class SqlAlchemyEvidenceMaintenanceRepository:
                 )
             )
         )
+
+    def evidence_id_for_key(self, storage_key: str) -> str | None:
+        found = self._session.scalar(
+            select(EvidenceRecord.id).where(EvidenceRecord.storage_key == storage_key).limit(1)
+        )
+        return None if found is None else str(found)
+
+    def count(self) -> int:
+        return int(self._session.scalar(select(func.count()).select_from(EvidenceRecord)) or 0)
+
+    def alembic_revision(self) -> str | None:
+        revision = self._session.scalar(text("SELECT version_num FROM alembic_version LIMIT 1"))
+        return None if revision is None else str(revision)
 
     def page(
         self,

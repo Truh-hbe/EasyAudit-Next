@@ -33,6 +33,9 @@ class ObjectStream(Protocol):
     """Chunks of one object. `aclose` releases the underlying connection and is safe to call
     at any point, more than once, whether or not iteration started."""
 
+    content_length: int | None
+    """What the store says the object's size is, known before the first chunk."""
+
     def __aiter__(self) -> "ObjectStream": ...
 
     async def __anext__(self) -> bytes: ...

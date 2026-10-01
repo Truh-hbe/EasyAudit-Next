@@ -11,6 +11,21 @@ deleted only if it is unreferenced, older than `min_age`, and *still* unreferenc
 re-checked in a fresh transaction right before its delete. `min_age` is what protects uploads in
 flight and registrations that a stuck worker thread commits late; the re-check closes the window
 between "listed" and "deleted". An object that is referenced is never deleted.
+
+A delete run is also refused as a whole, before anything is deleted or aborted, when the
+database looks wrong (a wrong or half-restored one would turn every old object into an
+"orphan"): no Evidence rows at all while objects exist, a schema revision that is not this
+code's head, or more deletions planned than `max_delete`. A refusal is a non-zero exit with the
+reason in the result; the operator looks, then reruns (raising `--max-delete` if the number is
+really expected). All of that is decided on the *complete* candidate set, after the whole
+listing and before the first delete. Dry runs do not evaluate the guards.
+
+Known, accepted window (pilot): a registration that commits between the per-key re-check and the
+delete leaves metadata without an object. It needs a registration delayed past `min_age`, so
+real runs require `min_age >= 24h`. It is detected, not prevented: every delete is followed by a
+lookup, and a hit is reported in `deleted_but_registered` (the CLI logs ERROR
+`evidence_object_deleted_while_registered` and exits non-zero) so the object can be restored from
+a backup. The cure is a key-claim table shared by registration and cleanup (see the roadmap).
 """
 
 import hashlib
@@ -40,6 +55,12 @@ _BATCH = 500
 class EvidenceReferences(Protocol):
     def referenced(self, storage_keys: Collection[str]) -> set[str]: ...
 
+    def evidence_id_for_key(self, storage_key: str) -> str | None: ...
+
+    def count(self) -> int: ...
+
+    def alembic_revision(self) -> str | None: ...
+
     def page(
         self, organization_id: OrganizationId | None, after: EvidenceId | None, size: int
     ) -> list[Evidence]: ...
@@ -53,6 +74,12 @@ class MaintenanceStore(EvidenceObjectStore, EvidenceObjectInventory, Protocol):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class DeletedWhileRegistered:
+    storage_key: str
+    evidence_id: str
+
+
 @dataclass(slots=True)
 class OrphanCleanupResult:
     scanned: int = 0
@@ -63,6 +90,15 @@ class OrphanCleanupResult:
     multipart_aborted: int = 0
     skipped_referenced: int = 0  # unreferenced at the first check, referenced at the re-check
     failed: int = 0
+    max_delete: int = 0
+    deleted_but_registered: int = 0  # Evidence now has metadata but no object: restore it
+    incidents: list[DeletedWhileRegistered] = field(default_factory=list)
+    refused: str | None = None  # why nothing was deleted: see REFUSAL_* below
+
+
+REFUSAL_NO_EVIDENCE_ROWS = "no_evidence_rows"
+REFUSAL_REVISION_MISMATCH = "revision_mismatch"
+REFUSAL_TOO_MANY_DELETIONS = "too_many_deletions"
 
 
 async def cleanup_evidence_orphans(
@@ -72,17 +108,91 @@ async def cleanup_evidence_orphans(
     min_age: timedelta,
     now: datetime,
     dry_run: bool,
+    expected_revision: str,
+    max_delete: int,
 ) -> OrphanCleanupResult:
-    result = OrphanCleanupResult()
+    result = OrphanCleanupResult(max_delete=max_delete)
+    if not dry_run:
+        with references() as checker:
+            if checker.alembic_revision() != expected_revision:
+                result.refused = REFUSAL_REVISION_MISMATCH
+                return result
+    candidates: list[ListedObject] = []  # old orphans; never more than max_delete + 1 kept
     batch: list[ListedObject] = []
+    old_orphans = 0
     async for item in store.list_objects(LISTING_PREFIX):
         if _EVIDENCE_KEY.match(item.key):
             batch.append(item)
             if len(batch) >= _BATCH:
-                await _process_batch(store, references, batch, result, min_age, now, dry_run)
+                old_orphans += _classify(references, batch, result, candidates, min_age, now)
                 batch = []
-    await _process_batch(store, references, batch, result, min_age, now, dry_run)
+    old_orphans += _classify(references, batch, result, candidates, min_age, now)
+    if dry_run:
+        return await _abort_stale_uploads(store, result, min_age, now, dry_run=True)
 
+    if result.scanned > 0:
+        with references() as checker:
+            if checker.count() == 0:
+                result.refused = REFUSAL_NO_EVIDENCE_ROWS
+                return result
+    if old_orphans > max_delete:
+        result.refused = REFUSAL_TOO_MANY_DELETIONS
+        return result
+    for item in candidates:
+        with references() as checker:  # fresh transaction: a registration may have committed
+            if checker.referenced([item.key]):
+                result.skipped_referenced += 1
+                continue
+        try:
+            await store.delete(item.key)
+        except ObjectStoreError:
+            result.failed += 1
+        else:
+            result.deleted += 1
+            with references() as checker:  # a registration that committed after the re-check
+                evidence_id = checker.evidence_id_for_key(item.key)
+            if evidence_id is not None:
+                result.deleted_but_registered += 1
+                result.incidents.append(DeletedWhileRegistered(item.key, evidence_id))
+    return await _abort_stale_uploads(store, result, min_age, now, dry_run=False)
+
+
+def _classify(
+    references: ReferencesScope,
+    batch: list[ListedObject],
+    result: OrphanCleanupResult,
+    candidates: list[ListedObject],
+    min_age: timedelta,
+    now: datetime,
+) -> int:
+    """Count one batch; returns how many of it are old orphans (deletion candidates)."""
+    if not batch:
+        return 0
+    result.scanned += len(batch)
+    with references() as checker:
+        referenced = checker.referenced([item.key for item in batch])
+    old = 0
+    for item in batch:
+        if item.key in referenced:
+            continue
+        result.orphans += 1
+        if now - item.last_modified < min_age:
+            result.kept_young += 1
+            continue
+        old += 1
+        if len(candidates) <= result.max_delete:
+            candidates.append(item)
+    return old
+
+
+async def _abort_stale_uploads(
+    store: MaintenanceStore,
+    result: OrphanCleanupResult,
+    min_age: timedelta,
+    now: datetime,
+    *,
+    dry_run: bool,
+) -> OrphanCleanupResult:
     async for upload in store.list_multipart_uploads(LISTING_PREFIX):
         if not _EVIDENCE_KEY.match(upload.key) or now - upload.initiated < min_age:
             continue
@@ -96,41 +206,6 @@ async def cleanup_evidence_orphans(
         else:
             result.multipart_aborted += 1
     return result
-
-
-async def _process_batch(
-    store: MaintenanceStore,
-    references: ReferencesScope,
-    batch: list[ListedObject],
-    result: OrphanCleanupResult,
-    min_age: timedelta,
-    now: datetime,
-    dry_run: bool,
-) -> None:
-    if not batch:
-        return
-    result.scanned += len(batch)
-    with references() as checker:
-        referenced = checker.referenced([item.key for item in batch])
-    for item in batch:
-        if item.key in referenced:
-            continue
-        result.orphans += 1
-        if now - item.last_modified < min_age:
-            result.kept_young += 1
-            continue
-        if dry_run:
-            continue
-        with references() as checker:  # fresh transaction: a registration may have committed
-            if checker.referenced([item.key]):
-                result.skipped_referenced += 1
-                continue
-        try:
-            await store.delete(item.key)
-        except ObjectStoreError:
-            result.failed += 1
-        else:
-            result.deleted += 1
 
 
 @dataclass(frozen=True, slots=True)

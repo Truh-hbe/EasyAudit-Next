@@ -11,6 +11,8 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from pwdlib import PasswordHash
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -32,6 +34,10 @@ from easyaudit_next.infrastructure.database import (
     create_database_engine,
     create_session_factory,
     session_scope,
+)
+from easyaudit_next.infrastructure.maintenance_logging import (
+    configure_cli_logging,
+    log_object_deleted_while_registered,
 )
 from easyaudit_next.platform.application.authentication import normalize_login_name
 from easyaudit_next.platform.application.login_throttle import (
@@ -414,6 +420,10 @@ def _occurrence_key(value: str) -> str:
     return value
 
 
+DEFAULT_MAX_DELETE = 100
+MIN_AGE_FOR_DELETION = timedelta(hours=24)
+
+
 def _references_scope(factory: sessionmaker[Session]) -> ReferencesScope:
     @contextmanager
     def scope() -> Iterator[EvidenceReferences]:
@@ -423,8 +433,30 @@ def _references_scope(factory: sessionmaker[Session]) -> ReferencesScope:
     return scope
 
 
-def cleanup_evidence_orphans_command(min_age: timedelta, dry_run: bool) -> int:
+def _code_head() -> str:
+    """Head of the alembic scripts in this image (cwd holds alembic.ini)."""
+    head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    if head is None:
+        raise RuntimeError("alembic scripts have no head")
+    return head
+
+
+def cleanup_evidence_orphans_command(
+    min_age: timedelta, dry_run: bool, max_delete: int = DEFAULT_MAX_DELETE
+) -> int:
+    if not dry_run and min_age < MIN_AGE_FOR_DELETION:
+        print(
+            json.dumps(
+                {
+                    "event": "cleanup_evidence_orphans",
+                    "error": "a deleting run needs --min-age-hours >= 24 (--dry-run allows >= 1)",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
     settings = get_settings()
+    configure_cli_logging(settings.log_level)
     engine = create_database_engine(settings)
     try:
         store = build_evidence_maintenance_store(settings)
@@ -435,6 +467,8 @@ def cleanup_evidence_orphans_command(min_age: timedelta, dry_run: bool) -> int:
                 min_age=min_age,
                 now=datetime.now(UTC),
                 dry_run=dry_run,
+                expected_revision=_code_head(),
+                max_delete=max_delete,
             )
         )
     except ObjectStoreError as exc:
@@ -442,8 +476,13 @@ def cleanup_evidence_orphans_command(min_age: timedelta, dry_run: bool) -> int:
         return 1
     finally:
         engine.dispose()
-    print(json.dumps({"event": "cleanup_evidence_orphans", "dry_run": dry_run, **asdict(result)}))
-    return 1 if result.failed else 0
+    payload = asdict(result)
+    del payload["incidents"]
+    for incident in result.incidents:
+        log_object_deleted_while_registered(incident.storage_key, incident.evidence_id)
+    print(json.dumps({"event": "cleanup_evidence_orphans", "dry_run": dry_run, **payload}))
+    failed = result.failed or result.refused or result.deleted_but_registered
+    return 1 if failed else 0
 
 
 def verify_evidence_command(organization_id: UUID | None, limit: int | None) -> int:
@@ -541,9 +580,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-age-hours",
         type=_min_age_hours,
         default=24.0,
-        help="Only touch objects/uploads older than this (default 24, minimum 1)",
+        help="Only touch objects/uploads older than this (default 24). A deleting run needs "
+        ">= 24; --dry-run accepts >= 1",
     )
     orphans.add_argument("--dry-run", action="store_true", help="Report only; delete nothing")
+    orphans.add_argument(
+        "--max-delete",
+        type=_positive_int,
+        default=DEFAULT_MAX_DELETE,
+        help="Refuse to delete anything if more objects than this are orphans (default 100)",
+    )
     verify = subparsers.add_parser(
         "verify-evidence",
         help="Read every Evidence object back and compare size and SHA-256 with the metadata",
@@ -571,7 +617,9 @@ def main() -> None:
         sys.exit(scheduler_status(args.job, args.max_age_hours))
     elif args.command == "cleanup-evidence-orphans":
         sys.exit(
-            cleanup_evidence_orphans_command(timedelta(hours=args.min_age_hours), args.dry_run)
+            cleanup_evidence_orphans_command(
+                timedelta(hours=args.min_age_hours), args.dry_run, args.max_delete
+            )
         )
     elif args.command == "verify-evidence":
         sys.exit(verify_evidence_command(args.organization_id, args.limit))
