@@ -75,4 +75,24 @@ describe('shared API boundary', () => {
     expect(unauthorized).not.toHaveBeenCalled()
     uninstall()
   })
+
+  it('captures Retry-After header on 429 response in ApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail: 'Too many login attempts' }), {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '900',
+          },
+        }),
+      ),
+    )
+
+    await expect(publicApiRequest('/api/v1/auth/login')).rejects.toMatchObject({
+      status: 429,
+      retryAfter: 900,
+    })
+  })
 })
