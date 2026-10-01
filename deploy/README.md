@@ -113,15 +113,17 @@ deploy/backup/restore.sh environment BACKUP_DIR    # 整个新环境，见下
 
 ### 恢复演练
 
-`deploy/backup/drill.sh` 走完整流程：临时证书和 secrets 部署 → migrate、`bootstrap-admin`（用 stdin 传密码，`getpass` 在没有 TTY 时读 stdin）→ 通过网关的真实 API 建 ReviewPlan、Case、Finding、Action，并往 bucket 放测试对象、登记 Evidence 元数据 → `backup.sh` → `down -v` → 生成新 secrets 和证书 → `restore.sh environment` → 验证（`alembic current` 等于 head、原账号登录、打开原 Case 和 Finding、Evidence 元数据、`verify.sh`），并确认恢复会拒绝非空目标，以及 release 不匹配（`database`、`objects`、`environment` 三个入口都测）；最后故意删掉一个已登记的对象再备份，断言退出码为 3、备份被保留、manifest 标记 degraded、`verify` 判失败，`check-freshness.sh` 只认更早那份 ok 备份；再拆掉环境、往 bucket 里放一个对象，断言 `restore.sh environment` 在写数据库之前就拒绝、数据库保持为空。实际 RTO 超过 `DRILL_RTO_LIMIT_SECONDS`（默认 14400）演练判失败；记录写不进去也判失败。输出 `restore-drill-record.json`（`restore_started_at`、`restore_completed_at`、`actual_rto_seconds`、`backup_timestamp`、`release_sha`、`result`）。CI 对应 `backup-restore-drill` job（不是 required check），记录作为 artifact 上传并打印在日志里。
+`deploy/backup/drill.sh` 走完整流程：临时证书和 secrets 部署 → migrate、`bootstrap-admin`（用 stdin 传密码，`getpass` 在没有 TTY 时读 stdin）→ 通过网关的真实 API 建 ReviewPlan、Case、Finding、Action，并**上传三个真实文件**作为 Evidence（最大的一个 9 MiB，超过 8 MiB 的 part 大小，走多段上传；服务端算出的 size/sha256 必须与本地一致），再从 bucket 读回对象，确认 bucket 里恰好是这三个对象且 sha256 一致 → `backup.sh` → `down -v` → 生成新 secrets 和证书 → `restore.sh environment` → 验证（`alembic current` 等于 head、原账号登录、打开原 Case 和 Finding、Evidence 元数据、`verify.sh`），并确认恢复会拒绝非空目标，以及 release 不匹配（`database`、`objects`、`environment` 三个入口都测）；最后故意删掉一个已登记的对象再备份，断言退出码为 3、备份被保留、manifest 标记 degraded、`verify` 判失败，`check-freshness.sh` 只认更早那份 ok 备份；再拆掉环境、往 bucket 里放一个对象，断言 `restore.sh environment` 在写数据库之前就拒绝、数据库保持为空。实际 RTO 超过 `DRILL_RTO_LIMIT_SECONDS`（默认 14400）演练判失败；记录写不进去也判失败。输出 `restore-drill-record.json`（`restore_started_at`、`restore_completed_at`、`actual_rto_seconds`、`backup_timestamp`、`release_sha`、`result`）。CI 对应 `backup-restore-drill` job（不是 required check），记录作为 artifact 上传并打印在日志里。
 
 "通过 API 下载 Evidence"要等 Pilot-4B 的下载端点；`drill_api.py` 的 `check` 里留了扩展点，Pilot-4B 必须把它加进演练。在此之前用对象级 sha256 校验代替。
 
 ## 冒烟测试
 
-`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → 镜像 label → migrate → up → HTTPS 验证 → 无非网关端口发布 → down -v）。前置条件：docker compose、git、openssl、curl、python3。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
+`deploy/smoke.sh` 用临时证书和 secrets 完整跑一遍（build → 镜像 label → migrate → up → HTTPS 验证 → API `ready` 含 `object_storage: ok` → 未认证上传 401、超过网关上限的上传 413 → 无非网关端口发布 → down -v）。前置条件：docker compose、git、openssl、curl、python3。本机 443 被占用时设置 `EASYAUDIT_HTTPS_PORT`。CI 中对应 `deploy-smoke` job。
 
 ## 说明
 
-- 对象存储为 Garage（单节点）。应用目前不使用它；证据文件功能（Pilot-4A）接入时使用 `s3_access_key_id`/`s3_secret_access_key` 和 bucket `easyaudit-evidence`，内部端点 `http://object-storage:3900`，region `garage`。
+- 对象存储为 Garage（单节点）。API 用 `s3_access_key_id`/`s3_secret_access_key` 访问 bucket `easyaudit-evidence`（内部端点 `http://object-storage:3900`，region `garage`），凭证以 secrets 文件挂载，环境变量只给文件路径（`OBJECT_STORAGE_*_FILE`）。API 的 `/health/ready` 含 `object_storage`（HeadBucket）；`up --wait gateway` 等的就是它，所以凭证或 bucket 不对时 API 起不来。
+- Evidence 上传限制由 `EVIDENCE_MAX_BYTES`（默认 25 MiB）和 `EVIDENCE_ALLOWED_CONTENT_TYPES` 控制。网关的 `request_body max_size`（`Caddyfile`，26 MiB）要略大于应用上限：调大应用上限时同步改它。
+- 上传失败后可能留下孤儿对象（登记失败且删除也失败）或未完成的 multipart（进程崩溃）；它们不在任何 Evidence 行里引用，备份会把前者当作多出来的对象带走，清理由 Pilot-4B 的孤儿清理处理。
 - API 只信任来自网关固定地址（`172.30.10.10`）的代理头。若该网段与内网冲突，同时修改 `compose.yaml` 中 `edge` 网段、网关 `ipv4_address` 和 `FORWARDED_ALLOW_IPS`（测试会检查后两项一致）。
