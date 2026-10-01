@@ -218,3 +218,27 @@ test('a cancelled Action offers no upload form', async ({ page }) => {
   await expect(page.getByText('当前 Action 已取消，不能上传证据。')).toBeVisible()
   await expect(page.getByLabel('证据文件')).toHaveCount(0)
 })
+
+test('clicking download saves the attachment under the server-provided file name', async ({ page }) => {
+  const evidence = evidenceResponse('整改报告.pdf', 9)
+  await stubActionPage(page, () => [evidence])
+  await page.route((url) => url.pathname === '/api/v1/evidences/evidence-1/content', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="____.pdf"; filename*=UTF-8''${encodeURIComponent('整改报告.pdf')}`,
+        'X-Content-Type-Options': 'nosniff',
+      },
+      body: '%PDF-1.7\n',
+    }),
+  )
+
+  await page.goto('/action-items/action-1')
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('link', { name: /下载 整改报告\.pdf/ }).click()
+  const download = await downloadPromise
+
+  expect(download.suggestedFilename()).toBe('整改报告.pdf')
+  expect(download.url()).toContain('/api/v1/evidences/evidence-1/content')
+})
