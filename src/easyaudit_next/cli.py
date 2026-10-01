@@ -1,9 +1,11 @@
 import argparse
+import asyncio
 import getpass
 import json
 import sys
-from collections.abc import Callable
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -22,6 +24,7 @@ from easyaudit_next.collaboration.scheduler_runs import (
     start_run,
 )
 from easyaudit_next.composition import (
+    build_evidence_maintenance_store,
     build_per_candidate_reminder_sweep,
     build_scenario_registry,
 )
@@ -56,8 +59,18 @@ from easyaudit_next.platform.persistence.repositories import (
     SqlAlchemyUserRepository,
 )
 from easyaudit_next.platform.settings import get_settings
+from easyaudit_next.review_core.application.evidence_maintenance import (
+    EvidenceReferences,
+    ReferencesScope,
+    cleanup_evidence_orphans,
+    verify_evidences,
+)
+from easyaudit_next.review_core.application.evidence_storage import ObjectStoreError
 from easyaudit_next.review_core.application.scenario_catalog import ScenarioCatalogService
 from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersion
+from easyaudit_next.review_core.persistence.evidence_maintenance_repository import (
+    SqlAlchemyEvidenceMaintenanceRepository,
+)
 from easyaudit_next.review_core.persistence.repositories import SqlAlchemyScenarioCatalogRepository
 
 
@@ -401,6 +414,85 @@ def _occurrence_key(value: str) -> str:
     return value
 
 
+def _references_scope(factory: sessionmaker[Session]) -> ReferencesScope:
+    @contextmanager
+    def scope() -> Iterator[EvidenceReferences]:
+        with session_scope(factory) as session:  # a fresh short transaction per `with`
+            yield SqlAlchemyEvidenceMaintenanceRepository(session)
+
+    return scope
+
+
+def cleanup_evidence_orphans_command(min_age: timedelta, dry_run: bool) -> int:
+    settings = get_settings()
+    engine = create_database_engine(settings)
+    try:
+        store = build_evidence_maintenance_store(settings)
+        result = asyncio.run(
+            cleanup_evidence_orphans(
+                store,
+                _references_scope(create_session_factory(engine)),
+                min_age=min_age,
+                now=datetime.now(UTC),
+                dry_run=dry_run,
+            )
+        )
+    except ObjectStoreError as exc:
+        print(json.dumps({"event": "cleanup_evidence_orphans", "error": str(exc)}), file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    print(json.dumps({"event": "cleanup_evidence_orphans", "dry_run": dry_run, **asdict(result)}))
+    return 1 if result.failed else 0
+
+
+def verify_evidence_command(organization_id: UUID | None, limit: int | None) -> int:
+    settings = get_settings()
+    engine = create_database_engine(settings)
+    try:
+        store = build_evidence_maintenance_store(settings)
+        result = asyncio.run(
+            verify_evidences(
+                store,
+                _references_scope(create_session_factory(engine)),
+                organization_id=OrganizationId(organization_id) if organization_id else None,
+                limit=limit,
+            )
+        )
+    except ObjectStoreError as exc:
+        print(json.dumps({"event": "verify_evidence", "error": str(exc)}), file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    print(
+        json.dumps(
+            {
+                "event": "verify_evidence",
+                "checked": result.checked,
+                "problems": [
+                    {"evidence_id": str(item.evidence_id), "problem": item.problem}
+                    for item in result.problems
+                ],
+            }
+        )
+    )
+    return 1 if result.problems else 0
+
+
+def _min_age_hours(raw: str) -> float:
+    value = float(raw)
+    if value < 1:  # shorter than any upload or late registration could take: refuse
+        raise argparse.ArgumentTypeError("must be at least 1 hour")
+    return value
+
+
+def _positive_int(raw: str) -> int:
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="easyaudit-next")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -441,6 +533,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.add_argument("--job", default=JOB_AUTOMATIC_REMINDER_SWEEP)
     status.add_argument("--max-age-hours", type=float, default=26.0)
+    orphans = subparsers.add_parser(
+        "cleanup-evidence-orphans",
+        help="Delete unreferenced Evidence objects and abort stale multipart uploads",
+    )
+    orphans.add_argument(
+        "--min-age-hours",
+        type=_min_age_hours,
+        default=24.0,
+        help="Only touch objects/uploads older than this (default 24, minimum 1)",
+    )
+    orphans.add_argument("--dry-run", action="store_true", help="Report only; delete nothing")
+    verify = subparsers.add_parser(
+        "verify-evidence",
+        help="Read every Evidence object back and compare size and SHA-256 with the metadata",
+    )
+    verify.add_argument("--organization-id", type=UUID, help="Only this Organization")
+    verify.add_argument("--limit", type=_positive_int, help="Check at most this many Evidences")
     return parser
 
 
@@ -460,6 +569,12 @@ def main() -> None:
         sys.exit(run_reminder_sweep(args.as_of, args.occurrence_key))
     elif args.command == "scheduler-status":
         sys.exit(scheduler_status(args.job, args.max_age_hours))
+    elif args.command == "cleanup-evidence-orphans":
+        sys.exit(
+            cleanup_evidence_orphans_command(timedelta(hours=args.min_age_hours), args.dry_run)
+        )
+    elif args.command == "verify-evidence":
+        sys.exit(verify_evidence_command(args.organization_id, args.limit))
 
 
 if __name__ == "__main__":
