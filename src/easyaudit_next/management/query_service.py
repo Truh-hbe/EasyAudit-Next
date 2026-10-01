@@ -81,8 +81,34 @@ class ManagementQueryService:
         if offset < 0:
             raise ValueError("offset must be non-negative")
 
-        snapshot = self._authorized_snapshot(actor, captured_at)
-        summaries = list(snapshot.summaries)
+        summaries = self._filtered_summaries(
+            actor,
+            captured_at,
+            review_plan_id=review_plan_id,
+            lifecycle=lifecycle,
+            deadline_status=deadline_status,
+        )
+        total = len(summaries)
+        page = tuple(summaries[offset : offset + limit])
+        return ManagementCaseCollectionResponse(
+            as_of=captured_at,
+            items=page,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    def _filtered_summaries(
+        self,
+        actor: User,
+        as_of: datetime,
+        *,
+        review_plan_id: UUID | None,
+        lifecycle: ReviewCaseLifecycle | None,
+        deadline_status: ManagementDeadlineFilter,
+    ) -> list[ManagementCaseSummary]:
+        """Authorized snapshot -> filters -> sort. The single source for every case listing."""
+        summaries = list(self._authorized_snapshot(actor, as_of).summaries)
 
         if review_plan_id is not None:
             summaries = [item for item in summaries if item.review_plan_id == review_plan_id]
@@ -98,15 +124,7 @@ class ManagementQueryService:
             ]
 
         summaries.sort(key=self._case_sort_key)
-        total = len(summaries)
-        page = tuple(summaries[offset : offset + limit])
-        return ManagementCaseCollectionResponse(
-            as_of=captured_at,
-            items=page,
-            total=total,
-            limit=limit,
-            offset=offset,
-        )
+        return summaries
 
     def get_progress(
         self,
