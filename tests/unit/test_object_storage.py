@@ -202,3 +202,77 @@ def test_client_retry_budget_counts_the_first_attempt(fake_s3: FakeS3) -> None:
 
     assert retries["total_max_attempts"] == 2 and retries["mode"] == "standard"
     assert store._client.meta.config.proxies == {}
+
+
+def test_a_stuck_resolver_cannot_delay_the_probe_or_the_loop_exit(
+    fake_s3: FakeS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`getaddrinfo` cannot be interrupted. It runs in the probe's own daemon thread, not on the
+    default executor, so neither the answer nor `asyncio.run`'s exit waits for it."""
+    monkeypatch.setattr(readiness.socket, "getaddrinfo", lambda *a, **k: time.sleep(2.5) or [])
+    settings = fake_s3.settings(
+        object_storage_endpoint="http://storage.internal.test:3900", readiness_timeout_seconds=1
+    )
+    started = time.monotonic()
+
+    failure = probe(settings)
+
+    assert failure is not None and failure.reason == "deadline_exceeded"
+    assert time.monotonic() - started < 1.6  # includes the loop's shutdown
+
+
+def test_a_hostname_is_resolved_then_reached_by_address(
+    fake_s3: FakeS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket as socket_module
+
+    port = fake_s3.endpoint.rsplit(":", 1)[1]
+    seen: list[str] = []
+
+    def fake_getaddrinfo(host: str, p: int, **_: Any) -> list[Any]:
+        seen.append(host)
+        return [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("127.0.0.1", p))]
+
+    monkeypatch.setattr(readiness.socket, "getaddrinfo", fake_getaddrinfo)
+
+    failure = probe(fake_s3.settings(object_storage_endpoint=f"http://storage.test:{port}"))
+
+    assert failure is None and seen == ["storage.test"]
+
+
+def test_head_request_formats_host_and_bucket_like_the_endpoint(fake_s3: FakeS3) -> None:
+    request = readiness._head_request(
+        fake_s3.settings(object_storage_endpoint="http://[::1]:3900/", object_storage_bucket="a b")
+    )
+    assert request.startswith(b"HEAD /a%20b HTTP/1.1\r\nHost: [::1]:3900\r\n")
+    plain = readiness._head_request(
+        fake_s3.settings(object_storage_endpoint="https://s3.example.com")
+    )
+    assert b"Host: s3.example.com\r\n" in plain
+
+
+def test_probe_reaches_an_ipv6_literal_endpoint(fake_s3: FakeS3) -> None:
+    import socket
+
+    try:
+        server = socket.socket(socket.AF_INET6)
+        server.bind(("::1", 0))
+    except OSError:
+        pytest.skip("no IPv6 loopback")
+    server.listen(1)
+    port = server.getsockname()[1]
+
+    def answer() -> None:
+        connection, _ = server.accept()
+        connection.recv(1024)
+        connection.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+        connection.close()
+
+    import threading
+
+    threading.Thread(target=answer, daemon=True).start()
+
+    failure = probe(fake_s3.settings(object_storage_endpoint=f"http://[::1]:{port}"))
+    server.close()
+
+    assert failure is None

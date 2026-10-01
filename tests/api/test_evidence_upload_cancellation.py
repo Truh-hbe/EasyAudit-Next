@@ -9,6 +9,8 @@ import asyncio
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -68,7 +70,7 @@ def store_with_object() -> FakeEvidenceStore:
 
 
 async def cancel_while_gated(db: Database, store: FakeEvidenceStore, register: Any) -> None:
-    task = asyncio.ensure_future(uploads._register_and_settle(store, KEY, register))
+    task = asyncio.ensure_future(uploads._register_and_settle(store, KEY, register, 5.0))
     await asyncio.to_thread(db.at_gate.wait, 5)
     task.cancel()
     await asyncio.sleep(0.05)  # the request is cancelled; the worker thread is still blocked
@@ -107,7 +109,7 @@ def test_cancel_after_the_commit_keeps_the_object() -> None:
 
     async def scenario() -> None:
         task = asyncio.ensure_future(
-            uploads._register_and_settle(store, KEY, db.register(gate="none"))
+            uploads._register_and_settle(store, KEY, db.register(gate="none"), 5.0)
         )
         await asyncio.to_thread(db.finished.wait, 5)
         task.cancel()  # the commit is already done; the answer has not been delivered yet
@@ -126,7 +128,7 @@ def test_commit_with_unknown_outcome_keeps_the_object_and_reraises_the_cause() -
         raise uploads.RegistrationOutcomeUnknown from cause
 
     with pytest.raises(RuntimeError, match="connection lost"):
-        asyncio.run(uploads._register_and_settle(store, KEY, register))
+        asyncio.run(uploads._register_and_settle(store, KEY, register, 5.0))
 
     assert KEY in store.objects and store.deleted == []
 
@@ -158,3 +160,61 @@ def test_cancel_before_the_registration_starts_leaves_neither(
         asyncio.run(scenario(client.app))
 
     assert registered == [] and store.objects == {}
+
+
+def test_registration_that_never_answers_is_abandoned_after_the_limit_keeping_the_object() -> None:
+    db, store = Database(), store_with_object()
+    register = db.register()  # blocks until released: a database that never answers
+
+    async def scenario() -> float:
+        task = asyncio.ensure_future(uploads._register_and_settle(store, KEY, register, 0.3))
+        await asyncio.to_thread(db.at_gate.wait, 5)
+        started = asyncio.get_running_loop().time()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return asyncio.get_running_loop().time() - started
+
+    elapsed = asyncio.run(scenario())
+
+    assert 0.25 < elapsed < 1.5  # bounded by the limit, not by the thread
+    assert not db.metadata and KEY in store.objects and store.deleted == []  # nothing committed
+    db.release.set()  # the thread finally commits
+    assert db.finished.wait(5)
+    assert db.metadata and KEY in store.objects  # metadata and object, never metadata alone
+
+
+class _Session:
+    """COMMIT fails, and so does the cleanup that follows it."""
+
+    def commit(self) -> None:
+        raise RuntimeError("connection lost during COMMIT")
+
+    def rollback(self) -> None:
+        raise RuntimeError("rollback failed too")
+
+    def close(self) -> None:
+        raise RuntimeError("close failed too")
+
+
+def test_a_failing_rollback_cannot_turn_an_unknown_commit_into_a_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        uploads, "SqlAlchemyUserRepository", lambda _: SimpleNamespace(get=lambda _id: object())
+    )
+    monkeypatch.setattr(
+        uploads,
+        "build_rectification_service",
+        lambda _: SimpleNamespace(register_evidence=lambda *a, **k: evidence()),
+    )
+    store = store_with_object()
+    register = partial(
+        uploads._register, _Session, uuid4(), uuid4(), KEY,
+        SimpleNamespace(original_name="a.pdf", content_type="application/pdf"), 1, "0" * 64, None,
+    )  # fmt: skip
+
+    with pytest.raises(RuntimeError, match="connection lost during COMMIT"):
+        asyncio.run(uploads._register_and_settle(store, KEY, register, 5.0))
+
+    assert KEY in store.objects and store.deleted == []

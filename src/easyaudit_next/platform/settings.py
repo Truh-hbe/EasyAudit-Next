@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,6 +61,32 @@ class Settings(BaseSettings):
         if self.db_pool_size + self.db_max_overflow < 2:
             raise ValueError("DB_POOL_SIZE + DB_MAX_OVERFLOW must be at least 2")
         return self
+
+    @field_validator("object_storage_endpoint")
+    @classmethod
+    def _endpoint_is_origin_only(cls, value: str) -> str:
+        """http(s)://host[:port] and nothing else: no path prefix, query, fragment or userinfo.
+        The readiness probe and the S3 client must agree on where the endpoint is."""
+        if value == "":
+            return value
+        try:
+            url = urlsplit(value)
+            url.port  # noqa: B018 - raises ValueError for an invalid port
+        except ValueError as exc:
+            raise ValueError("OBJECT_STORAGE_ENDPOINT is not a valid URL") from exc
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.path not in {"", "/"}
+            or url.query
+            or url.fragment
+            or url.username is not None
+            or url.password is not None
+        ):
+            raise ValueError(
+                "OBJECT_STORAGE_ENDPOINT must be http(s)://host[:port] without path or credentials"
+            )
+        return value
 
     @field_validator("log_level", mode="before")
     @classmethod

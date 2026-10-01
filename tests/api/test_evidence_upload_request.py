@@ -15,6 +15,7 @@ from easyaudit_next.api.dependencies import (
     CurrentIdentity,
     get_current_identity,
     get_database_session,
+    get_session_factory,
     require_business_identity,
 )
 from easyaudit_next.main import create_app
@@ -91,6 +92,7 @@ def make_client(store: FakeEvidenceStore | None, max_bytes: int = 1024) -> Itera
     app.dependency_overrides[get_current_identity] = lambda: identity
     app.dependency_overrides[require_business_identity] = lambda: identity
     app.dependency_overrides[get_database_session] = lambda: MagicMock()
+    app.dependency_overrides[get_session_factory] = lambda: MagicMock()
     app.dependency_overrides[uploads.get_evidence_upload_policy] = lambda: (
         EvidenceUploadPolicy.from_config(max_bytes, "application/pdf,text/csv")
     )

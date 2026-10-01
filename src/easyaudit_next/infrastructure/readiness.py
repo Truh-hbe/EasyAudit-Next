@@ -19,7 +19,10 @@ shows up as an error on the first upload. Nothing is kept in module state.
 """
 
 import asyncio
+import ipaddress
 import re
+import socket
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import quote, urlsplit
@@ -183,23 +186,72 @@ _STATUS_LINE = re.compile(rb"^HTTP/1\.[01] [1-5][0-9]{2}(?: |$)")
 _CLOSE_GRACE_SECONDS = 0.25
 
 
+async def _resolve(host: str, port: int) -> str:
+    """Resolve in a daemon thread of our own. `getaddrinfo` cannot be interrupted: on the default
+    executor a stuck resolver would delay the event loop's shutdown, whereas a daemon thread
+    never blocks interpreter exit. A cancelled (timed-out) wait simply discards the result."""
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[list[Any]] = loop.create_future()
+
+    def deliver(addresses: list[Any] | None, error: BaseException | None) -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(addresses or [])
+
+    def work() -> None:
+        try:
+            outcome: tuple[list[Any] | None, BaseException | None] = (
+                socket.getaddrinfo(host, port, type=socket.SOCK_STREAM),
+                None,
+            )
+        except BaseException as exc:
+            outcome = (None, exc)
+        try:
+            loop.call_soon_threadsafe(deliver, *outcome)
+        except RuntimeError:
+            pass  # the loop is gone; nobody is waiting
+
+    threading.Thread(target=work, daemon=True, name="readiness-resolve").start()
+    infos = await future
+    if not infos:
+        raise OSError("name did not resolve")
+    return str(infos[0][4][0])
+
+
+def _head_request(settings: Settings) -> bytes:
+    url = urlsplit(settings.object_storage_endpoint)
+    host = f"[{url.hostname}]" if ":" in (url.hostname or "") else url.hostname
+    host_header = host if url.port is None else f"{host}:{url.port}"
+    bucket = quote(settings.object_storage_bucket, safe="")
+    return f"HEAD /{bucket} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n".encode()
+
+
 async def _http_head_reachable(settings: Settings) -> None:
     """Raises on anything but a well-formed HTTP status line. Bounded by the caller's timeout;
-    the socket is always closed, with a bounded wait."""
+    the socket is always closed, with a bounded wait. The endpoint format (origin only) is
+    enforced by `Settings`."""
     url = urlsplit(settings.object_storage_endpoint)
-    if url.scheme not in {"http", "https"} or not url.hostname:
-        raise ValueError("unsupported endpoint")
+    assert url.hostname is not None
     https = url.scheme == "https"
     port = url.port or (443 if https else 80)
-    host_header = url.hostname if url.port is None else f"{url.hostname}:{url.port}"
+    address = await _resolve(url.hostname, port)
+    # Connect to the resolved address, but verify TLS (SNI and certificate) against the name.
     reader, writer = await asyncio.open_connection(
-        url.hostname, port, ssl=https or None, limit=4096
+        address,
+        port,
+        ssl=True if https else None,
+        server_hostname=url.hostname if https else None,
+        limit=4096,
     )
     try:
-        bucket = quote(settings.object_storage_bucket, safe="")
-        writer.write(
-            f"HEAD /{bucket} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n".encode()
-        )
+        writer.write(_head_request(settings))
         await writer.drain()
         if not _STATUS_LINE.match(await reader.readline()):
             raise ValueError("not an HTTP response")

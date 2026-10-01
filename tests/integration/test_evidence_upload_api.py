@@ -15,12 +15,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, func, select, text, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from easyaudit_next.api import review_evidence_uploads as uploads
 from easyaudit_next.api.dependencies import (
     get_current_identity,
     get_database_session,
+    get_session_factory,
 )
 from easyaudit_next.composition import build_rectification_service
 from easyaudit_next.main import create_app
@@ -77,6 +78,9 @@ def client_for(
 
     app.dependency_overrides[get_database_session] = database
     app.dependency_overrides[get_current_identity] = lambda: _identity(actor)
+    app.dependency_overrides[get_session_factory] = lambda: sessionmaker(
+        engine, expire_on_commit=False
+    )
     app.dependency_overrides[uploads.get_evidence_object_store] = lambda: store
     app.dependency_overrides[uploads.get_evidence_upload_policy] = lambda: (
         EvidenceUploadPolicy.from_config(max_bytes, "application/pdf,text/plain")
@@ -221,6 +225,9 @@ def test_real_session_authentication_leaves_no_transaction_open_while_streaming(
                 raise
 
     app.dependency_overrides[get_database_session] = database
+    app.dependency_overrides[get_session_factory] = lambda: sessionmaker(
+        postgres_engine, expire_on_commit=False
+    )
     app.dependency_overrides[uploads.get_evidence_object_store] = lambda: store
     with TestClient(app, base_url="https://testserver") as client:
         response = client.post(

@@ -22,10 +22,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from starlette.requests import ClientDisconnect
 
-from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
+from easyaudit_next.api.dependencies import (
+    BusinessIdentity,
+    DatabaseSession,
+    get_session_factory,
+)
 from easyaudit_next.api.review_contracts import EvidenceResponse
 from easyaudit_next.api.review_rectification import _evidence_response, _raise_api_error
 from easyaudit_next.composition import (
@@ -97,8 +101,21 @@ class RegistrationOutcomeUnknown(Exception):
     must then be kept: deleting it could leave metadata without bytes."""
 
 
+def _log_cleanup_failure(exc: Exception) -> None:
+    APP_LOGGER.warning(
+        "evidence_session_cleanup_failed", extra={"exception_details": describe_exception(exc)}
+    )
+
+
+def _quietly(action: Callable[[], object]) -> None:
+    try:
+        action()
+    except Exception as exc:  # best-effort cleanup must not replace the outcome being reported
+        _log_cleanup_failure(exc)
+
+
 def _register(
-    session: Session,
+    session_factory: sessionmaker[Session],
     actor_id: UserId,
     action_item_id: ActionItemId,
     key: str,
@@ -107,30 +124,37 @@ def _register(
     sha256: str,
     description: str | None,
 ) -> Evidence:
+    """Runs in a worker thread that cannot be stopped, so it owns its Session: created, committed
+    or rolled back, and closed here, never touched by the request that started it."""
+    session = session_factory()
     try:
-        # A fresh read: the actor may have been deactivated while the file was uploading.
-        actor = SqlAlchemyUserRepository(session).get(actor_id)
-        if actor is None:
-            raise ReviewAuthorizationError("Active organization user required")
-        evidence = build_rectification_service(session).register_evidence(
-            actor,
-            action_item_id,
-            key,
-            file.original_name,
-            size_bytes,
-            sha256,
-            content_type=file.content_type,
-            description=description,
-        )
-    except BaseException:
-        session.rollback()
-        raise
-    try:
-        session.commit()
-    except BaseException as exc:
-        session.rollback()
-        raise RegistrationOutcomeUnknown from exc
-    return evidence
+        try:
+            # A fresh read: the actor may have been deactivated while the file was uploading.
+            actor = SqlAlchemyUserRepository(session).get(actor_id)
+            if actor is None:
+                raise ReviewAuthorizationError("Active organization user required")
+            evidence = build_rectification_service(session).register_evidence(
+                actor,
+                action_item_id,
+                key,
+                file.original_name,
+                size_bytes,
+                sha256,
+                content_type=file.content_type,
+                description=description,
+            )
+        except BaseException:
+            _quietly(session.rollback)
+            raise
+        try:
+            session.commit()
+        except BaseException as exc:
+            # Whatever the rollback does, the outcome of COMMIT is unknown.
+            _quietly(session.rollback)
+            raise RegistrationOutcomeUnknown from exc
+        return evidence
+    finally:
+        _quietly(session.close)
 
 
 async def _discard_object(store: EvidenceObjectStore, key: str) -> None:
@@ -144,25 +168,46 @@ async def _discard_object(store: EvidenceObjectStore, key: str) -> None:
         )
 
 
+def _consume(task: "asyncio.Future[Evidence]") -> None:
+    if not task.cancelled():
+        task.exception()  # retrieved: an abandoned registration reports through its outcome
+
+
 async def _register_and_settle(
-    store: EvidenceObjectStore, key: str, register: Callable[[], Evidence]
+    store: EvidenceObjectStore,
+    key: str,
+    register: Callable[[], Evidence],
+    wait_limit_seconds: float,
 ) -> Evidence:
     """Run the registration and decide the object's fate from its definite outcome.
 
     The registration runs in a worker thread that cannot be stopped, so cancelling this request
-    must not be taken as "the registration did not happen": the task is shielded and awaited to
-    its end (bounded by the database statement/lock timeouts) before anything is deleted.
-    Committed -> keep the object. Rolled back -> delete it. Commit outcome unknown -> keep it.
-    A cancellation is re-raised afterwards. Metadata without an object is never produced;
-    an object without metadata is an orphan for Pilot-4B.
+    must not be taken as "the registration did not happen": the task is shielded and, after a
+    cancellation, awaited for at most `wait_limit_seconds`. Committed -> keep the object.
+    Rolled back -> delete it. Commit outcome unknown, or no outcome within the limit -> keep it
+    (the thread runs on by itself; the worst case is an orphan for Pilot-4B). A cancellation is
+    re-raised afterwards. Metadata without an object is never produced.
     """
+    loop = asyncio.get_running_loop()
     task = asyncio.ensure_future(run_in_threadpool(register))
+    task.add_done_callback(_consume)
     cancelled = False
+    deadline: float | None = None
     while not task.done():
+        timeout = None if deadline is None else deadline - loop.time()
+        if timeout is not None and timeout <= 0:
+            break
         try:
-            await asyncio.wait({task})
+            await asyncio.wait({task}, timeout=timeout)
         except asyncio.CancelledError:
             cancelled = True
+            if deadline is None:
+                deadline = loop.time() + wait_limit_seconds
+    if not task.done():
+        APP_LOGGER.warning(
+            "evidence_registration_unsettled", extra={"fields": {"storage_key": key}}
+        )
+        raise asyncio.CancelledError
     error = task.exception()
     if error is None:
         if cancelled:
@@ -184,6 +229,13 @@ async def _register_and_settle(
     if isinstance(error, _BUSINESS_ERRORS):
         _raise_api_error(error)
     raise error
+
+
+def _settle_wait_limit_seconds() -> float:
+    """How long a cancelled request waits for its registration before treating the outcome as
+    unknown: the longest a statement can run plus the longest a lock can be awaited, plus slack."""
+    settings = get_settings()
+    return (settings.db_statement_timeout_ms + settings.db_lock_timeout_ms) / 1000 + 5
 
 
 def _too_large(max_bytes: int) -> NoReturn:
@@ -226,6 +278,7 @@ async def upload_action_evidence(
     request: Request,
     identity: BusinessIdentity,
     session: DatabaseSession,
+    session_factory: Annotated[sessionmaker[Session], Depends(get_session_factory)],
     store: EvidenceStore,
     policy: UploadPolicy,
     filename: Annotated[str, Header(alias="X-Evidence-Filename", min_length=1, max_length=2048)],
@@ -287,7 +340,7 @@ async def upload_action_evidence(
         key,
         partial(
             _register,
-            session,
+            session_factory,
             identity.user.id,
             action_id,
             key,
@@ -296,5 +349,6 @@ async def upload_action_evidence(
             stored.sha256,
             description,
         ),
+        _settle_wait_limit_seconds(),
     )
     return _evidence_response(evidence)
