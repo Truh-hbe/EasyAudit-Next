@@ -21,6 +21,7 @@ from botocore.client import BaseClient
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
+from easyaudit_next.infrastructure.observability import APP_LOGGER, describe_exception
 from easyaudit_next.platform.settings import Settings
 from easyaudit_next.review_core.application.evidence_storage import (
     ListedObject,
@@ -101,7 +102,18 @@ def _close_abandoned_response(task: "asyncio.Future[Any]") -> None:
         return
     body = task.result().get("Body")
     if body is not None:
-        asyncio.get_running_loop().run_in_executor(None, body.close)
+        # The close runs in the executor and handles its own errors: an exception left in a
+        # discarded Future would be printed by asyncio's default handler, message and all.
+        asyncio.get_running_loop().run_in_executor(None, _close_quietly, body)
+
+
+def _close_quietly(body: Any) -> None:
+    try:
+        body.close()
+    except Exception as exc:
+        APP_LOGGER.warning(
+            "object_stream_close_failed", extra={"exception_details": describe_exception(exc)}
+        )
 
 
 class _S3ObjectStream:

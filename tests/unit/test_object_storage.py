@@ -429,3 +429,47 @@ def test_a_get_cancelled_before_it_returns_still_closes_the_body_it_gets_later()
     asyncio.run(scenario())
 
     body.close.assert_called_once()
+
+
+def test_a_close_that_raises_after_cancellation_is_logged_by_type_and_never_reaches_asyncio(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unittest.mock import MagicMock
+
+    release, in_get = threading.Event(), threading.Event()
+    body = MagicMock()
+    body.close.side_effect = RuntimeError("secret-endpoint.internal rejected the close")
+    unretrieved: list[dict[str, Any]] = []
+
+    class SlowClient:
+        def get_object(self, **_: Any) -> dict[str, Any]:
+            in_get.set()
+            release.wait(5)
+            return {"Body": body, "ContentLength": 3}
+
+    store = S3EvidenceObjectStore(SlowClient(), "bucket")  # type: ignore[arg-type]
+
+    async def scenario() -> None:
+        asyncio.get_running_loop().set_exception_handler(lambda _l, ctx: unretrieved.append(ctx))
+        task = asyncio.ensure_future(store.open_stream("org/o/evidence/k"))
+        await asyncio.to_thread(in_get.wait, 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        for _ in range(100):
+            if body.close.called:
+                break
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.1)
+        import gc
+
+        gc.collect()
+
+    with caplog.at_level("WARNING", logger="easyaudit.app"):
+        asyncio.run(scenario())
+
+    assert unretrieved == []
+    [record] = [r for r in caplog.records if r.getMessage() == "object_stream_close_failed"]
+    assert "secret-endpoint" not in record.getMessage()
+    assert "secret-endpoint" not in str(getattr(record, "exception_details", ""))

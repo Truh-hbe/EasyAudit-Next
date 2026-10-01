@@ -67,6 +67,7 @@ from easyaudit_next.platform.persistence.repositories import (
 from easyaudit_next.platform.settings import get_settings
 from easyaudit_next.review_core.application.evidence_maintenance import (
     EvidenceReferences,
+    OrphanCleanupResult,
     ReferencesScope,
     cleanup_evidence_orphans,
     verify_evidences,
@@ -457,10 +458,12 @@ def cleanup_evidence_orphans_command(
         return 2
     settings = get_settings()
     configure_cli_logging(settings.log_level)
+    result = OrphanCleanupResult()
+    error: str | None = None
     engine = create_database_engine(settings)
     try:
         store = build_evidence_maintenance_store(settings)
-        result = asyncio.run(
+        asyncio.run(
             cleanup_evidence_orphans(
                 store,
                 _references_scope(create_session_factory(engine)),
@@ -469,19 +472,22 @@ def cleanup_evidence_orphans_command(
                 dry_run=dry_run,
                 expected_revision=_code_head(),
                 max_delete=max_delete,
+                result=result,
+                on_incident=lambda incident: log_object_deleted_while_registered(
+                    incident.storage_key, incident.evidence_id
+                ),
             )
         )
-    except ObjectStoreError as exc:
-        print(json.dumps({"event": "cleanup_evidence_orphans", "error": str(exc)}), file=sys.stderr)
-        return 1
+    except Exception as exc:  # whatever was counted so far is still reported
+        error = type(exc).__name__
     finally:
         engine.dispose()
     payload = asdict(result)
     del payload["incidents"]
-    for incident in result.incidents:
-        log_object_deleted_while_registered(incident.storage_key, incident.evidence_id)
+    if error is not None:
+        payload["error"] = error
     print(json.dumps({"event": "cleanup_evidence_orphans", "dry_run": dry_run, **payload}))
-    failed = result.failed or result.refused or result.deleted_but_registered
+    failed = result.failed or result.refused or result.deleted_but_registered or error
     return 1 if failed else 0
 
 

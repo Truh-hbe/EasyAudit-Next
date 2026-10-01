@@ -41,6 +41,7 @@ from easyaudit_next.review_core.application.evidence_storage import (
     EvidenceObjectInventory,
     EvidenceObjectStore,
     ListedObject,
+    ListedUpload,
     ObjectNotFoundError,
     ObjectStoreError,
 )
@@ -59,7 +60,7 @@ class EvidenceReferences(Protocol):
 
     def count(self) -> int: ...
 
-    def alembic_revision(self) -> str | None: ...
+    def alembic_revisions(self) -> set[str]: ...
 
     def page(
         self, organization_id: OrganizationId | None, after: EvidenceId | None, size: int
@@ -110,13 +111,21 @@ async def cleanup_evidence_orphans(
     dry_run: bool,
     expected_revision: str,
     max_delete: int,
+    result: OrphanCleanupResult | None = None,
+    on_incident: Callable[[DeletedWhileRegistered], None] = lambda _incident: None,
 ) -> OrphanCleanupResult:
-    result = OrphanCleanupResult(max_delete=max_delete)
+    """`result` may be supplied by the caller so that whatever was counted before an unexpected
+    failure is still available to report. `on_incident` is called the moment a deleted object
+    turns out to be registered, not at the end of the run."""
+    result = result if result is not None else OrphanCleanupResult()
+    result.max_delete = max_delete
     if not dry_run:
         with references() as checker:
-            if checker.alembic_revision() != expected_revision:
+            if checker.alembic_revisions() != {expected_revision}:
                 result.refused = REFUSAL_REVISION_MISMATCH
                 return result
+    # Everything is listed before the first write: a listing that fails half-way must not leave
+    # behind deletions or aborts that were decided on an incomplete picture.
     candidates: list[ListedObject] = []  # old orphans; never more than max_delete + 1 kept
     batch: list[ListedObject] = []
     old_orphans = 0
@@ -127,8 +136,13 @@ async def cleanup_evidence_orphans(
                 old_orphans += _classify(references, batch, result, candidates, min_age, now)
                 batch = []
     old_orphans += _classify(references, batch, result, candidates, min_age, now)
+    stale_uploads: list[ListedUpload] = []
+    async for upload in store.list_multipart_uploads(LISTING_PREFIX):
+        if _EVIDENCE_KEY.match(upload.key) and now - upload.initiated >= min_age:
+            stale_uploads.append(upload)
+    result.multipart_stale = len(stale_uploads)
     if dry_run:
-        return await _abort_stale_uploads(store, result, min_age, now, dry_run=True)
+        return result
 
     if result.scanned > 0:
         with references() as checker:
@@ -143,18 +157,53 @@ async def cleanup_evidence_orphans(
             if checker.referenced([item.key]):
                 result.skipped_referenced += 1
                 continue
+        delete_failed = False
         try:
             await store.delete(item.key)
         except ObjectStoreError:
+            # The outcome of a failed delete is unknown: the object may be gone.
             result.failed += 1
+            delete_failed = True
         else:
             result.deleted += 1
-            with references() as checker:  # a registration that committed after the re-check
-                evidence_id = checker.evidence_id_for_key(item.key)
-            if evidence_id is not None:
-                result.deleted_but_registered += 1
-                result.incidents.append(DeletedWhileRegistered(item.key, evidence_id))
-    return await _abort_stale_uploads(store, result, min_age, now, dry_run=False)
+        await _detect_late_registration(
+            store, references, item.key, delete_failed, result, on_incident
+        )
+    for upload in stale_uploads:
+        try:
+            await store.abort_multipart_upload(upload.key, upload.upload_id)
+        except ObjectStoreError:
+            result.failed += 1
+        else:
+            result.multipart_aborted += 1
+    return result
+
+
+async def _detect_late_registration(
+    store: MaintenanceStore,
+    references: ReferencesScope,
+    key: str,
+    delete_failed: bool,
+    result: OrphanCleanupResult,
+    on_incident: Callable[[DeletedWhileRegistered], None],
+) -> None:
+    """A registration that committed after the re-check leaves metadata without an object.
+    After a delete that reported failure, only a registered key whose object is gone (or whose
+    state cannot be read) counts."""
+    with references() as checker:
+        evidence_id = checker.evidence_id_for_key(key)
+    if evidence_id is None:
+        return
+    if delete_failed:
+        try:
+            if await store.exists(key):
+                return
+        except ObjectStoreError:
+            pass  # unknown: report it, the operator verifies
+    incident = DeletedWhileRegistered(key, evidence_id)
+    result.deleted_but_registered += 1
+    result.incidents.append(incident)
+    on_incident(incident)
 
 
 def _classify(
@@ -183,29 +232,6 @@ def _classify(
         if len(candidates) <= result.max_delete:
             candidates.append(item)
     return old
-
-
-async def _abort_stale_uploads(
-    store: MaintenanceStore,
-    result: OrphanCleanupResult,
-    min_age: timedelta,
-    now: datetime,
-    *,
-    dry_run: bool,
-) -> OrphanCleanupResult:
-    async for upload in store.list_multipart_uploads(LISTING_PREFIX):
-        if not _EVIDENCE_KEY.match(upload.key) or now - upload.initiated < min_age:
-            continue
-        result.multipart_stale += 1
-        if dry_run:
-            continue
-        try:
-            await store.abort_multipart_upload(upload.key, upload.upload_id)
-        except ObjectStoreError:
-            result.failed += 1
-        else:
-            result.multipart_aborted += 1
-    return result
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,7 +18,7 @@ from easyaudit_next.review_core.application.evidence_maintenance import (
     OrphanCleanupResult,
     cleanup_evidence_orphans,
 )
-from easyaudit_next.review_core.application.evidence_storage import ListedUpload
+from easyaudit_next.review_core.application.evidence_storage import ListedUpload, ObjectStoreError
 from tests.conftest import FakeS3
 from tests.integration.evidence_maintenance_support import new_key, put, register_row
 from tests.integration.test_credential_readiness import postgres_engine as postgres_engine
@@ -212,7 +212,7 @@ def test_refuses_to_delete_anything_when_the_database_has_no_evidence_rows(
             yield SimpleNamespace(
                 referenced=lambda keys: set(),  # nothing is referenced in an empty database
                 count=lambda: 0,
-                alembic_revision=checker.alembic_revision,
+                alembic_revisions=checker.alembic_revisions,
             )
 
     result = run(postgres_engine, fake_s3, age=2 * DAY, scope=empty_database)
@@ -312,3 +312,55 @@ def test_a_deleting_run_needs_a_min_age_of_at_least_24_hours_but_a_dry_run_only_
 
     assert refused == 2 and dry == 0
     assert fake_s3.keys() == [key]
+
+
+def test_more_than_one_revision_row_is_refused_even_if_one_is_the_head(
+    postgres_engine: Engine, seeded: SeededCollaboration, fake_s3: FakeS3
+) -> None:
+    orphans, kept = refusal_setup(postgres_engine, seeded, fake_s3)
+    @contextmanager
+    def two_revisions() -> Iterator[Any]:
+        yield SimpleNamespace(alembic_revisions=lambda: {cli._code_head(), "20200101_0000"})
+
+    result = run(postgres_engine, fake_s3, age=2 * DAY, scope=two_revisions)
+
+    assert result.refused == "revision_mismatch"
+    assert_nothing_touched(fake_s3, orphans, kept)
+
+
+def test_a_failing_multipart_listing_happens_before_any_delete_or_abort(
+    postgres_engine: Engine, seeded: SeededCollaboration, fake_s3: FakeS3
+) -> None:
+    orphans, kept = refusal_setup(postgres_engine, seeded, fake_s3)
+
+    class FailingUploads:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+        def list_multipart_uploads(self, prefix: str) -> AsyncIterator[ListedUpload]:
+            async def failing() -> AsyncIterator[ListedUpload]:
+                raise ObjectStoreError("listing failed")
+                yield  # pragma: no cover
+
+            return failing()
+
+    result = OrphanCleanupResult()
+    with pytest.raises(ObjectStoreError):
+        asyncio.run(
+            cleanup_evidence_orphans(
+                FailingUploads(make_store(fake_s3)),  # type: ignore[arg-type]
+                cli._references_scope(sessionmaker(postgres_engine)),
+                min_age=DAY,
+                now=datetime.now(UTC) + 2 * DAY,
+                dry_run=False,
+                expected_revision=cli._code_head(),
+                max_delete=100,
+                result=result,
+            )
+        )
+
+    assert (result.deleted, result.multipart_aborted) == (0, 0)
+    assert_nothing_touched(fake_s3, orphans, kept)

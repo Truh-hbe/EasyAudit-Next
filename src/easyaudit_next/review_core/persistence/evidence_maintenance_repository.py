@@ -42,9 +42,10 @@ class SqlAlchemyEvidenceMaintenanceRepository:
     def count(self) -> int:
         return int(self._session.scalar(select(func.count()).select_from(EvidenceRecord)) or 0)
 
-    def alembic_revision(self) -> str | None:
-        revision = self._session.scalar(text("SELECT version_num FROM alembic_version LIMIT 1"))
-        return None if revision is None else str(revision)
+    def alembic_revisions(self) -> set[str]:
+        """Every row, not one of them: more than one revision is itself a wrong database."""
+        rows = self._session.scalars(text("SELECT version_num FROM alembic_version"))
+        return {str(row) for row in rows}
 
     def page(
         self,
