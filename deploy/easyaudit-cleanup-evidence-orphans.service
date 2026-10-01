@@ -1,0 +1,16 @@
+# Example unit: install as /etc/systemd/system/easyaudit-cleanup-evidence-orphans.service and adjust paths.
+# Deletes Evidence objects that no evidences row references and that are older than 24 hours, and
+# aborts incomplete multipart uploads older than that. An object a row references is never
+# deleted. Prints one JSON line; exits non-zero if any delete or abort failed.
+# Same operator-account requirements as deploy/backup/easyaudit-backup.service. The stack must
+# be up (the one-shot container joins the backend network and reaches postgres and object-storage).
+[Unit]
+Description=EasyAudit cleanup of orphaned Evidence objects
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=easyaudit
+WorkingDirectory=/opt/easyaudit
+ExecStart=/bin/bash -c 'EASYAUDIT_RELEASE="$(git -C /opt/easyaudit rev-parse HEAD)" exec docker compose -f /opt/easyaudit/deploy/compose.yaml run --rm --no-deps -T api easyaudit-next cleanup-evidence-orphans --min-age-hours 24'

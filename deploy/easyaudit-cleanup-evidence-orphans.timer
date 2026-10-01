@@ -1,0 +1,14 @@
+# Example unit: install next to easyaudit-cleanup-evidence-orphans.service, then
+#   systemctl enable --now easyaudit-cleanup-evidence-orphans.timer
+# Daily is plenty: an orphan only costs disk until the next run, and --min-age-hours keeps every
+# object that an upload in progress, or a registration that commits late, could still claim.
+[Unit]
+Description=EasyAudit cleanup of orphaned Evidence objects, daily
+
+[Timer]
+OnCalendar=*-*-* 04:10:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

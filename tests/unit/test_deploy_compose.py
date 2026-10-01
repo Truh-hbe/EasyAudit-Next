@@ -258,3 +258,11 @@ def test_gateway_caps_request_bodies_just_above_the_application_limit() -> None:
     cap = int(re.search(r"max_size\s+(\d+)", api_block).group(1))  # type: ignore[union-attr]
     limit = Settings().evidence_max_bytes
     assert limit < cap <= limit + 2 * 1024 * 1024
+
+
+def test_orphan_cleanup_unit_is_daily_and_uses_a_safe_min_age() -> None:
+    service = (ROOT / "deploy" / "easyaudit-cleanup-evidence-orphans.service").read_text()
+    timer = (ROOT / "deploy" / "easyaudit-cleanup-evidence-orphans.timer").read_text()
+    assert "easyaudit-next cleanup-evidence-orphans --min-age-hours 24" in service
+    assert "--dry-run" not in service  # the scheduled run must actually delete
+    assert re.search(r"^OnCalendar=\*-\*-\* \d\d:\d\d:\d\d$", timer, re.MULTILINE)
