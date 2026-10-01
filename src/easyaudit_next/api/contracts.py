@@ -19,7 +19,6 @@ class ReadyChecks(BaseModel):
     configuration: Literal["ok", "fail"]
     database: Literal["ok", "fail"]
     migrations: Literal["ok", "fail"]
-    db_settings: Literal["ok", "fail"]
 
 
 class ReadyResponse(BaseModel):

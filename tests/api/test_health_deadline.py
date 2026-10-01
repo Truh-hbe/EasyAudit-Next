@@ -12,7 +12,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from easyaudit_next import main
 from easyaudit_next.api import health
 from easyaudit_next.infrastructure import readiness
 from easyaudit_next.infrastructure.readiness import DatabaseState
@@ -95,7 +94,6 @@ async def ready(client: httpx.AsyncClient) -> tuple[httpx.Response, float]:
 def make_app(head: str | None = "head1") -> FastAPI:
     app = create_app()
     app.state.expected_head = head  # what the lifespan would have stored
-    app.state.db_settings_failures = ()
     return app
 
 
@@ -292,13 +290,9 @@ def test_unreadable_head_keeps_ready_failed_until_restart_but_live_stays_up(
             raise RuntimeError("scripts missing")
         return "head1"  # would succeed on a second attempt; there must not be one
 
-    async def settings_verified(state: object, *_: object) -> None:
-        state.db_settings_failures = ()  # type: ignore[attr-defined]
-
     monkeypatch.setattr(readiness, "_compute_head", compute)
     monkeypatch.setattr(readiness, "fetch_database_state", healthy)
     monkeypatch.setattr(health, "get_settings", lambda: Settings())
-    monkeypatch.setattr(main, "verify_db_settings", settings_verified)
 
     with TestClient(create_app()) as client:  # runs the lifespan
         for _ in range(3):

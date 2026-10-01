@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, make_url, text
+from sqlalchemy import Engine, create_engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from easyaudit_next.platform.settings import Settings, get_settings
@@ -28,10 +28,12 @@ def create_database_engine(settings: Settings | None = None) -> Engine:
 def business_connect_args(settings: Settings) -> dict[str, Any]:
     """libpq parameters of the business engine, merged with (never replacing) the URL's own.
 
-    Timeouts via `options`; client-side limits so a black-holed database cannot hang a thread
-    forever: `connect_timeout` bounds connection setup, TCP keepalives plus `tcp_user_timeout`
-    bound a connection that goes silent afterwards. A parameter already present in the URL
-    wins. `tcp_user_timeout` and the keepalive tuning are Linux effects (ignored elsewhere).
+    Timeouts via `options`; client-side limits for an unreachable or dead peer:
+    `connect_timeout` bounds connection setup, TCP keepalives plus `tcp_user_timeout` detect a
+    connection that went silent afterwards. A parameter already present in the URL
+    wins (operator's explicit choice; `connect_timeout=0` means wait forever). Whether keepalive
+    and `tcp_user_timeout` take effect depends on the platform's socket options (see libpq
+    docs). TCP liveness is not a query-response deadline.
     """
     existing = _url_connect_kwargs(settings.database_url)
     args: dict[str, Any] = {
@@ -57,25 +59,6 @@ def expected_server_settings(settings: Settings) -> dict[str, int]:
         "statement_timeout": settings.db_statement_timeout_ms,
         "lock_timeout": settings.db_lock_timeout_ms,
         "idle_in_transaction_session_timeout": settings.db_idle_in_transaction_timeout_ms,
-    }
-
-
-def verify_server_settings(engine: Engine, settings: Settings) -> dict[str, tuple[int, int]]:
-    """Mismatches `{name: (expected, actual)}` seen through the business engine; empty if fine.
-
-    Blocking: call off the event loop.
-    """
-    expected = expected_server_settings(settings)
-    with engine.connect() as connection:
-        rows = connection.execute(
-            text("SELECT name, setting FROM pg_settings WHERE name = ANY(:names)"),
-            {"names": list(expected)},
-        ).all()
-    actual = {name: int(value) for name, value in rows}
-    return {
-        name: (want, actual.get(name, -1))
-        for name, want in expected.items()
-        if actual.get(name) != want
     }
 
 

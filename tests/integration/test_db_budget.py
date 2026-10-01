@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from easyaudit_next.infrastructure.database import (
     create_database_engine,
-    verify_server_settings,
 )
 from easyaudit_next.infrastructure.observability import RequestContextMiddleware
 from easyaudit_next.platform.settings import Settings
@@ -58,20 +57,6 @@ def test_show_returns_the_configured_timeouts(engine: Engine) -> None:
         "lock_timeout": "3s",
         "idle_in_transaction_session_timeout": "11s",
     }
-    assert verify_server_settings(engine, CONFIGURED) == {}
-
-
-def test_verification_reports_a_mismatch(engine: Engine) -> None:
-    mismatches = verify_server_settings(
-        engine,
-        Settings(
-            db_statement_timeout_ms=9000,
-            db_lock_timeout_ms=3000,
-            db_idle_in_transaction_timeout_ms=11000,
-        ),
-    )
-
-    assert mismatches == {"statement_timeout": (9000, 7000)}
 
 
 def test_existing_url_options_are_merged_not_replaced() -> None:

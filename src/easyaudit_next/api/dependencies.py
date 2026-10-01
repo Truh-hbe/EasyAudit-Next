@@ -4,7 +4,6 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from easyaudit_next.infrastructure.database import create_database_engine, create_session_factory
@@ -30,10 +29,6 @@ from easyaudit_next.platform.settings import get_settings
 
 _engine = create_database_engine()
 _session_factory = create_session_factory(_engine)
-
-
-def get_business_engine() -> Engine:
-    return _engine
 
 
 def get_database_session() -> Iterator[Session]:

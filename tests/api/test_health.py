@@ -27,7 +27,6 @@ def client_with(
         monkeypatch.setattr(readiness, "fetch_database_state", fake_state)
     app = create_app()
     app.state.expected_head = head
-    app.state.db_settings_failures = ()
     return TestClient(app)
 
 
@@ -55,12 +54,7 @@ def test_ready_fails_with_opaque_body_when_database_is_unreachable(
     assert response.status_code == 503
     assert response.json() == {
         "status": "fail",
-        "checks": {
-            "configuration": "ok",
-            "database": "fail",
-            "migrations": "fail",
-            "db_settings": "ok",
-        },
+        "checks": {"configuration": "ok", "database": "fail", "migrations": "fail"},
     }
     assert_opaque(response.text)
 
@@ -77,7 +71,6 @@ def test_ready_fails_on_revision_mismatch_without_revealing_revisions(
         "configuration": "ok",
         "database": "ok",
         "migrations": "fail",
-        "db_settings": "ok",
     }
     assert "stale-rev" not in response.text
     assert_opaque(response.text)
@@ -126,12 +119,7 @@ def test_ready_is_ok_when_everything_checks_out(monkeypatch: pytest.MonkeyPatch)
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "checks": {
-            "configuration": "ok",
-            "database": "ok",
-            "migrations": "ok",
-            "db_settings": "ok",
-        },
+        "checks": {"configuration": "ok", "database": "ok", "migrations": "ok"},
     }
 
 
@@ -140,14 +128,3 @@ def test_legacy_health_path_is_gone_and_not_under_api_prefix() -> None:
 
     assert client.get("/health").status_code == 404
     assert client.get("/api/v1/health/live").status_code == 404
-
-
-def test_ready_fails_while_db_settings_are_unverified(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = client_with(monkeypatch, state=DatabaseState(True, ("head1",)))
-    client.app.state.db_settings_failures = None  # type: ignore[attr-defined]
-
-    response = client.get("/health/ready")
-
-    assert response.status_code == 503
-    assert response.json()["checks"]["db_settings"] == "fail"
-    assert response.json()["checks"]["database"] == "ok"

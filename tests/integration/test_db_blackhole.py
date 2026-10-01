@@ -1,17 +1,14 @@
-"""A database that accepts TCP and then never answers must not hang threads forever."""
+"""A database that accepts TCP and then never answers must not hang connection setup."""
 
-import asyncio
 import socket
 import threading
 import time
 from collections.abc import Iterator
-from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
-from easyaudit_next import main
-from easyaudit_next.infrastructure import readiness
 from easyaudit_next.infrastructure.database import create_database_engine
 from easyaudit_next.platform.settings import Settings
 
@@ -44,55 +41,15 @@ def blackhole_url() -> Iterator[str]:
     server.close()
 
 
-def test_verification_fails_within_connect_timeout_and_retries(
-    blackhole_url: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    settings = Settings(database_url=blackhole_url, db_connect_timeout_seconds=CONNECT_TIMEOUT)
-    engine = create_database_engine(settings)
-    monkeypatch.setattr(readiness, "DB_SETTINGS_RETRY_SECONDS", 0.1)
-    calls: list[tuple[float, float]] = []
-    real = readiness.verify_server_settings
-
-    def timed(*args: object) -> object:
-        started = time.monotonic()
-        try:
-            return real(*args)  # type: ignore[arg-type]
-        finally:
-            calls.append((started, time.monotonic()))
-
-    monkeypatch.setattr(readiness, "verify_server_settings", timed)
-    state = SimpleNamespace()
-
-    async def scenario() -> None:
-        task = asyncio.create_task(readiness.verify_db_settings(state, engine, settings))
-        await asyncio.sleep(CONNECT_TIMEOUT * 2 + 1.5)
-        task.cancel()
-        await asyncio.wait({task}, timeout=CONNECT_TIMEOUT + 3)
-
-    try:
-        asyncio.run(scenario())
-    finally:
-        engine.dispose()
-
-    assert len(calls) >= 2  # failed, then retried
-    assert all(end - start < CONNECT_TIMEOUT + 1.5 for start, end in calls)
-    assert state.db_settings_failures is None  # still unverified: readiness stays failed
-
-
-def test_lifespan_exit_is_bounded_when_the_database_is_a_black_hole(
-    blackhole_url: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    settings = Settings(database_url=blackhole_url, db_connect_timeout_seconds=CONNECT_TIMEOUT)
-    engine = create_database_engine(settings)
-    monkeypatch.setattr(main, "get_settings", lambda: settings)
-    monkeypatch.setattr(main, "get_business_engine", lambda: engine)
-
+def test_business_engine_connect_fails_within_connect_timeout(blackhole_url: str) -> None:
+    engine = create_database_engine(
+        Settings(database_url=blackhole_url, db_connect_timeout_seconds=CONNECT_TIMEOUT)
+    )
     started = time.monotonic()
     try:
-        with TestClient(main.create_app()):
-            time.sleep(0.3)  # the verification is now stuck connecting
-        elapsed = time.monotonic() - started
+        with pytest.raises(OperationalError), engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
     finally:
         engine.dispose()
 
-    assert elapsed < CONNECT_TIMEOUT + 4
+    assert time.monotonic() - started < CONNECT_TIMEOUT + 2
