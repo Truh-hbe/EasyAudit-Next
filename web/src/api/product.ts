@@ -645,15 +645,20 @@ export const EVIDENCE_MAX_BYTES = 25 * 1024 * 1024
 
 export type EvidencePrecheck = 'too_large' | 'type_not_allowed' | null
 
-export function precheckEvidenceFile(file: File): EvidencePrecheck {
+// Own properties only: `'constructor' in {}` and `'__proto__' in {}` are true.
+function knownEvidenceExtension(file: File): string | undefined {
   const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : undefined
-  if (!extension || !(extension in EVIDENCE_CONTENT_TYPES)) return 'type_not_allowed'
+  return extension !== undefined && Object.hasOwn(EVIDENCE_CONTENT_TYPES, extension) ? extension : undefined
+}
+
+export function precheckEvidenceFile(file: File): EvidencePrecheck {
+  if (knownEvidenceExtension(file) === undefined) return 'type_not_allowed'
   if (file.size > EVIDENCE_MAX_BYTES) return 'too_large'
   return null
 }
 
 export function evidenceContentType(file: File): string {
-  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : undefined
+  const extension = knownEvidenceExtension(file)
   return (extension && EVIDENCE_CONTENT_TYPES[extension]) || file.type || 'application/octet-stream'
 }
 

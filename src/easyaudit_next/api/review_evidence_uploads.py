@@ -14,6 +14,8 @@ Phases (the transaction boundaries are the point of this module):
 """
 
 import asyncio
+from collections.abc import Callable
+from functools import partial
 from typing import Annotated, NoReturn
 from uuid import UUID
 
@@ -90,6 +92,11 @@ def _preauthorize(session: Session, actor: User, action_item_id: ActionItemId) -
     session.expunge_all()  # the registration transaction must not see this phase's snapshots
 
 
+class RegistrationOutcomeUnknown(Exception):
+    """COMMIT itself failed, so the transaction may or may not have been applied. The object
+    must then be kept: deleting it could leave metadata without bytes."""
+
+
 def _register(
     session: Session,
     actor_id: UserId,
@@ -115,10 +122,14 @@ def _register(
             content_type=file.content_type,
             description=description,
         )
-        session.commit()
     except BaseException:
         session.rollback()
         raise
+    try:
+        session.commit()
+    except BaseException as exc:
+        session.rollback()
+        raise RegistrationOutcomeUnknown from exc
     return evidence
 
 
@@ -131,6 +142,48 @@ async def _discard_object(store: EvidenceObjectStore, key: str) -> None:
             "evidence_object_orphaned",
             extra={"fields": {"storage_key": key}, "exception_details": describe_exception(exc)},
         )
+
+
+async def _register_and_settle(
+    store: EvidenceObjectStore, key: str, register: Callable[[], Evidence]
+) -> Evidence:
+    """Run the registration and decide the object's fate from its definite outcome.
+
+    The registration runs in a worker thread that cannot be stopped, so cancelling this request
+    must not be taken as "the registration did not happen": the task is shielded and awaited to
+    its end (bounded by the database statement/lock timeouts) before anything is deleted.
+    Committed -> keep the object. Rolled back -> delete it. Commit outcome unknown -> keep it.
+    A cancellation is re-raised afterwards. Metadata without an object is never produced;
+    an object without metadata is an orphan for Pilot-4B.
+    """
+    task = asyncio.ensure_future(run_in_threadpool(register))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            cancelled = True
+    error = task.exception()
+    if error is None:
+        if cancelled:
+            raise asyncio.CancelledError
+        return task.result()
+    if isinstance(error, RegistrationOutcomeUnknown):
+        APP_LOGGER.warning(
+            "evidence_registration_outcome_unknown",
+            extra={"fields": {"storage_key": key}, "exception_details": describe_exception(error)},
+        )
+        error = error.__cause__ or error
+    else:
+        try:
+            await _discard_object(store, key)
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
+    if isinstance(error, _BUSINESS_ERRORS):
+        _raise_api_error(error)
+    raise error
 
 
 def _too_large(max_bytes: int) -> NoReturn:
@@ -224,10 +277,15 @@ async def upload_action_evidence(
             detail="Evidence storage is not available",
         ) from exc
 
-    try:
-        if stored.size_bytes == 0:
-            raise ValueError("Evidence file is empty")
-        evidence = await run_in_threadpool(
+    if stored.size_bytes == 0:
+        await _discard_object(store, key)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Evidence file is empty"
+        )
+    evidence = await _register_and_settle(
+        store,
+        key,
+        partial(
             _register,
             session,
             identity.user.id,
@@ -237,10 +295,6 @@ async def upload_action_evidence(
             stored.size_bytes,
             stored.sha256,
             description,
-        )
-    except BaseException as exc:
-        await _discard_object(store, key)
-        if isinstance(exc, _BUSINESS_ERRORS):
-            _raise_api_error(exc)
-        raise
+        ),
+    )
     return _evidence_response(evidence)

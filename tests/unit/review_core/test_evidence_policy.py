@@ -41,7 +41,8 @@ def test_sanitize_filename_removes_paths_and_controls(raw: str, expected: str) -
     assert sanitize_filename(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["", "%20%20", "..", "%2E%2E%2E", "a%2F", "%00%01", "%FF%FE"])
+@pytest.mark.parametrize("raw", ["", "%20%20", "..", "%2E%2E%2E", "a%2F", "%00%01", "%FF%FE",
+     "report%GG.pdf", "report%.pdf", "report%2.pdf", "report.pdf%", "%zz", "a%2"])
 def test_sanitize_filename_rejects_unusable_names(raw: str) -> None:
     with pytest.raises(InvalidEvidenceFilenameError):
         sanitize_filename(raw)

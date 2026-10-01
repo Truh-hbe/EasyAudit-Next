@@ -127,22 +127,20 @@ def test_store_failures_become_opaque_object_store_errors(fake_s3: FakeS3) -> No
     assert "no-such-bucket" not in str(caught.value)
 
 
-# --- readiness probe ---------------------------------------------------------------------
+# --- readiness probe (reachability only, no threads) -------------------------------------
 
 
 def probe(settings: Settings) -> Any:
     return asyncio.run(readiness.fetch_object_storage_failure(settings))
 
 
-def test_probe_is_ok_when_the_bucket_answers(fake_s3: FakeS3) -> None:
+def test_probe_is_ok_when_the_endpoint_answers_http(fake_s3: FakeS3) -> None:
     assert probe(fake_s3.settings()) is None
 
 
-def test_probe_fails_without_detail_for_a_missing_bucket(fake_s3: FakeS3) -> None:
-    failure = probe(fake_s3.settings(object_storage_bucket="missing-bucket"))
-
-    assert failure is not None and failure.reason == "unreachable"
-    assert SECRET_KEY not in repr(failure) and "missing-bucket" not in repr(failure)
+def test_any_http_status_counts_as_reachable_even_for_a_missing_bucket(fake_s3: FakeS3) -> None:
+    """Reachability only: credentials and the bucket are not validated by readiness."""
+    assert probe(fake_s3.settings(object_storage_bucket="missing-bucket")) is None
 
 
 def test_probe_fails_when_unconfigured() -> None:
@@ -152,41 +150,55 @@ def test_probe_fails_when_unconfigured() -> None:
 
 
 def test_probe_fails_when_the_endpoint_refuses_connections(fake_s3: FakeS3) -> None:
-    started = time.monotonic()
     failure = probe(fake_s3.settings(object_storage_endpoint="http://127.0.0.1:1"))
 
     assert failure is not None and failure.reason == "unreachable"
-    assert time.monotonic() - started < 2
 
 
-def test_probe_returns_within_the_deadline_against_a_silent_server(
-    fake_s3: FakeS3, silent_server: SilentTcpServer
+def test_probe_fails_when_the_peer_does_not_speak_http(fake_s3: FakeS3) -> None:
+    import socket
+    import threading
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+
+    def garbage() -> None:
+        connection, _ = server.accept()
+        connection.sendall(b"SSH-2.0-OpenSSH\r\n")
+        connection.close()
+
+    threading.Thread(target=garbage, daemon=True).start()
+    endpoint = f"http://127.0.0.1:{server.getsockname()[1]}"
+
+    failure = probe(fake_s3.settings(object_storage_endpoint=endpoint))
+    server.close()
+
+    assert failure is not None and failure.reason == "unreachable"
+
+
+def test_probe_and_loop_exit_are_bounded_against_hostile_servers(
+    fake_s3: FakeS3, hostile_server: SilentTcpServer
 ) -> None:
+    """Silent, slow-dripping and resetting peers: the answer and the whole `asyncio.run`
+    (which also waits for the default executor, like uvicorn's shutdown) stay within the
+    deadline plus a little."""
     settings = fake_s3.settings(
-        object_storage_endpoint=silent_server.endpoint, readiness_timeout_seconds=1
-    )
-
-    async def timed() -> tuple[Any, float]:
-        started = time.monotonic()
-        failure = await readiness.fetch_object_storage_failure(settings)
-        return failure, time.monotonic() - started
-
-    failure, elapsed = asyncio.run(timed())  # elapsed is measured inside the event loop
-
-    assert failure is not None and failure.reason == "deadline_exceeded"
-    assert elapsed < 1.5
-
-
-def test_abandoned_probe_thread_ends_on_its_own_so_shutdown_is_bounded(
-    fake_s3: FakeS3, silent_server: SilentTcpServer
-) -> None:
-    """`asyncio.run` waits for the default executor on exit, like uvicorn's shutdown does: if the
-    probe thread outlived its socket timeouts this would hang far longer than the deadline."""
-    settings = fake_s3.settings(
-        object_storage_endpoint=silent_server.endpoint, readiness_timeout_seconds=1
+        object_storage_endpoint=hostile_server.endpoint, readiness_timeout_seconds=1
     )
     started = time.monotonic()
 
-    probe(settings)
+    failure = probe(settings)
 
-    assert time.monotonic() - started < 3.5
+    elapsed = time.monotonic() - started  # includes loop shutdown
+    assert failure is not None and failure.reason in {"deadline_exceeded", "unreachable"}
+    assert elapsed < 1.6
+
+
+def test_client_retry_budget_counts_the_first_attempt(fake_s3: FakeS3) -> None:
+    store = S3EvidenceObjectStore.from_settings(fake_s3.settings(object_storage_max_attempts=2))
+
+    retries = store._client.meta.config.retries
+
+    assert retries["total_max_attempts"] == 2 and retries["mode"] == "standard"
+    assert store._client.meta.config.proxies == {}

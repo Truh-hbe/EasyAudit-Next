@@ -1,10 +1,12 @@
 """S3 adapter for `EvidenceObjectStore` (Garage in production), on boto3/botocore.
 
-Every call to the synchronous SDK runs in a worker thread so the event loop is never blocked,
-and every call is bounded by botocore's socket-level connect/read timeouts. Credentials are
-read from files, held only inside the botocore client, and never put in an exception message,
-a log field or a readiness response; SDK exceptions are replaced by `ObjectStoreError` (the
-original stays as `__cause__`, and the log formatter records exception types only).
+Every call to the synchronous SDK runs in a worker thread so the event loop is never blocked.
+Each socket operation is bounded by botocore's connect/read timeouts; those are per-operation
+inactivity limits, not a total deadline, which is why readiness does not use this client.
+Credentials are read from files, held only inside the botocore client, and never put in an
+exception message, a log field or a readiness response; SDK exceptions are replaced by
+`ObjectStoreError` (the original stays as `__cause__`, and the log formatter records exception
+types only).
 """
 
 import asyncio
@@ -43,7 +45,7 @@ def build_s3_client(
     *,
     connect_timeout: float,
     read_timeout: float,
-    max_attempts: int,
+    total_attempts: int,
 ) -> BaseClient:
     """Blocking (reads the credential files). Call it off the event loop."""
     if not (
@@ -64,7 +66,9 @@ def build_s3_client(
             s3={"addressing_style": "path"},
             connect_timeout=connect_timeout,
             read_timeout=read_timeout,
-            retries={"max_attempts": max_attempts, "mode": "standard"},
+            # `total_max_attempts` counts the first request; botocore's `max_attempts` counts only
+            # the retries after it. Parts are in-memory bytes, so a retry is safe.
+            retries={"total_max_attempts": total_attempts, "mode": "standard"},
             max_pool_connections=10,
             # The store is an internal endpoint: never route it through an ambient HTTP(S)_PROXY.
             proxies={},
@@ -74,21 +78,6 @@ def build_s3_client(
             response_checksum_validation="when_required",
         ),
     )
-
-
-def head_bucket(settings: Settings) -> None:
-    """Readiness probe body: one HeadBucket with a single attempt and socket timeouts equal
-    to the readiness deadline, so the worker thread ends by itself even if nobody awaits it."""
-    client = build_s3_client(
-        settings,
-        connect_timeout=settings.readiness_timeout_seconds,
-        read_timeout=settings.readiness_timeout_seconds,
-        max_attempts=1,
-    )
-    try:
-        client.head_bucket(Bucket=settings.object_storage_bucket)
-    finally:
-        client.close()
 
 
 async def _call[T](function: Callable[[], T]) -> T:
@@ -112,7 +101,7 @@ class S3EvidenceObjectStore:
             settings,
             connect_timeout=settings.object_storage_connect_timeout_seconds,
             read_timeout=settings.object_storage_read_timeout_seconds,
-            max_attempts=settings.object_storage_max_attempts,
+            total_attempts=settings.object_storage_max_attempts,
         )
         return cls(client, settings.object_storage_bucket)
 

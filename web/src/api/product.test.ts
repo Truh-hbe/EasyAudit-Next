@@ -76,4 +76,12 @@ describe('Evidence upload request', () => {
     expect(precheckEvidenceFile(new File(['x'], 'noextension'))).toBe('type_not_allowed')
     expect(precheckEvidenceFile(new File(['x'], 'ROWS.CSV'))).toBeNull()
   })
+
+  it('does not treat prototype properties as known extensions', () => {
+    for (const name of ['x.constructor', 'x.__proto__', 'x.toString', 'x.hasOwnProperty']) {
+      expect(precheckEvidenceFile(new File(['x'], name))).toBe('type_not_allowed')
+      expect(evidenceContentType(new File(['x'], name, { type: 'text/plain' }))).toBe('text/plain')
+      expect(evidenceContentType(new File(['x'], name))).toBe('application/octet-stream')
+    }
+  })
 })

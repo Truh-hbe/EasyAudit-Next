@@ -4,12 +4,14 @@ The file name is metadata only. It is cleaned here, stored in `original_name`, a
 to build a storage key.
 """
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from urllib.parse import unquote
 
 MAX_FILENAME_CHARS = 255
 _MAX_EXTENSION_CHARS = 16
+_BAD_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _REMOVED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
 
 EXTENSIONS_BY_CONTENT_TYPE: dict[str, frozenset[str]] = {
@@ -44,6 +46,8 @@ class ValidatedEvidenceFile:
 
 def sanitize_filename(raw_header: str) -> str:
     """Percent-encoded UTF-8 header value -> a display-safe file name (no path, no controls)."""
+    if _BAD_PERCENT.search(raw_header):  # `unquote` would silently keep these as literals
+        raise InvalidEvidenceFilenameError("File name has an invalid percent-encoding")
     try:
         decoded = unquote(raw_header, encoding="utf-8", errors="strict")
     except UnicodeDecodeError as exc:

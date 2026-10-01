@@ -9,16 +9,20 @@ instead of opening another connection. Rationale: overlapping probes (orchestrat
 human) get a consistent answer, at most one probe connection exists at any time, and nobody
 receives a false 503 merely because probes overlapped.
 
-Object storage is probed with one HeadBucket, run in a worker thread concurrently with the
-database probe under the same deadline. A thread cannot be cancelled, so the probe's botocore
-client gets socket-level connect/read timeouts equal to the deadline and a single attempt: an
-abandoned probe thread ends by itself within about two deadlines, which also bounds how long
-it can delay process exit. No client or result is kept in module state.
+Object storage is probed for reachability only: a plain asyncio TCP (TLS for https) connection
+and one unsigned `HEAD /{bucket}`; any well-formed HTTP status line counts as reachable, whether
+200, 403 or 404. It runs concurrently with the database probe under the same deadline, with no
+worker thread (a thread cannot be cancelled and botocore's timeouts are per-socket-operation,
+not a total deadline: a server dripping bytes could keep one alive and delay process exit).
+Credentials and the bucket itself are deliberately not validated here; a wrong key or bucket
+shows up as an error on the first upload. Nothing is kept in module state.
 """
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import quote, urlsplit
 
 import psycopg
 from alembic.config import Config
@@ -27,16 +31,12 @@ from psycopg import AsyncConnection
 from sqlalchemy.engine import make_url
 
 from easyaudit_next.infrastructure.database import libpq_connect_kwargs
-from easyaudit_next.infrastructure.object_storage import head_bucket
 from easyaudit_next.infrastructure.observability import (
     APP_LOGGER,
     ExceptionDetails,
     describe_exception,
 )
 from easyaudit_next.platform.settings import DEFAULT_DATABASE_URL, Settings
-from easyaudit_next.review_core.application.evidence_storage import (
-    ObjectStoreNotConfiguredError,
-)
 
 CheckStatus = Literal["ok", "fail"]
 
@@ -148,7 +148,7 @@ async def _probe_database(settings: Settings, opened: list[AsyncConnection]) -> 
         return DatabaseState(False, None, (Failure.of("database", "unreachable", exc),))
 
 
-def _consume(task: "asyncio.Future[Any]") -> None:
+def _consume(task: "asyncio.Future[DatabaseState]") -> None:
     if not task.cancelled():
         task.exception()  # mark as retrieved; the probe reports its own failures
 
@@ -179,29 +179,56 @@ async def fetch_database_state(settings: Settings) -> DatabaseState:
             await asyncio.wait({probe}, timeout=CLEANUP_GRACE_SECONDS)
 
 
-async def _probe_object_storage(settings: Settings) -> Failure | None:
+_STATUS_LINE = re.compile(rb"^HTTP/1\.[01] [1-5][0-9]{2}(?: |$)")
+_CLOSE_GRACE_SECONDS = 0.25
+
+
+async def _http_head_reachable(settings: Settings) -> None:
+    """Raises on anything but a well-formed HTTP status line. Bounded by the caller's timeout;
+    the socket is always closed, with a bounded wait."""
+    url = urlsplit(settings.object_storage_endpoint)
+    if url.scheme not in {"http", "https"} or not url.hostname:
+        raise ValueError("unsupported endpoint")
+    https = url.scheme == "https"
+    port = url.port or (443 if https else 80)
+    host_header = url.hostname if url.port is None else f"{url.hostname}:{url.port}"
+    reader, writer = await asyncio.open_connection(
+        url.hostname, port, ssl=https or None, limit=4096
+    )
     try:
-        await asyncio.to_thread(head_bucket, settings)
-    except ObjectStoreNotConfiguredError:
-        return Failure("object_storage", "not_configured")
-    except Exception as exc:
-        return Failure.of("object_storage", "unreachable", exc)
-    return None
+        bucket = quote(settings.object_storage_bucket, safe="")
+        writer.write(
+            f"HEAD /{bucket} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n".encode()
+        )
+        await writer.drain()
+        if not _STATUS_LINE.match(await reader.readline()):
+            raise ValueError("not an HTTP response")
+    finally:
+        writer.close()
+        try:
+            async with asyncio.timeout(_CLOSE_GRACE_SECONDS):
+                await writer.wait_closed()
+        except Exception:
+            pass
 
 
 async def fetch_object_storage_failure(settings: Settings) -> Failure | None:
-    """None means the bucket answered HeadBucket. The deadline is enforced from outside; the
-    probe thread itself is bounded by the client's socket timeouts (see module docstring)."""
-    probe = asyncio.ensure_future(_probe_object_storage(settings))
-    probe.add_done_callback(_consume)
+    """None means the endpoint answered HTTP within the readiness deadline."""
+    if not (
+        settings.object_storage_endpoint
+        and settings.object_storage_bucket
+        and settings.object_storage_access_key_id_file
+        and settings.object_storage_secret_access_key_file
+    ):
+        return Failure("object_storage", "not_configured")
     try:
-        done, _ = await asyncio.wait({probe}, timeout=settings.readiness_timeout_seconds)
-        if probe in done:
-            return probe.result()
+        async with asyncio.timeout(settings.readiness_timeout_seconds):
+            await _http_head_reachable(settings)
+    except TimeoutError:
         return Failure("object_storage", "deadline_exceeded")
-    finally:
-        if not probe.done():
-            probe.cancel()
+    except Exception as exc:
+        return Failure.of("object_storage", "unreachable", exc)
+    return None
 
 
 async def _evaluate(settings: Settings, expected_head: str | None) -> ReadinessResult:

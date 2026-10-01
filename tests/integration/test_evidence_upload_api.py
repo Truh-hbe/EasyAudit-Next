@@ -344,3 +344,43 @@ def test_oversized_upload_writes_no_metadata_and_no_object(
         assert session.scalar(select(func.count()).select_from(EvidenceRecord).where(
             EvidenceRecord.organization_id == seeded.organization_id
         )) == 0
+
+
+def test_request_cancelled_while_registering_keeps_metadata_and_object_together(
+    postgres_engine: Engine, seeded: SeededCollaboration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import threading
+
+    import httpx
+
+    started, release = threading.Event(), threading.Event()
+    real_register = uploads._register
+
+    def gated_register(*args: Any) -> Any:
+        started.set()
+        assert release.wait(10)
+        return real_register(*args)  # the worker thread cannot be stopped: it commits
+
+    monkeypatch.setattr(uploads, "_register", gated_register)
+    store = FakeEvidenceStore()
+
+    async def scenario(app: Any) -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
+            request = asyncio.ensure_future(
+                http.post(upload_url(seeded), content=b"data", headers=PDF)
+            )
+            await asyncio.to_thread(started.wait, 10)
+            request.cancel()
+            await asyncio.sleep(0.1)
+            release.set()
+            await asyncio.gather(request, return_exceptions=True)
+            await asyncio.sleep(0.5)  # let the shielded registration settle
+
+    for client in client_for(postgres_engine, seeded, seeded.owner_id, store):
+        asyncio.run(scenario(client.app))
+
+    rows = evidence_rows(postgres_engine, seeded)
+    assert len(rows) == 1  # it committed, so the object must still be there
+    assert list(store.objects) == [rows[0].storage_key] and store.deleted == []

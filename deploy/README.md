@@ -123,7 +123,7 @@ deploy/backup/restore.sh environment BACKUP_DIR    # 整个新环境，见下
 
 ## 说明
 
-- 对象存储为 Garage（单节点）。API 用 `s3_access_key_id`/`s3_secret_access_key` 访问 bucket `easyaudit-evidence`（内部端点 `http://object-storage:3900`，region `garage`），凭证以 secrets 文件挂载，环境变量只给文件路径（`OBJECT_STORAGE_*_FILE`）。API 的 `/health/ready` 含 `object_storage`（HeadBucket）；`up --wait gateway` 等的就是它，所以凭证或 bucket 不对时 API 起不来。
+- 对象存储为 Garage（单节点）。API 用 `s3_access_key_id`/`s3_secret_access_key` 访问 bucket `easyaudit-evidence`（内部端点 `http://object-storage:3900`，region `garage`），凭证以 secrets 文件挂载，环境变量只给文件路径（`OBJECT_STORAGE_*_FILE`）。API 的 `/health/ready` 含 `object_storage`，只检查 endpoint 可达（不签名的 HEAD，任何 HTTP 状态都算通），**不校验凭证和 bucket**；凭证或 bucket 不对会在第一次上传时以 503 暴露。
 - Evidence 上传限制由 `EVIDENCE_MAX_BYTES`（默认 25 MiB）和 `EVIDENCE_ALLOWED_CONTENT_TYPES` 控制。网关的 `request_body max_size`（`Caddyfile`，26 MiB）要略大于应用上限：调大应用上限时同步改它。
 - 上传失败后可能留下孤儿对象（登记失败且删除也失败）或未完成的 multipart（进程崩溃）；它们不在任何 Evidence 行里引用，备份会把前者当作多出来的对象带走，清理由 Pilot-4B 的孤儿清理处理。
 - API 只信任来自网关固定地址（`172.30.10.10`）的代理头。若该网段与内网冲突，同时修改 `compose.yaml` 中 `edge` 网段、网关 `ipv4_address` 和 `FORWARDED_ALLOW_IPS`（测试会检查后两项一致）。
