@@ -1,4 +1,4 @@
-import { Alert, App, Badge, Button, Card, Flex, Radio, Skeleton, Spin, Typography } from 'antd'
+import { Alert, App, Badge, Button, Card, Flex, Radio, Spin, Typography } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../../api/client'
@@ -13,6 +13,7 @@ import type {
 } from '../../api/notifications'
 import { formatDateTime } from '../../product/format'
 import { ButtonLink } from '../../ui/ButtonLink'
+import { InitialLoading } from '../../ui/InitialLoading'
 import { ItemList } from '../../ui/ItemList'
 import { PageHeader } from '../../ui/PageHeader'
 
@@ -73,6 +74,8 @@ function subjectText(subject: NotificationSubjectResponse): string {
   }
 }
 
+const ACCESS_LOST_TEXT = '内容不存在或无权访问'
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
@@ -86,6 +89,8 @@ export function NotificationCenterPage() {
   const [markingId, setMarkingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const requestSequenceRef = useRef(0)
+  const commandSequenceRef = useRef(0)
+  const markingRef = useRef<{ command: number; id: string } | null>(null)
   const currentViewRef = useRef({ mode, offset })
   currentViewRef.current = { mode, offset }
 
@@ -125,38 +130,54 @@ export function NotificationCenterPage() {
     if (nextMode === mode) return
     setMode(nextMode)
     setOffset(0)
-    setMarkingId(null)
     setNotice(null)
   }
 
   function changeOffset(next: (value: number) => number) {
     setOffset(next)
-    setMarkingId(null)
     setNotice(null)
   }
 
+  // 写请求的锁和视图无关：切换视图不释放锁；每个请求只结束自己的状态。
   async function markRead(notificationId: string) {
+    if (markingRef.current !== null) return
+    const command = commandSequenceRef.current + 1
+    commandSequenceRef.current = command
+    markingRef.current = { command, id: notificationId }
     const commandView = currentViewRef.current
-    const inCommandView = () => {
-      const currentView = currentViewRef.current
-      return currentView.mode === commandView.mode && currentView.offset === commandView.offset
-    }
     setMarkingId(notificationId)
     setNotice(null)
+    // 写成功或结果未知后都要让“当前”视图重新读取；晚到的旧响应由读请求序号丢弃。
+    const refetch = () => setRevision((value) => value + 1)
     try {
       await markNotificationRead(notificationId)
-      if (!inCommandView()) return
-      void message.success('已标记为已读')
-      setRevision((value) => value + 1)
+      const currentView = currentViewRef.current
+      if (currentView.mode === commandView.mode && currentView.offset === commandView.offset) {
+        void message.success('已标记为已读')
+      }
+      refetch()
     } catch (error) {
-      if (!inCommandView()) return
       // 写操作不自动重放：只重新读取列表核对，是否再次标记由用户决定。
-      if (error instanceof ApiError && error.status === 409) {
-        setNotice({ type: 'warning', text: '数据已变化，正在获取最新状态。' })
-        setRevision((value) => value + 1)
+      if (error instanceof ApiError && error.status === 401) {
+        // Session 失效由 client 的统一处理接管。
+      } else if (error instanceof ApiError && error.status === 403) {
+        // 授权失效：立即移除受保护内容，并让还在途的读响应失效。
+        requestSequenceRef.current += 1
+        setState({ data: null, dataKey: null, loading: false, error: ACCESS_LOST_TEXT })
       } else if (error instanceof ApiError && error.status === 404) {
-        setNotice({ type: 'warning', text: errorMessage(error, '通知已不存在，正在获取最新状态。') })
-        setRevision((value) => value + 1)
+        setState((previous) =>
+          previous.data === null
+            ? previous
+            : {
+                ...previous,
+                data: { ...previous.data, items: previous.data.items.filter((item) => item.id !== notificationId) },
+              },
+        )
+        setNotice({ type: 'warning', text: `${ACCESS_LOST_TEXT}，正在获取最新状态。` })
+        refetch()
+      } else if (error instanceof ApiError && error.status === 409) {
+        setNotice({ type: 'warning', text: '数据已变化，正在获取最新状态。' })
+        refetch()
       } else if (error instanceof ApiError && error.status < 500) {
         setNotice({ type: 'error', text: errorMessage(error, '标记已读失败') })
       } else {
@@ -164,14 +185,18 @@ export function NotificationCenterPage() {
           type: 'warning',
           text: '未确认是否已标记为已读，已重新读取列表供核对；如仍为未读可再次点击。',
         })
-        setRevision((value) => value + 1)
+        refetch()
       }
     } finally {
-      if (inCommandView()) setMarkingId(null)
+      if (markingRef.current?.command === command) {
+        markingRef.current = null
+        setMarkingId(null)
+      }
     }
   }
 
   const data = state.dataKey === viewKey ? state.data : null
+  const initialLoading = state.loading && data === null
   const refreshing = state.loading && data !== null
   const hasPrevious = offset > 0
   const hasPossibleNext = data !== null && data.items.length === data.limit
@@ -204,7 +229,7 @@ export function NotificationCenterPage() {
           {item.read_at === null ? (
             <Button
               loading={markingId === item.id}
-              disabled={markingId !== null && markingId !== item.id}
+              disabled={markingId !== null}
               onClick={() => void markRead(item.id)}
             >
               标记已读
@@ -223,7 +248,7 @@ export function NotificationCenterPage() {
         : '暂无通知。'
 
   return (
-    <Flex vertical gap={16}>
+    <Flex vertical gap={16} aria-busy={initialLoading}>
       <PageHeader
         title="通知"
         titleId="notifications-title"
@@ -260,9 +285,7 @@ export function NotificationCenterPage() {
         <Alert type={notice.type} showIcon role="status" title={notice.text} closable={{ onClose: () => setNotice(null) }} />
       )}
 
-      {state.loading && data === null ? (
-        <Card><Skeleton active paragraph={{ rows: 6 }} /></Card>
-      ) : null}
+      {initialLoading ? <Card><InitialLoading label="正在加载通知" rows={6} /></Card> : null}
 
       {data === null ? null : (
         <Spin spinning={refreshing}>

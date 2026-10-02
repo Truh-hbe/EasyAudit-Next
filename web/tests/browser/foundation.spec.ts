@@ -305,6 +305,8 @@ test('Workbench renders only server-projected categories and links to original r
   await expect(page.getByText('Server Verification V')).toBeVisible()
   await expect(page.getByText('Server Overdue Case')).toBeVisible()
   await expect(page.getByText('Server Due Soon Action')).toBeVisible()
+  await expect(page.getByText('关系 观察员')).toBeVisible()
+  await expect(page.getByText('observer')).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Server Case A' })).toHaveAttribute('href', '/review-cases/case-a')
   await expect(page.getByRole('link', { name: 'Server Finding A' })).toHaveAttribute('href', '/findings/finding-a')
   await expect(page.getByRole('link', { name: 'Server Action A' })).toHaveAttribute('href', '/action-items/action-a')
@@ -535,6 +537,22 @@ test('Workbench refresh failure keeps old content for network errors but drops i
   await page.getByRole('button', { name: '刷新' }).click()
   await expect(page.getByRole('alert')).toContainText('Forbidden')
   await expect(page.getByText('Server Case A')).toHaveCount(0)
+})
+
+test('Workbench first load exposes busy state and a status, and clears both when loaded', async ({ page }) => {
+  await stubReadySession(page)
+  const gate = createDeferred()
+  await page.route('**/api/v1/me/workbench', async (route) => {
+    await gate.promise
+    await fulfillJson(route, 200, emptyWorkbench)
+  })
+  await page.goto('/me/workbench')
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(1)
+  await expect(page.getByRole('status')).toHaveText('正在加载我的工作')
+  gate.resolve()
+  await expect(page.getByText('暂无我参与的审查。')).toBeVisible()
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
+  await expect(page.getByRole('status')).toHaveCount(0)
 })
 
 test.describe('device time zone differs from the display time zone', () => {

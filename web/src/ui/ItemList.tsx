@@ -14,7 +14,7 @@ export interface ItemListProps {
   label?: string
 }
 
-// 简单条目的语义列表（ul/li）。antd Listy 无列表语义且默认虚拟滚动，不适用于服务端分页的短列表。
+// 简单条目的语义列表（ul/li）。antd Listy 输出的是无列表语义的 div（包内没有 role/aria），所以用语义化的 ul/li。
 export function ItemList({ items, emptyText, emptyAction, label }: ItemListProps) {
   if (items.length === 0) {
     return (

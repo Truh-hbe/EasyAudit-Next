@@ -224,6 +224,130 @@ test('notification empty state tells an empty inbox from an empty unread filter'
   await expect(page.getByText('暂无通知。')).toBeVisible()
 })
 
+async function stubInbox(page: Page, rows: () => ReturnType<typeof notification>[], reads: { count: number; gate?: Promise<void> }) {
+  await page.route((url) => url.pathname === '/api/v1/me/notifications', async (route) => {
+    const url = new URL(route.request().url())
+    reads.count += 1
+    if (reads.gate !== undefined && reads.count > 1) await reads.gate
+    const unreadOnly = url.searchParams.get('unread_only') === 'true'
+    const all = rows()
+    return fulfillJson(route, 200, {
+      items: unreadOnly ? all.filter((row) => row.read_at === null) : all,
+      unread_count: all.filter((row) => row.read_at === null).length,
+      limit: 20,
+      offset: 0,
+    })
+  })
+}
+
+test('mark-read 403 removes protected notification content immediately', async ({ page }) => {
+  await stubReadySession(page)
+  const reads = { count: 0 }
+  await stubInbox(page, () => [notification('unread-1', 'Protected notification body', null)], reads)
+  await page.route((url) => url.pathname === '/api/v1/me/notifications/unread-1/read', (route) =>
+    fulfillJson(route, 403, { detail: 'Forbidden' }),
+  )
+
+  await page.goto('/me/notifications')
+  await expect(page.getByText('Protected notification body', { exact: true })).toBeVisible()
+  const readsBefore = reads.count
+  await page.getByRole('button', { name: '标记已读' }).click()
+  await expect(page.getByText('Protected notification body', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '标记已读' })).toHaveCount(0)
+  await expect(page.getByRole('alert')).toContainText('内容不存在或无权访问')
+  expect(reads.count).toBe(readsBefore)
+})
+
+test('mark-read 404 removes that notification immediately and then re-reads the list', async ({ page }) => {
+  await stubReadySession(page)
+  const rows = [notification('gone-1', 'Vanished notification', null), notification('kept-1', 'Kept notification', null)]
+  const gate = deferred()
+  const reads: { count: number; gate?: Promise<void> } = { count: 0 }
+  await stubInbox(page, () => rows, reads)
+  await page.route((url) => url.pathname === '/api/v1/me/notifications/gone-1/read', (route) =>
+    fulfillJson(route, 404, { detail: 'Not found' }),
+  )
+
+  await page.goto('/me/notifications')
+  await expect(page.getByText('Vanished notification', { exact: true })).toBeVisible()
+  const readsBefore = reads.count
+  reads.gate = gate.promise
+  await page.getByRole('listitem').filter({ hasText: 'Vanished notification' }).getByRole('button', { name: '标记已读' }).click()
+  // 重新读取还被挂起，条目已经先行移除。
+  await expect(page.getByText('Vanished notification', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Kept notification', { exact: true })).toBeVisible()
+  await expect.poll(() => reads.count).toBe(readsBefore + 1)
+  gate.release()
+  await expect(page.getByText('Kept notification', { exact: true })).toBeVisible()
+})
+
+test('switching views mid-write keeps the write lock: the same notification gets a single POST', async ({ page }) => {
+  await stubReadySession(page)
+  const gate = deferred()
+  let posts = 0
+  await stubInbox(page, () => [notification('unread-1', 'Locked row', null)], { count: 0 })
+  await page.route((url) => url.pathname === '/api/v1/me/notifications/unread-1/read', async (route) => {
+    posts += 1
+    await gate.promise
+    return fulfillJson(route, 200, notification('unread-1', 'Locked row', '2026-08-28T12:20:00Z'))
+  })
+
+  await page.goto('/me/notifications')
+  await page.getByRole('button', { name: '标记已读' }).click()
+  await notificationViewLabel(page, /未读/).click()
+  await expect(notificationViewRadio(page, /未读/)).toBeChecked()
+  await expect(page.getByText('Locked row', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '标记已读' })).toBeDisabled()
+  expect(posts).toBe(1)
+  gate.release()
+})
+
+test('write success after switching views still re-reads the current view and updates the unread count', async ({ page }) => {
+  await stubReadySession(page)
+  const gate = deferred()
+  let readAt: string | null = null
+  const reads = { count: 0 }
+  const requests: string[] = []
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (url.pathname === '/api/v1/me/notifications') requests.push(url.searchParams.get('unread_only') ?? '')
+  })
+  await stubInbox(page, () => [notification('unread-1', 'Switched row', readAt)], reads)
+  await page.route((url) => url.pathname === '/api/v1/me/notifications/unread-1/read', async (route) => {
+    await gate.promise
+    readAt = '2026-08-28T12:20:00Z'
+    return fulfillJson(route, 200, notification('unread-1', 'Switched row', readAt))
+  })
+
+  await page.goto('/me/notifications')
+  await page.getByRole('button', { name: '标记已读' }).click()
+  await notificationViewLabel(page, /未读/).click()
+  await expect(notificationViewRadio(page, /未读/)).toBeChecked()
+  await expect(page.getByText('Switched row', { exact: true })).toBeVisible()
+  const readsBefore = requests.length
+  gate.release()
+  await expect.poll(() => requests.length).toBeGreaterThan(readsBefore)
+  expect(requests.at(-1)).toBe('true')
+  await expect(page.getByText('没有未读通知。')).toBeVisible()
+  await expect(page.getByText('未读总数 0')).toBeVisible()
+})
+
+test('notification first load exposes busy state and a status, and clears both when loaded', async ({ page }) => {
+  await stubReadySession(page)
+  const gate = deferred()
+  await page.route((url) => url.pathname === '/api/v1/me/notifications', async (route) => {
+    await gate.promise
+    return fulfillJson(route, 200, { items: [notification('n1', 'Loaded row', null)], unread_count: 1, limit: 20, offset: 0 })
+  })
+  await page.goto('/me/notifications')
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(1)
+  await expect(page.getByRole('status')).toHaveText('正在加载通知')
+  gate.release()
+  await expect(page.getByText('Loaded row', { exact: true })).toBeVisible()
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
+  await expect(page.getByRole('status')).toHaveCount(0)
+})
+
 test('historical Notification does not grant current Finding access', async ({ page }) => {
   await stubReadySession(page)
   const findingId = 'finding-currently-hidden'

@@ -1,5 +1,5 @@
 import { ReloadOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Col, Flex, Row, Skeleton, Spin, Typography } from 'antd'
+import { Alert, Button, Card, Col, Flex, Row, Spin, Typography } from 'antd'
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
@@ -8,6 +8,8 @@ import { ApiError } from '../../api/client'
 import { getWorkbench } from '../../api/product'
 import type { WorkbenchResponse } from '../../api/product'
 import { formatDateTime } from '../../product/format'
+import { caseRoleName } from '../../product/terms'
+import { InitialLoading } from '../../ui/InitialLoading'
 import { ItemList } from '../../ui/ItemList'
 import { PageHeader } from '../../ui/PageHeader'
 import { StatusTag } from '../../ui/StatusTag'
@@ -132,7 +134,7 @@ function sections(data: WorkbenchResponse) {
       <>
         <StatusTag kind="reviewCase" value={item.lifecycle} />
         {secondary(`计划结束 ${formatDateTime(item.planned_end_at)}`)}
-        {secondary(`关系 ${item.role_keys.join(' / ') || '—'}`)}
+        {secondary(`关系 ${item.role_keys.map(caseRoleName).join(' / ') || '—'}`)}
       </>
     ),
   }))
@@ -170,11 +172,12 @@ export function WorkbenchPage() {
   }, [revision])
 
   const data = state.data
+  const initialLoading = state.status === 'loading' && data === null
   const refreshing = state.status === 'loading' && state.data !== null
 
   return (
     <Spin spinning={refreshing}>
-      <Flex vertical gap={16}>
+      <Flex vertical gap={16} aria-busy={initialLoading}>
         <PageHeader
           title="我的工作"
           titleId="workbench-title"
@@ -202,7 +205,7 @@ export function WorkbenchPage() {
             }
           />
         ) : null}
-        {state.status === 'loading' && data === null ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
+        {initialLoading ? <InitialLoading label="正在加载我的工作" rows={8} /> : null}
         {data === null ? null : (
           <Row gutter={[16, 16]}>
             {sections(data).map((section) => (

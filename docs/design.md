@@ -127,7 +127,7 @@
 | 选择 | 选项 ≤ 4 用 `Radio.Group`，否则用 `Select`；候选人用 `Select showSearch` + 服务端授权的候选接口 | 原生 `<select>` |
 | 日期 | `DatePicker`（时区见[时间](#文案与术语)） | 原生 `datetime-local` |
 | 表格数据 | `Table`（`size="middle"`，`rowKey="id"`，分页来自服务端 envelope） | 手写 grid 列表 |
-| 简单条目 | `ui/ItemList`（语义 `<ul>`/`<li>`，空状态用 `Empty`）；需要列、排序、分页的数据用 `Table` | `List`（已弃用）；`Listy`（输出无列表语义的 `div`，默认虚拟滚动，需固定高度）；用 `Table` 渲染无表头的条目（单页约 +88 kB gzip，见 ADR-0006 体积说明） |
+| 简单条目 | `ui/ItemList`（语义 `<ul>`/`<li>`，空状态用 `Empty`）；需要列、排序、分页的数据用 `Table` | `List`（已弃用）；`Listy`（输出无列表语义的 `div`，无法补 role）；用 `Table` 渲染无表头的条目（单页约 +88 kB gzip，见 ADR-0006 体积说明） |
 | 字段展示 | `Descriptions`（`column={{ xs: 1, md: 2 }}`） | 手写 `<dl>` |
 | 状态 | `StatusTag` | 自定义 pill、直接用 antd 预设状态色 |
 | 历史 / 操作记录 | `Timeline` | |
