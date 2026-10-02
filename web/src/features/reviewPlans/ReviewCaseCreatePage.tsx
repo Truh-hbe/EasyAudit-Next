@@ -56,7 +56,7 @@ export function canCreateCase(
 
 function caseRejectionMessage(error: unknown): string {
   if (isIdempotencyKeyReuse(error)) {
-    return '提交的内容与此前使用同一幂等键的请求不一致。请刷新页面后重试。'
+    return '当前内容与之前提交的创建请求不一致。请刷新页面，确认内容后再试。'
   }
   return errorMessage(error, '审查活动创建被服务器拒绝，请修正后重试。')
 }
@@ -72,7 +72,7 @@ export async function executeCaseSubmission(
         ? { status: 'rejected', message: caseRejectionMessage(error) }
         : {
             status: 'unknown',
-            message: '审查活动创建结果未知。可以重试创建：同一次提交使用相同的幂等键，不会重复创建；系统不会自动再次提交。',
+            message: '审查活动创建结果未知。可以重试创建：重新提交会沿用这次创建请求，不会重复创建；系统不会自动再次提交。',
           },
     }
   }

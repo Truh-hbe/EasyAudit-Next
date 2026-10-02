@@ -272,6 +272,7 @@ antd 预设的 `success` / `warning` / `error` 状态 Tag 文字对比度只有 
 
 - 全局布局 CSS 放在 `web/src/styles.css`。class 名用 kebab-case，Shell 用 `app-` 前缀。
 - 不覆盖 `.ant-*` 内部 class，不用 `!important`。需要定制时用组件 token 或语义接口。
+- 确需覆盖 antd 组件自带样式（如 `StatusTag` 的配色）时，选择器挂在 `.app-root` 下以提高优先级，例如 `.app-root .status-tag.status-tag--*`，不依赖样式注入顺序，也不用 `!important`。
 - 不用内联 `style` 设置颜色和字号。
 - **遗留样式**：`.surface-*`、`.command-*`、`.fact-grid`、`.status-pill`、`.eyebrow` 等 class 和上节的元素规则是迁移前的遗留，新代码不得使用。迁移一页就删除一页不再使用的规则，UI-7 做最后清理。
 
