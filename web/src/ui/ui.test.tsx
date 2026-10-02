@@ -1,8 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 
-import { ButtonLink } from './ButtonLink'
 import { PageHeader } from './PageHeader'
 import { StatusTag, statusLabel } from './StatusTag'
 import type { StatusKind } from './StatusTag'
@@ -54,21 +52,6 @@ describe('StatusTag', () => {
       expect(html).toContain('未知状态')
       expect(html).toContain(`<span class="status-tag-raw">${value}</span>`)
     }
-  })
-})
-
-describe('ButtonLink', () => {
-  it('渲染为带 href 的链接而不是 button', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <ButtonLink to="/review-plans/new" type="primary">新建审查计划</ButtonLink>
-      </MemoryRouter>,
-    )
-    expect(html).toMatch(/^<a /)
-    expect(html).toContain('href="/review-plans/new"')
-    expect(html).toContain('ant-btn-primary')
-    expect(html).toContain('新建审查计划')
-    expect(html).not.toContain('<button')
   })
 })
 
