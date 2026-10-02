@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Page, type Request, type Route } from '@playwright/test'
 import { notificationViewLabel, notificationViewRadio } from './notificationView.js'
 
 const user = {
@@ -240,44 +240,94 @@ async function stubInbox(page: Page, rows: () => ReturnType<typeof notification>
   })
 }
 
-test('mark-read 403 removes protected notification content immediately', async ({ page }) => {
-  await stubReadySession(page)
-  const reads = { count: 0 }
-  await stubInbox(page, () => [notification('unread-1', 'Protected notification body', null)], reads)
-  await page.route((url) => url.pathname === '/api/v1/me/notifications/unread-1/read', (route) =>
-    fulfillJson(route, 403, { detail: 'Forbidden' }),
+// 等到 Playwright 观察到的所有通知列表 GET 都已完成，并让 React 渲染两帧。
+async function settleInboxReads(page: Page, started: () => number, finished: () => number) {
+  await expect.poll(() => finished()).toBe(started())
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const browser = globalThis as unknown as { requestAnimationFrame: (cb: () => void) => void }
+        browser.requestAnimationFrame(() => browser.requestAnimationFrame(() => resolve()))
+      }),
   )
+}
+
+test('mark-read 403 removes protected content immediately and discards a late in-flight read', async ({ page }) => {
+  await stubReadySession(page)
+  const readGate = deferred()
+  const postGate = deferred()
+  const reads: { count: number; gate?: Promise<void> } = { count: 0 }
+  let finishedReads = 0
+  // 被页面 abort 的读请求触发 requestfailed，同样算作结束。
+  const countRead = (request: Request) => {
+    if (new URL(request.url()).pathname === '/api/v1/me/notifications') finishedReads += 1
+  }
+  page.on('requestfinished', countRead)
+  page.on('requestfailed', countRead)
+  await stubInbox(page, () => [notification('unread-1', 'Protected notification body', null)], reads)
+  await page.route((url) => url.pathname === '/api/v1/me/notifications/unread-1/read', async (route) => {
+    await postGate.promise
+    return fulfillJson(route, 403, { detail: 'Forbidden' })
+  })
 
   await page.goto('/me/notifications')
   await expect(page.getByText('Protected notification body', { exact: true })).toBeVisible()
-  const readsBefore = reads.count
+  await settleInboxReads(page, () => reads.count, () => finishedReads)
+
+  // 写请求在途时切换视图，触发一个被挂起的读请求；之后写请求返回 403。
   await page.getByRole('button', { name: '标记已读' }).click()
+  reads.gate = readGate.promise
+  const readsBeforeSwitch = reads.count
+  await notificationViewLabel(page, /未读/).click()
+  await expect.poll(() => reads.count).toBe(readsBeforeSwitch + 1)
+  postGate.release()
+  await expect(page.getByRole('alert')).toContainText('内容不存在或无权访问')
+  await expect(page.getByText('Protected notification body', { exact: true })).toHaveCount(0)
+
+  // 放行旧读请求：授权失效后晚到的响应不能把内容恢复出来。
+  readGate.release()
+  await settleInboxReads(page, () => reads.count, () => finishedReads)
   await expect(page.getByText('Protected notification body', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '标记已读' })).toHaveCount(0)
   await expect(page.getByRole('alert')).toContainText('内容不存在或无权访问')
-  expect(reads.count).toBe(readsBefore)
 })
 
-test('mark-read 404 removes that notification immediately and then re-reads the list', async ({ page }) => {
+test('mark-read 404 removes that notification immediately and the refreshed list stays without it', async ({ page }) => {
   await stubReadySession(page)
-  const rows = [notification('gone-1', 'Vanished notification', null), notification('kept-1', 'Kept notification', null)]
+  let rows = [notification('gone-1', 'Vanished notification', null), notification('kept-1', 'Kept notification', null)]
   const gate = deferred()
   const reads: { count: number; gate?: Promise<void> } = { count: 0 }
+  let finishedReads = 0
+  // 被页面 abort 的读请求触发 requestfailed，同样算作结束。
+  const countRead = (request: Request) => {
+    if (new URL(request.url()).pathname === '/api/v1/me/notifications') finishedReads += 1
+  }
+  page.on('requestfinished', countRead)
+  page.on('requestfailed', countRead)
   await stubInbox(page, () => rows, reads)
-  await page.route((url) => url.pathname === '/api/v1/me/notifications/gone-1/read', (route) =>
-    fulfillJson(route, 404, { detail: 'Not found' }),
-  )
+  await page.route((url) => url.pathname === '/api/v1/me/notifications/gone-1/read', (route) => {
+    // 服务端已不再有这条通知：之后的权威列表不再包含它。
+    rows = rows.filter((row) => row.id !== 'gone-1')
+    return fulfillJson(route, 404, { detail: 'Not found' })
+  })
 
   await page.goto('/me/notifications')
   await expect(page.getByText('Vanished notification', { exact: true })).toBeVisible()
+  await expect(page.getByText('未读总数 2')).toBeVisible()
+  await settleInboxReads(page, () => reads.count, () => finishedReads)
   const readsBefore = reads.count
   reads.gate = gate.promise
   await page.getByRole('listitem').filter({ hasText: 'Vanished notification' }).getByRole('button', { name: '标记已读' }).click()
-  // 重新读取还被挂起，条目已经先行移除。
+  // 重新读取还被挂起，条目已经先行移除；未读总数还是旧值。
   await expect(page.getByText('Vanished notification', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Kept notification', { exact: true })).toBeVisible()
+  await expect(page.getByText('未读总数 2')).toBeVisible()
   await expect.poll(() => reads.count).toBe(readsBefore + 1)
+
   gate.release()
+  // 只有刷新完成后才会出现的状态：未读总数来自新的权威列表。
+  await expect(page.getByText('未读总数 1')).toBeVisible()
+  await settleInboxReads(page, () => reads.count, () => finishedReads)
+  await expect(page.getByText('Vanished notification', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Kept notification', { exact: true })).toBeVisible()
 })
 
