@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -25,6 +25,12 @@ function fulfillJson(route: Route, status: number, body: unknown) {
     contentType: 'application/json',
     body: JSON.stringify(body),
   })
+}
+
+// DatePicker 的日期框：键入文本后按 Enter 确认（不会提交表单）。
+async function enterDateTime(input: Locator, text: string) {
+  await input.fill(text)
+  await input.press('Enter')
 }
 
 function createDeferred() {
@@ -579,30 +585,28 @@ test.describe('device time zone differs from the display time zone', () => {
     const start = page.getByLabel('计划开始时间（可选）')
     const end = page.getByLabel('计划结束时间（可选）')
     await page.getByLabel('计划名称').fill('无效时间计划')
-    await start.fill('2026-08-28T18:00')
+    await enterDateTime(start, '2026/08/28 18:00')
     await page.getByRole('button', { name: '保存计划并继续' }).click()
     await expect.poll(() => requests.length).toBe(1)
     await expect(page.getByRole('button', { name: '重试保存计划' })).toBeEnabled()
 
-    // 1986-05-04 02:00 上海进入夏令时直接跳到 03:00，02:30 不存在；格式合法，原生输入框不会拦截。
-    await end.fill('1986-05-04T02:30')
+    // 1986-05-04 02:00 上海进入夏令时直接跳到 03:00，02:30 不存在；格式合法，选择器本身不会拦截。
+    await enterDateTime(end, '1986/05/04 02:30')
     await page.getByRole('button', { name: '重试保存计划' }).click()
-    await expect(page.getByRole('alert')).toHaveText(
-      '计划结束时间无效：请填写存在的上海时间（Asia/Shanghai）。',
-    )
-    await expect(end).toHaveValue('1986-05-04T02:30')
+    await expect(page.getByText('计划结束时间无效：请填写存在的上海时间（Asia/Shanghai）。')).toBeVisible()
+    await expect(end).toBeFocused()
+    await expect(end).toHaveValue('1986/05/04 02:30')
 
-    await end.fill('')
-    await start.fill('1986-05-04T02:30')
+    await enterDateTime(end, '')
+    await enterDateTime(start, '1986/05/04 02:30')
     await page.getByRole('button', { name: '重试保存计划' }).click()
-    await expect(page.getByRole('alert')).toHaveText(
-      '计划开始时间无效：请填写存在的上海时间（Asia/Shanghai）。',
-    )
-    await expect(start).toHaveValue('1986-05-04T02:30')
+    await expect(page.getByText('计划开始时间无效：请填写存在的上海时间（Asia/Shanghai）。')).toBeVisible()
+    await expect(start).toBeFocused()
+    await expect(start).toHaveValue('1986/05/04 02:30')
     await expect(page.getByLabel('计划名称')).toHaveValue('无效时间计划')
     expect(requests).toHaveLength(1)
 
-    await start.fill('2026-08-28T18:00')
+    await enterDateTime(start, '2026/08/28 18:00')
     await page.getByRole('button', { name: '重试保存计划' }).click()
     await expect.poll(() => requests.length).toBe(2)
     expect(requests[1].body).toMatchObject({
@@ -639,8 +643,8 @@ test.describe('device time zone differs from the display time zone', () => {
       )
     }
     await page.getByLabel('计划名称').fill('时区计划')
-    await page.getByLabel('计划开始时间（可选）').fill('2026-08-28T18:00')
-    await page.getByLabel('计划结束时间（可选）').fill('2026-09-01T09:30')
+    await enterDateTime(page.getByLabel('计划开始时间（可选）'), '2026/08/28 18:00')
+    await enterDateTime(page.getByLabel('计划结束时间（可选）'), '2026/09/01 09:30')
     await page.getByRole('button', { name: '保存计划并继续' }).click()
 
     await expect.poll(() => planBody).not.toBeNull()

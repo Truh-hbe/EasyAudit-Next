@@ -93,3 +93,21 @@ export function parseOptionalDisplayZoneInput(value: string): OptionalDisplayZon
   const iso = displayZoneInputToIso(value)
   return iso === null ? { valid: false } : { valid: true, iso }
 }
+
+// DatePicker 的输入文本格式（与展示格式一致）。文本本身就是上海墙上时间，解析不经过设备时区。
+export const DISPLAY_DATE_TIME_TEXT_FORMAT = 'YYYY/MM/DD HH:mm'
+const DATE_TIME_TEXT = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/
+
+// 把 `YYYY/MM/DD HH:mm` 文本（上海墙上时间）转为 ISO 时间；规则同 displayZoneInputToIso，不做静默修正。
+export function displayZoneTextToIso(text: string): string | null {
+  const match = DATE_TIME_TEXT.exec(text.trim())
+  if (match === null) return null
+  const [, year, month, day, hour, minute] = match
+  return displayZoneInputToIso(`${year}-${month}-${day}T${hour}:${minute}`)
+}
+
+export function parseOptionalDisplayZoneText(text: string): OptionalDisplayZoneInput {
+  if (text.trim() === '') return { valid: true, iso: null }
+  const iso = displayZoneTextToIso(text)
+  return iso === null ? { valid: false } : { valid: true, iso }
+}

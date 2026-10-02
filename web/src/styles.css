@@ -308,8 +308,7 @@ h3 {
   margin: 8px 0 0;
 }
 
-.heading-actions,
-.wizard-actions {
+.heading-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -321,7 +320,16 @@ h3 {
   margin: 8px 0 0;
 }
 
-.wizard-step,
+/* 创建向导：单列，最大宽 720（docs/design.md「页面骨架」）。 */
+.wizard-page {
+  width: 100%;
+  max-width: 720px;
+}
+
+.wizard-alert {
+  margin-bottom: 16px;
+}
+
 .field-help {
   color: var(--ant-color-text-secondary);
 }

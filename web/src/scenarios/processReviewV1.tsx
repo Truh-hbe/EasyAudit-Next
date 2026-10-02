@@ -8,6 +8,7 @@ import type {
   ScenarioFormValues,
   ScenarioUiAdapter,
 } from './registry'
+import { CaseCreateTextField } from './CaseCreateTextField'
 
 function scenarioText(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : '—'
@@ -43,26 +44,27 @@ export function ProcessReviewV1CaseCreateFields({
   values,
   onChange,
   disabled,
+  fieldErrors,
 }: ScenarioFormFieldsProps) {
   return (
-    <div className="form-grid">
-      <label>
-        区域代码
-        <input
-          value={formValue(values, 'area_code')}
-          onChange={(event) => onChange('area_code', event.target.value)}
-          disabled={disabled}
-        />
-      </label>
-      <label>
-        审查类型
-        <input
-          value={formValue(values, 'review_type')}
-          onChange={(event) => onChange('review_type', event.target.value)}
-          disabled={disabled}
-        />
-      </label>
-    </div>
+    <>
+      <CaseCreateTextField
+        name="area_code"
+        label="区域代码"
+        value={formValue(values, 'area_code')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.area_code}
+      />
+      <CaseCreateTextField
+        name="review_type"
+        label="审查类型"
+        value={formValue(values, 'review_type')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.review_type}
+      />
+    </>
   )
 }
 
