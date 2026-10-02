@@ -1,8 +1,10 @@
-import { type FormEvent, useState } from 'react'
+import { Alert, Button, Card, Flex, Form, Input, Typography } from 'antd'
+import { useState } from 'react'
 import { useLocation } from 'react-router'
 
 import { loginWithPassword } from '../../api/auth'
 import { ApiError } from '../../api/client'
+import { FieldError } from '../../ui/FieldError'
 import { useSession } from './session'
 
 function hasUnconfirmedLogout(state: unknown): boolean {
@@ -30,21 +32,27 @@ export function loginErrorMessage(error: unknown): string {
   return '暂时无法完成登录，请重试'
 }
 
+interface LoginValues {
+  login_name: string
+  password: string
+}
+
 export function LoginPage() {
   const { refresh } = useSession()
   const location = useLocation()
-  const [loginName, setLoginName] = useState('')
-  const [password, setPassword] = useState('')
+  const [form] = Form.useForm<LoginValues>()
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function submit(values: LoginValues) {
+    if (submitting) {
+      return
+    }
     setSubmitting(true)
     setError(null)
     try {
-      await loginWithPassword(loginName, password)
-      setPassword('')
+      await loginWithPassword(values.login_name, values.password)
+      form.setFieldValue('password', '')
       await refresh()
     } catch (caught) {
       setError(loginErrorMessage(caught))
@@ -54,39 +62,39 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth-card" aria-labelledby="login-title">
-      <p className="eyebrow">EasyAudit Next</p>
-      <h1 id="login-title">登录</h1>
-      {hasUnconfirmedLogout(location.state) ? (
-        <p role="status">本地受保护界面已清除，但服务器退出状态未能确认。</p>
-      ) : null}
-      <form onSubmit={(event) => void submit(event)}>
-        <label>
-          登录名
-          <input
-            name="login_name"
-            autoComplete="username"
-            value={loginName}
-            onChange={(event) => setLoginName(event.target.value)}
-            required
-          />
-        </label>
-        <label>
-          密码
-          <input
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-        </label>
-        {error === null ? null : <p role="alert">{error}</p>}
-        <button type="submit" disabled={submitting}>
-          {submitting ? '登录中…' : '登录'}
-        </button>
-      </form>
-    </main>
+    <Flex component="main" aria-labelledby="login-title" justify="center" align="center" className="auth-page">
+      <Card className="auth-panel">
+        <Flex vertical gap={16}>
+          <Flex vertical gap={4}>
+            <Typography.Text>EasyAudit Next</Typography.Text>
+            <h1 id="login-title">登录</h1>
+          </Flex>
+          {hasUnconfirmedLogout(location.state) ? (
+            <Alert
+              type="warning"
+              showIcon
+              role="status"
+              title="本地受保护界面已清除，但服务器退出状态未能确认。"
+            />
+          ) : null}
+          {error === null ? null : <Alert type="error" showIcon title={error} />}
+          <Form form={form} layout="vertical" requiredMark={false} scrollToFirstError={{ focus: true }} onFinish={(values) => void submit(values)}>
+            <Form.Item
+              label="登录名"
+              name="login_name"
+              rules={[{ required: true, message: <FieldError>请输入登录名</FieldError> }]}
+            >
+              <Input autoComplete="username" />
+            </Form.Item>
+            <Form.Item label="密码" name="password" rules={[{ required: true, message: <FieldError>请输入密码</FieldError> }]}>
+              <Input.Password autoComplete="current-password" />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" block loading={submitting} autoInsertSpace={false}>
+              登录
+            </Button>
+          </Form>
+        </Flex>
+      </Card>
+    </Flex>
   )
 }

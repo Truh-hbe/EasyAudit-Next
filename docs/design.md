@@ -37,6 +37,7 @@
 | `colorTextBase` | `#172033` | 正文基色，其他文字层级由 antd 派生 |
 | `colorBgLayout` | `#f5f7fb` | 页面底色 |
 | `colorBorder` | `#8290a3` | 控件边框，白底 3.3:1，满足 WCAG 1.4.11（antd 默认 `#d9d9d9` 只有 1.4:1） |
+| `colorTextPlaceholder` | `#667085` | placeholder，白底 5.0:1（antd 默认约 1.7:1） |
 | `borderRadius` | `8` | 统一圆角 |
 | `fontFamily` | 系统字体 + PingFang SC / Microsoft YaHei | 不加载 Web 字体 |
 
@@ -44,7 +45,7 @@
 
 **文字层级**：可读信息（说明、时间、副标题）用 `--ant-color-text-secondary`（白底 5.1:1）。`--ant-color-text-tertiary`（2.8:1）不用于任何可读文字。
 
-**placeholder**：只提供示例，不能替代 label；它的文字同样要满足 4.5:1。antd 默认 placeholder 色（25% 不透明度，约 1.7:1）不达标，首个输入控件迁移（UI-2）时通过 `colorTextPlaceholder` 调整并实测。
+**placeholder**：只提供示例，不能替代 label；它的文字同样要满足 4.5:1。antd 默认 placeholder 色（25% 不透明度，约 1.7:1）不达标，已通过 `colorTextPlaceholder` 调整，认证页浏览器测试实测。
 
 **字号**：页面标题 24px（`--ant-font-size-heading-3`），区块标题 16px（`--ant-font-size-lg`），正文 14px，辅助信息 12px（`--ant-font-size-sm`）。
 

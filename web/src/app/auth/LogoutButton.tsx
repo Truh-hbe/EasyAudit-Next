@@ -7,7 +7,7 @@ import { logoutCurrentSession } from '../../api/auth'
 import { ApiError } from '../../api/client'
 import { useSession } from './session'
 
-export function LogoutButton({ className }: { className?: string }) {
+export function LogoutButton({ block }: { block?: boolean }) {
   const { clearLocalSession } = useSession()
   const navigate = useNavigate()
   const [submitting, setSubmitting] = useState(false)
@@ -34,7 +34,7 @@ export function LogoutButton({ className }: { className?: string }) {
 
   return (
     <Button
-      className={className}
+      block={block}
       icon={<LogoutOutlined aria-hidden />}
       disabled={submitting}
       onClick={() => void logout()}
