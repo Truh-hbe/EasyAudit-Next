@@ -754,7 +754,7 @@ test('auth page text, placeholder, alert and link colors meet WCAG AA contrast',
   console.log('auth contrast', JSON.stringify(ratios))
 })
 
-test('antd description text and built-in icons meet WCAG contrast on white and layout backgrounds', async ({ page }) => {
+test('antd description text meets WCAG AA contrast on white and layout backgrounds', async ({ page }) => {
   await stubAnonymous(page)
   await page.goto('/login')
   await page.evaluate(async () => {
@@ -774,22 +774,46 @@ test('antd description text and built-in icons meet WCAG contrast on white and l
   for (const [name, ratio] of Object.entries(ratios)) {
     expect(ratio, name).toBeGreaterThanOrEqual(4.5)
   }
-  // antd 内置交互图标（此处以 Input.Password 的显示/隐藏按钮为代表）按 WCAG 1.4.11 需 ≥ 3:1，hover 不能更淡。
-  const iconTargets = (suffix: string) => ({
-    [`icon on white${suffix}`]: { selector: '[data-contrast-probe="white"] .ant-input-password-icon' },
-    [`icon on layout${suffix}`]: { selector: '[data-contrast-probe="layout"] .ant-input-password-icon' },
-  })
-  const icons = await page.evaluate(measureContrast, iconTargets(''))
-  await page.locator('[data-contrast-probe="white"] .ant-input-password-icon').hover()
-  const iconsHover = await page.evaluate(measureContrast, {
-    'icon hover on white': iconTargets('')['icon on white'],
-  })
-  expect(iconsHover['icon hover on white'], 'icon hover on white').toBeGreaterThanOrEqual(icons['icon on white'])
-  for (const [name, ratio] of Object.entries({ ...icons, ...iconsHover })) {
-    expect(ratio, name).toBeGreaterThanOrEqual(3)
-  }
-  console.log('icon contrast', JSON.stringify({ ...icons, ...iconsHover }))
   console.log('description contrast', JSON.stringify(ratios))
+})
+
+test('antd built-in interactive icons meet WCAG 1.4.11 contrast and hover never gets lighter', async ({ page }) => {
+  await stubAnonymous(page)
+  await page.goto('/login')
+  await page.evaluate(async () => {
+    const path = '/tests/browser/fixtures/theme-probe.tsx'
+    const probe: { mountThemeProbe: () => void } = await import(path)
+    probe.mountThemeProbe()
+  })
+  // hoverOn 为空时直接悬停图标本身；清除按钮需要先悬停所在控件才可交互。
+  const icons: Record<string, { selector: string; hoverOn?: string }> = {
+    'password toggle': { selector: '[data-contrast-probe="white"] .ant-input-password-icon' },
+    'password toggle on layout section': { selector: '[data-contrast-probe="layout"] .ant-input-password-icon' },
+    'input clear': { selector: '[data-contrast-probe="icons"] .ant-input-clear-icon', hoverOn: '.ant-input-affix-wrapper' },
+    'select arrow': { selector: '[data-contrast-probe="icons"] .ant-select-suffix' },
+    'select clear': { selector: '[data-contrast-probe="icons"] .ant-select-clear', hoverOn: '.ant-select' },
+    'picker suffix': { selector: '[data-contrast-probe="icons"] .ant-picker-suffix' },
+    'picker clear': { selector: '[data-contrast-probe="icons"] .ant-picker-clear', hoverOn: '.ant-picker' },
+    'table sorter': { selector: '[data-contrast-probe="icons"] .ant-table-column-sorter' },
+    'table filter': { selector: '[data-contrast-probe="icons"] .ant-table-filter-trigger' },
+  }
+  const normal = await page.evaluate(
+    measureContrast,
+    Object.fromEntries(Object.entries(icons).map(([name, { selector }]) => [name, { selector }])),
+  )
+  const hovered: Record<string, number> = {}
+  for (const [name, { selector, hoverOn }] of Object.entries(icons)) {
+    if (hoverOn) await page.locator(`[data-contrast-probe="icons"] ${hoverOn}`).first().hover()
+    await page.locator(selector).first().hover({ force: true })
+    await page.waitForTimeout(400)
+    Object.assign(hovered, await page.evaluate(measureContrast, { [name]: { selector } }))
+    expect(normal[name], `${name} normal`).toBeGreaterThanOrEqual(3)
+    expect(hovered[name], `${name} hover`).toBeGreaterThanOrEqual(3)
+    expect(hovered[name], `${name} hover not lighter`).toBeGreaterThanOrEqual(normal[name])
+  }
+  // 组件级覆盖不得连带加深禁用态文字（colorTextDisabled 仍是 25%）。
+  await expect(page.locator('[data-contrast-probe="icons"] input[disabled]')).toHaveCSS('color', 'rgba(23, 32, 51, 0.25)')
+  console.log('icon contrast', JSON.stringify({ normal, hovered }))
 })
 
 test('password remediation keeps entered values on 422 and blocks mismatched confirmation', async ({ page }) => {
