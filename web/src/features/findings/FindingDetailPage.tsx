@@ -31,11 +31,12 @@ import {
   DISPLAY_TIME_ZONE_HINT,
   formatDateTime,
   invalidDisplayZoneInputMessage,
-  lifecycleText,
   parseOptionalDisplayZoneInput,
 } from '../../product/format'
+import { participantRoleName, scenarioName, scenarioVersionText, submissionPurposeName } from '../../product/terms'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 import type { ScenarioFindingCommandPorts } from '../../scenarios/registry'
+import { StatusTag } from '../../ui/StatusTag'
 
 type PrimaryState =
   | { status: 'loading'; findingId: string | undefined }
@@ -77,12 +78,12 @@ function actorKindText(actorKind: 'user' | 'department'): string {
 function ActivitySection({ state }: { state: ChildState<FindingActivityResponse[]> }) {
   return (
     <section className="surface-card" aria-labelledby="finding-activity-title">
-      <h2 id="finding-activity-title">Finding Activity</h2>
-      {state.status === 'idle' || state.status === 'loading' ? <p>正在读取 Activity…</p> : null}
-      {state.status === 'unavailable' ? <p className="empty-note">Activity 不可用。</p> : null}
+      <h2 id="finding-activity-title">操作记录</h2>
+      {state.status === 'idle' || state.status === 'loading' ? <p>正在读取操作记录…</p> : null}
+      {state.status === 'unavailable' ? <p className="empty-note">操作记录不可用。</p> : null}
       {state.status === 'error' ? <p role="alert">{state.message}</p> : null}
       {state.status === 'ready' && state.data.length === 0 ? (
-        <p className="empty-note">暂无 Finding-subject Activity。</p>
+        <p className="empty-note">暂无操作记录。</p>
       ) : null}
       {state.status === 'ready' && state.data.length > 0 ? (
         <ol className="activity-list">
@@ -90,7 +91,7 @@ function ActivitySection({ state }: { state: ChildState<FindingActivityResponse[
             <li key={activity.id}>
               <strong>{activity.event_type}</strong>
               <span>{formatDateTime(activity.occurred_at)}</span>
-              <span>Actor {activity.actor_id ?? 'system'}</span>
+              <span>操作人 {activity.actor_id ?? '系统'}</span>
             </li>
           ))}
         </ol>
@@ -102,25 +103,25 @@ function ActivitySection({ state }: { state: ChildState<FindingActivityResponse[
 function SubmissionSection({ state }: { state: ChildState<SubmissionResponse[]> }) {
   return (
     <section className="surface-card" aria-labelledby="submission-history-title">
-      <h2 id="submission-history-title">正式 Submission 历史</h2>
-      {state.status === 'idle' || state.status === 'loading' ? <p>正在读取 Submission…</p> : null}
-      {state.status === 'unavailable' ? <p className="empty-note">Submission 历史不可用。</p> : null}
+      <h2 id="submission-history-title">提交记录</h2>
+      {state.status === 'idle' || state.status === 'loading' ? <p>正在读取提交记录…</p> : null}
+      {state.status === 'unavailable' ? <p className="empty-note">提交记录不可用。</p> : null}
       {state.status === 'error' ? <p role="alert">{state.message}</p> : null}
       {state.status === 'ready' && state.data.length === 0 ? (
-        <p className="empty-note">暂无 Finding Submission。</p>
+        <p className="empty-note">暂无提交记录。</p>
       ) : null}
       {state.status === 'ready' && state.data.length > 0 ? (
         <ol className="surface-list">
           {state.data.map((submission) => (
             <li key={submission.id}>
-              <strong>{submission.purpose}</strong>
+              <strong>{submissionPurposeName(submission.purpose)}</strong>
               <span>{formatDateTime(submission.submitted_at)}</span>
               <span>提交人 {submission.submitted_by}</span>
             </li>
           ))}
         </ol>
       ) : null}
-      <p className="empty-note">历史 payload 不用于推断当前生命周期或权限。</p>
+      <p className="empty-note">历史提交内容不用于推断当前状态或权限。</p>
     </section>
   )
 }
@@ -195,7 +196,7 @@ export function FindingDetailPage() {
             : {
                 status: 'error',
                 findingId: requestedFindingId,
-                message: errorMessage(error, 'Finding 请求失败'),
+                message: errorMessage(error, '发现项请求失败'),
               },
         )
       })
@@ -230,7 +231,7 @@ export function FindingDetailPage() {
             : {
                 status: 'error',
                 findingId: authorizedFindingId,
-                message: errorMessage(error, 'ReviewCase 请求失败'),
+                message: errorMessage(error, '审查活动请求失败'),
               },
         )
       })
@@ -268,7 +269,7 @@ export function FindingDetailPage() {
             : {
                 status: 'error',
                 findingId: authorizedFindingId,
-                message: errorMessage(error, 'Action 请求失败'),
+                message: errorMessage(error, '整改项请求失败'),
               },
         )
       })
@@ -287,7 +288,7 @@ export function FindingDetailPage() {
             : {
                 status: 'error',
                 findingId: authorizedFindingId,
-                message: errorMessage(error, 'Submission 请求失败'),
+                message: errorMessage(error, '提交记录请求失败'),
               },
         )
       })
@@ -306,7 +307,7 @@ export function FindingDetailPage() {
             : {
                 status: 'error',
                 findingId: authorizedFindingId,
-                message: errorMessage(error, 'Activity 请求失败'),
+                message: errorMessage(error, '操作记录请求失败'),
               },
         )
       })
@@ -345,12 +346,12 @@ export function FindingDetailPage() {
       const result = await nudgeFinding(currentFindingId)
       if (currentFindingIdRef.current !== commandFindingId) return
       setNudgeMessage(
-        `服务器已确认催办：${result.recipient_count} 位接收人，Activity ${result.activity_id}。`,
+        `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
       )
       setRevision((value) => value + 1)
     } catch (error) {
       if (currentFindingIdRef.current !== commandFindingId) return
-      setNudgeMessage(errorMessage(error, 'Finding 催办失败'))
+      setNudgeMessage(errorMessage(error, '发现项催办失败'))
       if (error instanceof ApiError && error.status === 404) {
         setRevision((value) => value + 1)
       }
@@ -364,8 +365,8 @@ export function FindingDetailPage() {
   if (!primaryMatchesRoute || primary.status === 'loading') {
     return (
       <section className="surface-page">
-        <h1>Finding</h1>
-        <p>正在确认当前 Finding 授权…</p>
+        <h1>发现项</h1>
+        <p>正在确认访问权限…</p>
       </section>
     )
   }
@@ -373,8 +374,8 @@ export function FindingDetailPage() {
   if (primary.status === 'unavailable') {
     return (
       <section className="surface-page">
-        <h1>Finding 不可用</h1>
-        <p>当前服务器未提供此 Finding 的可见内容。</p>
+        <h1>发现项不可用</h1>
+        <p>当前没有可见的发现项内容。</p>
       </section>
     )
   }
@@ -382,7 +383,7 @@ export function FindingDetailPage() {
   if (primary.status === 'error') {
     return (
       <section className="surface-page">
-        <h1>Finding</h1>
+        <h1>发现项</h1>
         <div role="alert" className="surface-card">
           <p>{primary.message}</p>
           <button type="button" onClick={() => setRevision((value) => value + 1)}>
@@ -457,24 +458,24 @@ export function FindingDetailPage() {
     <article className="surface-page" aria-labelledby="finding-title">
       <header className="case-header surface-card">
         <div>
-          <p className="eyebrow">Finding · {finding.severity}</p>
+          <p className="eyebrow">发现项 · 严重度 <StatusTag kind="severity" value={finding.severity} /></p>
           <h1 id="finding-title">{finding.title}</h1>
           <p>
-            <Link to={`/review-cases/${finding.case_id}`}>返回 ReviewCase</Link>
+            <Link to={`/review-cases/${finding.case_id}`}>返回审查活动</Link>
           </p>
         </div>
-        <span className="status-pill">{lifecycleText(finding.lifecycle)}</span>
+        <StatusTag kind="finding" value={finding.lifecycle} />
       </header>
 
       <section className="surface-card" aria-labelledby="finding-overview-title">
         <h2 id="finding-overview-title">概览</h2>
         <dl className="fact-grid">
           <div>
-            <dt>Finding ID</dt>
+            <dt>发现项 ID</dt>
             <dd>{finding.id}</dd>
           </div>
           <div>
-            <dt>ReviewCase</dt>
+            <dt>审查活动</dt>
             <dd>{finding.case_id}</dd>
           </div>
           <div>
@@ -494,23 +495,23 @@ export function FindingDetailPage() {
 
       {caseState.status === 'loading' || caseState.status === 'idle' ? (
         <section className="surface-card">
-          <p>正在解析精确 Scenario UI…</p>
+          <p>正在加载审查场景…</p>
         </section>
       ) : null}
       {caseState.status === 'unavailable' || caseState.status === 'error' ? (
         <section className="surface-card">
-          <h2>Scenario 信息</h2>
+          <h2>审查场景</h2>
           <p className="empty-note">
-            当前 Scenario 上下文不可用，Scenario-specific 编辑已关闭。
+            审查场景信息不可用，场景相关的编辑已关闭。
           </p>
         </section>
       ) : null}
       {caseContext !== null && FindingScenarioSection === undefined ? (
         <section className="surface-card">
-          <h2>Scenario 信息</h2>
+          <h2>审查场景</h2>
           <p role="status">
-            不支持当前精确 Scenario UI：{caseContext.scenario_key}@
-            {caseContext.scenario_version}。通用 Finding 信息仍可查看。
+            暂不支持当前版本的审查场景界面（{scenarioName(caseContext.scenario_key)} ·{' '}
+            {scenarioVersionText(caseContext.scenario_key, caseContext.scenario_version)}）。仍可查看发现项的通用信息。
           </p>
         </section>
       ) : null}
@@ -540,7 +541,7 @@ export function FindingDetailPage() {
               >
                 <strong>{participant.display_name}</strong>
                 <span>
-                  {participant.role_key} · {actorKindText(participant.actor_kind)}
+                  {participantRoleName(participant.role_key)} · {actorKindText(participant.actor_kind)}
                 </span>
                 <span>加入于 {formatDateTime(participant.assigned_at)}</span>
               </li>
@@ -588,7 +589,7 @@ export function FindingDetailPage() {
             >
               搜索候选
             </button>
-            {candidateState.status === 'loading' ? <p>正在查询当前目标允许的候选…</p> : null}
+            {candidateState.status === 'loading' ? <p>正在查询可选人员…</p> : null}
             {candidateState.status === 'error' ? <p role="alert">{candidateState.message}</p> : null}
             {candidateState.status === 'ready' && candidateState.data.length === 0 ? (
               <p className="empty-note">没有匹配候选。</p>
@@ -624,16 +625,16 @@ export function FindingDetailPage() {
       </section>
 
       <section className="surface-card" aria-labelledby="actions-title">
-        <h2 id="actions-title">Action Items</h2>
+        <h2 id="actions-title">整改项</h2>
         {actionState.status === 'idle' || actionState.status === 'loading' ? (
-          <p>正在读取 Action Items…</p>
+          <p>正在读取整改项…</p>
         ) : null}
         {actionState.status === 'unavailable' ? (
-          <p className="empty-note">Action Items 不可用。</p>
+          <p className="empty-note">整改项不可用。</p>
         ) : null}
         {actionState.status === 'error' ? <p role="alert">{actionState.message}</p> : null}
         {actionState.status === 'ready' && actionState.data.length === 0 ? (
-          <p className="empty-note">暂无 Action Item。</p>
+          <p className="empty-note">暂无整改项。</p>
         ) : null}
         {actionState.status === 'ready' && actionState.data.length > 0 ? (
           <ul className="surface-list">
@@ -641,9 +642,9 @@ export function FindingDetailPage() {
               <li key={action.id}>
                 <Link to={`/action-items/${action.id}`}>{action.title}</Link>
                 <span>
-                  {lifecycleText(action.lifecycle)} · due {formatDateTime(action.due_at)}
+                  <StatusTag kind="actionItem" value={action.lifecycle} /> 到期 {formatDateTime(action.due_at)}
                 </span>
-                <span>completed {formatDateTime(action.completed_at)}</span>
+                <span>完成于 {formatDateTime(action.completed_at)}</span>
               </li>
             ))}
           </ul>
@@ -658,12 +659,12 @@ export function FindingDetailPage() {
                 setCommandMessage(invalidDisplayZoneInputMessage('到期时间'))
                 return
               }
-              void runCommand('创建 Action Item', () =>
+              void runCommand('新建整改项', () =>
                 createActionItem(finding.id, { title: actionTitle, due_at: dueAt.iso }),
               )
             }}
           >
-            <h3>新建 Action Item</h3>
+            <h3>新建整改项</h3>
             <p id="action-due-time-zone-hint" className="field-help">{DISPLAY_TIME_ZONE_HINT}</p>
             <div className="form-grid">
               <label>
@@ -686,7 +687,7 @@ export function FindingDetailPage() {
               </label>
             </div>
             <button type="submit" disabled={commandBusy}>
-              创建
+              新建整改项
             </button>
           </form>
         ) : null}
@@ -706,7 +707,7 @@ export function FindingDetailPage() {
       <section className="surface-card" aria-labelledby="finding-nudge-title">
         <h2 id="finding-nudge-title">协作提醒</h2>
         <p className="empty-note">
-          按钮不证明催办权限，也不选择接收人；服务器按当前 exact Scenario 与关系事实重新授权并解析 recipient。
+          按钮不代表有催办权限，也不选择被催办的人；服务器会按当前审查场景和相关人员重新授权并确定对象。
         </p>
         <button
           type="button"
@@ -714,7 +715,7 @@ export function FindingDetailPage() {
           disabled={nudgeBusy}
           onClick={() => void runNudge(finding.id)}
         >
-          {nudgeBusy ? '正在催办…' : '催一下'}
+          {nudgeBusy ? '正在催办…' : '催办'}
         </button>
         {nudgeMessage === null ? null : <p role="status">{nudgeMessage}</p>}
       </section>

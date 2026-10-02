@@ -118,12 +118,12 @@ test('409 refetch switches compliance interaction from persisted observation to 
 
   await page.goto(`/findings/${findingId}`)
 
-  await expect(page.getByRole('button', { name: '接受 Observation' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '接受观察项' })).toBeVisible()
   await expect(page.getByRole('button', { name: '签发不符合项' })).toHaveCount(0)
 
-  await page.getByRole('button', { name: '接受 Observation' }).click()
+  await page.getByRole('button', { name: '接受观察项' }).click()
   await expect(page.getByRole('status')).toContainText('Finding classification changed')
-  await expect(page.getByRole('button', { name: '接受 Observation' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '接受观察项' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '签发不符合项' })).toBeVisible()
 
   await page.getByRole('button', { name: '签发不符合项' }).click()

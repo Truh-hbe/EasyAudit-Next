@@ -10,8 +10,10 @@ import type {
   ManagementDeadlineFilter,
   ManagementExportFormat,
 } from '../../api/management'
-import type { ReviewCaseLifecycle } from '../../api/product'
-import { formatDateTime, lifecycleText } from '../../product/format'
+import type { DeadlineBucket, ReviewCaseLifecycle } from '../../api/product'
+import { formatDateTime } from '../../product/format'
+import { scenarioName, scenarioVersionText } from '../../product/terms'
+import { isDeadlineStatus, StatusTag, statusLabel } from '../../ui/StatusTag'
 
 type ManagementState =
   | { status: 'loading'; key: string }
@@ -35,14 +37,9 @@ function saveFile(file: { blob: Blob; filename: string }): void {
   URL.revokeObjectURL(url)
 }
 
-function deadlineText(bucket: 'overdue' | 'due_soon' | 'later' | 'none'): string {
-  const labels = {
-    overdue: '已逾期',
-    due_soon: '即将到期',
-    later: '稍后到期',
-    none: '无当前期限',
-  } as const
-  return labels[bucket]
+function DeadlineBucketText({ bucket }: { bucket: DeadlineBucket }) {
+  if (isDeadlineStatus(bucket)) return <StatusTag kind="deadline" value={bucket} />
+  return <>{bucket === 'later' ? '稍后到期' : '无当前期限'}</>
 }
 
 export function ManagementPage() {
@@ -117,14 +114,14 @@ export function ManagementPage() {
         <div>
           <h1 id="management-title">管理视图</h1>
         </div>
-        <p>投影时间 {formatDateTime(data?.as_of ?? null)}</p>
+        <p>数据时间 {formatDateTime(data?.as_of ?? null)}</p>
       </div>
 
       <section className="surface-card" aria-labelledby="management-filters-title">
-        <h2 id="management-filters-title">服务器筛选</h2>
+        <h2 id="management-filters-title">筛选条件</h2>
         <div className="form-grid">
           <label>
-            Case lifecycle
+            审查活动状态
             <select
               value={lifecycle}
               onChange={(event) => {
@@ -133,16 +130,16 @@ export function ManagementPage() {
               }}
             >
               <option value="">全部</option>
-              <option value="draft">draft</option>
-              <option value="scheduled">scheduled</option>
-              <option value="in_progress">in_progress</option>
-              <option value="awaiting_closure">awaiting_closure</option>
-              <option value="closed">closed</option>
-              <option value="cancelled">cancelled</option>
+              <option value="draft">{statusLabel('reviewCase', 'draft')}</option>
+              <option value="scheduled">{statusLabel('reviewCase', 'scheduled')}</option>
+              <option value="in_progress">{statusLabel('reviewCase', 'in_progress')}</option>
+              <option value="awaiting_closure">{statusLabel('reviewCase', 'awaiting_closure')}</option>
+              <option value="closed">{statusLabel('reviewCase', 'closed')}</option>
+              <option value="cancelled">{statusLabel('reviewCase', 'cancelled')}</option>
             </select>
           </label>
           <label>
-            Deadline
+            截止情况
             <select
               value={deadlineStatus}
               onChange={(event) => {
@@ -156,11 +153,11 @@ export function ManagementPage() {
             </select>
           </label>
           <label>
-            ReviewPlan ID
+            审查计划 ID
             <input
               value={reviewPlanInput}
               onChange={(event) => setReviewPlanInput(event.target.value)}
-              placeholder="可选 UUID"
+              placeholder="可选，填写审查计划 ID"
             />
           </label>
         </div>
@@ -172,7 +169,7 @@ export function ManagementPage() {
               setReviewPlanId(reviewPlanInput.trim())
               setOffset(0)
             }}
-          >应用 ReviewPlan</button>
+          >按审查计划筛选</button>
           <button
             type="button"
             className="secondary"
@@ -204,7 +201,7 @@ export function ManagementPage() {
       </section>
 
       {currentState.status === 'loading' ? (
-        <section className="surface-card"><p>正在读取授权后的管理集合…</p></section>
+        <section className="surface-card"><p>正在读取管理视图…</p></section>
       ) : null}
 
       {currentState.status === 'error' ? (
@@ -217,28 +214,28 @@ export function ManagementPage() {
       {data !== null ? (
         <section className="surface-card" aria-labelledby="management-results-title">
           <div className="section-heading">
-            <h2 id="management-results-title">我可管理的 ReviewCases</h2>
-            <span>服务器 total {data.total}</span>
+            <h2 id="management-results-title">我可管理的审查活动</h2>
+            <span>共 {data.total} 项</span>
           </div>
-          {data.items.length === 0 ? <p className="empty-note">当前筛选下没有授权后的 ReviewCase。</p> : (
+          {data.items.length === 0 ? <p className="empty-note">当前筛选下没有可管理的审查活动。</p> : (
             <ul className="surface-list">
               {data.items.map((item) => (
                 <li key={item.id}>
                   <div>
                     <strong>{item.title}</strong>
-                    <p>{item.scenario_key}@{item.scenario_version}</p>
+                    <p>{scenarioName(item.scenario_key)} · {scenarioVersionText(item.scenario_key, item.scenario_version)}</p>
                   </div>
-                  <span>{lifecycleText(item.lifecycle)} · {deadlineText(item.deadline_bucket)}</span>
+                  <span><StatusTag kind="reviewCase" value={item.lifecycle} /> <DeadlineBucketText bucket={item.deadline_bucket} /></span>
                   <span>计划结束 {formatDateTime(item.planned_end_at)}</span>
                   <span>
-                    Findings: total {item.findings.total} / open {item.findings.open} / rectifying {item.findings.rectifying} / verifying {item.findings.verifying} / closed {item.findings.closed} / voided {item.findings.voided}
+                    发现项：共 {item.findings.total} / 待处理 {item.findings.open} / 整改中 {item.findings.rectifying} / 待验证 {item.findings.verifying} / 已关闭 {item.findings.closed} / 已作废 {item.findings.voided}
                   </span>
                   <span>
-                    Actions: total {item.actions.total} / todo {item.actions.todo} / in progress {item.actions.in_progress} / done {item.actions.done} / cancelled {item.actions.cancelled} / overdue {item.actions.overdue} / due soon {item.actions.due_soon}
+                    整改项：共 {item.actions.total} / 待开始 {item.actions.todo} / 执行中 {item.actions.in_progress} / 已完成 {item.actions.done} / 已取消 {item.actions.cancelled} / 已逾期 {item.actions.overdue} / 即将到期 {item.actions.due_soon}
                   </span>
                   <div className="command-stack">
                     <Link to={`/management/review-cases/${item.id}`}>查看管理进度</Link>
-                    <Link to={`/review-cases/${item.id}`}>打开原 ReviewCase</Link>
+                    <Link to={`/review-cases/${item.id}`}>打开审查活动</Link>
                   </div>
                 </li>
               ))}
@@ -249,7 +246,7 @@ export function ManagementPage() {
 
       {data !== null ? (
         <section className="surface-card" aria-label="管理视图分页">
-          <p>服务器 offset {data.offset} · limit {data.limit} · total {data.total}</p>
+          <p>第 {data.total === 0 ? 0 : data.offset + 1}–{data.offset + data.items.length} 项 · 共 {data.total} 项</p>
           <div className="command-stack">
             <button
               type="button"

@@ -264,13 +264,13 @@ test('M3.5.5 narrow product route matrix keeps essential controls inside the doc
   await expect(page.getByText(user.display_name)).toBeVisible()
 
   await page.goto(`/findings/${findingId}`)
-  await expect(page.getByRole('button', { name: '催一下', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '催办', exact: true })).toBeVisible()
   await page.goto(`/action-items/${actionId}`)
   await expect(page.getByRole('button', { name: '完成' })).toBeVisible()
   await page.goto('/me/notifications')
   await expect(page.getByRole('button', { name: /未读/ })).toBeVisible()
   await page.goto('/management')
-  await expect(page.getByLabel('Deadline')).toBeVisible()
+  await expect(page.getByLabel('截止情况')).toBeVisible()
 })
 
 test('M3.5.5 320px smoke keeps Workbench and dense Management progress free of document overflow', async ({ page }) => {
@@ -283,7 +283,7 @@ test('M3.5.5 320px smoke keeps Workbench and dense Management progress free of d
 
   await page.goto(`/management/review-cases/${caseId}`)
   await expectNoDocumentOverflow(page)
-  await expect(page.getByRole('button', { name: '催一下 Finding' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '催办发现项' })).toBeVisible()
 })
 
 test('M3.5.5 keyboard focus is visible and primary navigation remains keyboard-operable', async ({ page }) => {
@@ -335,8 +335,8 @@ test('M3.5.5 management nudge success survives authoritative same-case refetch',
   })
 
   await page.goto(`/management/review-cases/${caseId}`)
-  await page.getByRole('button', { name: '催一下 Finding' }).click()
-  await expect(page.getByText(/2 位接收人，Activity activity-stable-feedback/)).toBeVisible()
+  await page.getByRole('button', { name: '催办发现项' }).click()
+  await expect(page.getByText(/已通知 2 人，操作记录 activity-stable-feedback/)).toBeVisible()
   await expect.poll(() => progressReads).toBeGreaterThan(1)
-  await expect(page.getByText(/2 位接收人，Activity activity-stable-feedback/)).toBeVisible()
+  await expect(page.getByText(/已通知 2 人，操作记录 activity-stable-feedback/)).toBeVisible()
 })

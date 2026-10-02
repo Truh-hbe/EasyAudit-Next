@@ -141,13 +141,13 @@ test('Action creation refuses fake local state then refreshes persisted server A
 
   await page.goto(`/findings/${findingId}`)
   await page.getByLabel('标题').fill('Client draft title')
-  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await page.getByRole('button', { name: '新建整改项', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('Finding lifecycle changed')
   await expect(page.getByText('Client draft title')).toHaveCount(0)
-  await expect(page.getByText('暂无 Action Item。')).toBeVisible()
+  await expect(page.getByText('暂无整改项。')).toBeVisible()
 
   allowCreate = true
-  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await page.getByRole('button', { name: '新建整改项', exact: true }).click()
   await expect(page.getByRole('link', { name: 'Server persisted Action' })).toBeVisible()
   await expect(page.getByText('Client draft title')).toHaveCount(0)
 })
@@ -261,28 +261,28 @@ test('rectification plan and completion stay server-owned, including reopened-Ac
   )
 
   await page.goto(`/findings/${findingId}`)
-  await page.getByRole('button', { name: '提交正式计划' }).click()
+  await page.getByRole('button', { name: '提交整改计划' }).click()
   await expect(page.getByRole('status')).toContainText('root_cause is required')
-  await expect(page.getByText('暂无 Finding Submission。')).toBeVisible()
+  await expect(page.getByText('暂无提交记录。')).toBeVisible()
 
   await page.getByLabel('根本原因').fill('training gap')
   planAllowed = true
-  await page.getByRole('button', { name: '提交正式计划' }).click()
+  await page.getByRole('button', { name: '提交整改计划' }).click()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
-  await expect(submissionHistory.getByText('rectification', { exact: true })).toHaveCount(1)
-  await expect(page.locator('.status-pill')).toHaveText('rectifying')
+  await expect(submissionHistory.getByText('整改提交', { exact: true })).toHaveCount(1)
+  await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
 
   await page.getByLabel('整改完成说明').fill('all actions completed')
   await page.getByRole('button', { name: '提交验证' }).click()
   await expect(page.getByRole('status')).toContainText('all non-cancelled Actions must be done')
-  await expect(page.locator('.status-pill')).toHaveText('rectifying')
+  await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Reopened by another actor' })).toBeVisible()
 
   actions.splice(0, actions.length, actionResponse('action-done', findingId, 'done', 'Completed again'))
   completionAllowed = true
   await page.getByRole('button', { name: '提交验证' }).click()
-  await expect(page.locator('.status-pill')).toHaveText('verifying')
-  await expect(submissionHistory.getByText('rectification', { exact: true })).toHaveCount(2)
+  await expect(page.getByRole('article').locator('header').getByText('待验证', { exact: true })).toBeVisible()
+  await expect(submissionHistory.getByText('整改提交', { exact: true })).toHaveCount(2)
 })
 
 test('verification refusal, reject success, and reopen validation preserve authoritative Finding state', async ({ page }) => {
@@ -316,28 +316,28 @@ test('verification refusal, reject success, and reopen validation preserve autho
   )
 
   await page.goto(`/findings/${findingId}`)
-  await page.getByRole('button', { name: 'Approve' }).click()
+  await page.getByRole('button', { name: '通过验证' }).click()
   await expect(page.getByRole('status')).toContainText('review authority revoked')
-  await expect(page.locator('.status-pill')).toHaveText('verifying')
-  await expect(page.getByText('暂无 Finding Submission。')).toBeVisible()
+  await expect(page.getByRole('article').locator('header').getByText('待验证', { exact: true })).toBeVisible()
+  await expect(page.getByText('暂无提交记录。')).toBeVisible()
 
   verificationMode = 'reject'
   await page.getByLabel('驳回原因').fill('evidence incomplete')
-  await page.getByRole('button', { name: 'Reject' }).click()
-  await expect(page.locator('.status-pill')).toHaveText('rectifying')
+  await page.getByRole('button', { name: '驳回验证' }).click()
+  await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
-  await expect(submissionHistory.getByText('verification', { exact: true })).toBeVisible()
+  await expect(submissionHistory.getByText('验证结论', { exact: true })).toBeVisible()
 
   lifecycle = 'closed'
   await page.reload()
   await page.getByRole('button', { name: '重新打开' }).click()
   await expect(page.getByRole('status')).toContainText('reopen reason required')
-  await expect(page.locator('.status-pill')).toHaveText('closed')
+  await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
 
   await page.getByLabel('重新打开原因').fill('follow-up review')
   reopenAllowed = true
   await page.getByRole('button', { name: '重新打开' }).click()
-  await expect(page.locator('.status-pill')).toHaveText('rectifying')
+  await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
 })
 
 test.describe('device time zone differs from the display time zone', () => {
@@ -363,7 +363,7 @@ test.describe('device time zone differs from the display time zone', () => {
     const dueAt = page.getByLabel('到期时间')
     await page.getByLabel('标题').fill('Invalid Due Action')
     await dueAt.fill('1986-05-04T02:30')
-    await page.getByRole('button', { name: '创建', exact: true }).click()
+    await page.getByRole('button', { name: '新建整改项', exact: true }).click()
     await expect(page.getByRole('status')).toHaveText(
       '到期时间无效：请填写存在的上海时间（Asia/Shanghai）。',
     )
@@ -372,7 +372,7 @@ test.describe('device time zone differs from the display time zone', () => {
     expect(createBodies).toHaveLength(0)
 
     await dueAt.fill('')
-    await page.getByRole('button', { name: '创建', exact: true }).click()
+    await page.getByRole('button', { name: '新建整改项', exact: true }).click()
     await expect.poll(() => createBodies.length).toBe(1)
     expect(createBodies[0]).toMatchObject({ title: 'Invalid Due Action', due_at: null })
   })
@@ -398,7 +398,7 @@ test.describe('device time zone differs from the display time zone', () => {
     await expect(dueAt).toHaveAccessibleDescription('以下时间均按上海时间（Asia/Shanghai）填写和显示。')
     await page.getByLabel('标题').fill('Zone Action')
     await dueAt.fill('2026-08-28T18:00')
-    await page.getByRole('button', { name: '创建', exact: true }).click()
+    await page.getByRole('button', { name: '新建整改项', exact: true }).click()
 
     await expect.poll(() => createBody).not.toBeNull()
     expect(createBody).toMatchObject({ title: 'Zone Action', due_at: '2026-08-28T10:00:00.000Z' })

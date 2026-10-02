@@ -61,7 +61,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return next
     } catch (error) {
       setResolutionError(
-        error instanceof Error ? error.message : 'Unable to resolve server session',
+        error instanceof Error ? error.message : '无法确认登录状态',
       )
       throw error
     }
@@ -86,7 +86,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .catch((error: unknown) => {
         if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
           setResolutionError(
-            error instanceof Error ? error.message : 'Unable to resolve server session',
+            error instanceof Error ? error.message : '无法确认登录状态',
           )
         }
       })

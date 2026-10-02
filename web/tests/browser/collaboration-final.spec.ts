@@ -104,14 +104,14 @@ test('Finding visibility revocation replaces previously authorized content with 
   await page.goto(`/findings/${findingId}`)
   await expect(page.getByRole('heading', { name: 'Previously visible Finding' })).toBeVisible()
   await expect(page.getByText('暂无参与关系。')).toBeVisible()
-  await expect(page.getByText('暂无 Action Item。')).toBeVisible()
-  await expect(page.getByText('暂无 Finding Submission。')).toBeVisible()
-  await expect(page.getByText('暂无 Finding-subject Activity。')).toBeVisible()
+  await expect(page.getByText('暂无整改项。')).toBeVisible()
+  await expect(page.getByText('暂无提交记录。')).toBeVisible()
+  await expect(page.getByText('暂无操作记录。')).toBeVisible()
 
   childRequestsAfterRevocation = 0
   allowed = false
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Finding 不可用' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
   await expect(page.getByText('Previously visible Finding')).toHaveCount(0)
   expect(childRequestsAfterRevocation).toBe(0)
 })
@@ -131,7 +131,7 @@ test('same-org refusal and cross-org non-resolution never start Finding child re
       return fulfillJson(route, 500, { detail: 'must not be called' })
     })
     await page.goto(`/findings/${target.id}`)
-    await expect(page.getByRole('heading', { name: 'Finding 不可用' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
   }
   expect(childRequests).toBe(0)
 })
@@ -223,12 +223,12 @@ test('verification approve success closes from server truth and refreshes persis
   )
 
   await page.goto(`/findings/${findingId}`)
-  await page.getByRole('button', { name: 'Approve' }).click()
+  await page.getByRole('button', { name: '通过验证' }).click()
 
-  await expect(page.locator('.status-pill')).toHaveText('closed')
+  await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
-  await expect(submissionHistory.getByText('verification', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0)
+  await expect(submissionHistory.getByText('验证结论', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '通过验证' })).toHaveCount(0)
 })
 
 test('Finding creation 403 leaves the authorized Case list unchanged and creates no local Finding', async ({ page }) => {
@@ -257,10 +257,10 @@ test('Finding creation 403 leaves the authorized Case list unchanged and creates
   await page.getByLabel('标题').fill('Forbidden local draft')
   await page.getByLabel('问题类型').fill('control_gap')
   await page.getByLabel('项目类别').fill('assembly')
-  await page.getByRole('button', { name: '创建 Finding' }).click()
+  await page.getByRole('button', { name: '新建发现项' }).click()
 
   await expect(page.getByRole('alert')).toContainText('create authority revoked')
-  await expect(page.getByText('暂无 Finding。')).toBeVisible()
+  await expect(page.getByText('暂无发现项。')).toBeVisible()
   await expect(page.getByText('Forbidden local draft')).toHaveCount(0)
   await expect(page).toHaveURL(new RegExp(`/review-cases/${caseId}$`))
 })

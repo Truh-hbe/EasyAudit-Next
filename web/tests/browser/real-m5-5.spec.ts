@@ -125,7 +125,7 @@ async function expectStepTwoReload(page: Page, planId: string) {
   await page.reload()
   expect((await planResponsePromise).status()).toBe(200)
   expect((await catalogResponsePromise).status()).toBe(200)
-  await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
 }
 
 async function createPlan(page: Page, title: string): Promise<string> {
@@ -139,7 +139,7 @@ async function createPlan(page: Page, title: string): Promise<string> {
   const response = await responsePromise
   expect(response.status()).toBe(201)
   const body = (await response.json()) as { id: string }
-  await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
   return body.id
 }
 
@@ -284,13 +284,13 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     const processPlanId = await createPlan(firstPage, 'M5.5 Process Plan')
     await expectStepTwoReload(firstPage, processPlanId)
     await firstPage.getByLabel('审查场景').selectOption('process_review@1')
-    await firstPage.getByLabel('案例名称').fill('M5.5 Process Case')
+    await firstPage.getByLabel('审查活动名称').fill('M5.5 Process Case')
     await firstPage.getByLabel('区域代码').fill('M55-PROCESS')
     await firstPage.getByLabel('审查类型').fill('')
     const rejectedCasePromise = firstPage.waitForResponse(
       (response) => apiPath(response.url()) === '/api/v1/review-cases' && response.request().method() === 'POST',
     )
-    await firstPage.getByRole('button', { name: '创建案例' }).click()
+    await firstPage.getByRole('button', { name: '创建审查活动' }).click()
     expect((await rejectedCasePromise).status()).toBe(422)
     await expect(firstPage.getByRole('alert')).toContainText('review_type')
     expect(planPostCount).toBe(1)
@@ -302,7 +302,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
       (response) => isCaseDetailPath(apiPath(response.url())) && response.request().method() === 'GET',
     )
     await firstPage.getByLabel('审查类型').fill('standard')
-    await firstPage.getByRole('button', { name: '创建案例' }).click()
+    await firstPage.getByRole('button', { name: '创建审查活动' }).click()
     const processCaseResponse = await processCasePromise
     expect(processCaseResponse.status()).toBe(201)
     const processCase = (await processCaseResponse.json()) as {
@@ -355,13 +355,13 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await firstPage.getByRole('link', { name: '新建审查计划' }).click()
     const compliancePlanId = await createPlan(firstPage, 'M5.5 Compliance Plan')
     await firstPage.getByLabel('审查场景').selectOption('compliance_review@1')
-    await firstPage.getByLabel('案例名称').fill('M5.5 Compliance Case')
+    await firstPage.getByLabel('审查活动名称').fill('M5.5 Compliance Case')
     await firstPage.getByLabel('标准 / 依据').fill('M55-STANDARD')
     await firstPage.getByLabel('范围摘要').fill('M5.5 controlled pilot scope')
     const complianceCasePromise = firstPage.waitForResponse(
       (response) => apiPath(response.url()) === '/api/v1/review-cases' && response.request().method() === 'POST',
     )
-    await firstPage.getByRole('button', { name: '创建案例' }).click()
+    await firstPage.getByRole('button', { name: '创建审查活动' }).click()
     const complianceCaseResponse = await complianceCasePromise
     expect(complianceCaseResponse.status()).toBe(201)
     const complianceCase = (await complianceCaseResponse.json()) as {
@@ -383,7 +383,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await firstPage.getByRole('link', { name: '新建审查计划' }).click()
     const ambiguousPlanId = await createPlan(firstPage, 'M5.5 Ambiguous Case Plan')
     await firstPage.getByLabel('审查场景').selectOption('process_review@1')
-    await firstPage.getByLabel('案例名称').fill('M5.5 Ambiguous Case')
+    await firstPage.getByLabel('审查活动名称').fill('M5.5 Ambiguous Case')
     await firstPage.getByLabel('区域代码').fill('M55-AMBIGUOUS')
     await firstPage.getByLabel('审查类型').fill('standard')
     const abortHandler = async (route: Route) => {
@@ -397,11 +397,11 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await firstPage.route('**/api/v1/review-cases', abortHandler)
     const beforeAmbiguousCasePosts = casePostCount
     try {
-      await firstPage.getByRole('button', { name: '创建案例' }).click()
+      await firstPage.getByRole('button', { name: '创建审查活动' }).click()
       await expect(firstPage.getByRole('alert')).toContainText('结果未知')
       expect(casePostCount).toBe(beforeAmbiguousCasePosts + 1)
       // Pilot-3: an unknown outcome is retried by hand (same Idempotency-Key), never automatically.
-      await expect(firstPage.getByRole('button', { name: '重试创建案例' })).toBeEnabled()
+      await expect(firstPage.getByRole('button', { name: '重试创建审查活动' })).toBeEnabled()
       expect(ambiguousPlanId).toMatch(/^[0-9a-f-]{36}$/)
     } finally {
       await firstPage.unroute('**/api/v1/review-cases', abortHandler)
@@ -426,7 +426,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     expect(inactiveCandidate.status).toBe(200)
     expect(inactiveCandidate.body).not.toContain(INACTIVE_DISPLAY_NAME)
     await firstPage.goto(`/review-cases/${FOREIGN_CASE_ID}`)
-    await expect(firstPage.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
+    await expect(firstPage.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
     await expect(firstPage.locator('body')).not.toContainText('M5.5 Foreign Case Must Stay Hidden')
 
     const adminOnlyCase = await fetchStatus(page, `/api/v1/review-cases/${ADMIN_CASE_ID}`)
@@ -476,7 +476,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await expect(firstPage.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
     await expect(firstPage.locator('body')).not.toContainText(FIRST_RESET_PASSWORD)
     await submitPasswordChange(firstPage, FIRST_RESET_PASSWORD, FIRST_RESET_CHANGED_PASSWORD)
-    await expect(firstPage.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
+    await expect(firstPage.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
   } finally {
     await secondContext.close()
     await firstContext.close()

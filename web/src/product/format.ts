@@ -93,7 +93,3 @@ export function parseOptionalDisplayZoneInput(value: string): OptionalDisplayZon
   const iso = displayZoneInputToIso(value)
   return iso === null ? { valid: false } : { valid: true, iso }
 }
-
-export function lifecycleText(value: string): string {
-  return value.replaceAll('_', ' ')
-}

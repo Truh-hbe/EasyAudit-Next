@@ -34,7 +34,7 @@ export function roleLabelForCaseMember(
 
 export function teamMutationErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError && error.status === 403) {
-    return '当前用户没有管理 Case 团队的权限。'
+    return '当前用户没有管理审查团队的权限。'
   }
   if (error instanceof ApiError && error.status === 409) {
     return '团队状态发生冲突，请刷新后重试。'
@@ -125,7 +125,7 @@ export function ReviewCaseTeamPanel({
       {membersUnavailable ? <p className="empty-note">成员信息不可用。</p> : null}
       {membersError ? <p role="alert">{membersError}</p> : null}
       {!membersLoading && !membersUnavailable && !membersError && members.length === 0 ? (
-        <p className="empty-note">暂无 CaseMember。</p>
+        <p className="empty-note">暂无团队成员。</p>
       ) : null}
       {members.length > 0 ? (
         <ul className="surface-list">
@@ -154,7 +154,7 @@ export function ReviewCaseTeamPanel({
 
       {roleOptions.length === 0 ? (
         <p role="status" className="empty-note">
-          当前精确 Scenario 没有可用的团队管理适配器。
+          当前审查场景不支持团队管理。
         </p>
       ) : (
         <form className="command-form subsurface" onSubmit={(event) => void search(event)}>

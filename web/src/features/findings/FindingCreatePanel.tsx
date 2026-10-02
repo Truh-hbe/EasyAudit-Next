@@ -4,8 +4,10 @@ import { useNavigate } from 'react-router'
 
 import { createFinding } from '../../api/product'
 import type { FindingSeverity, ReviewCaseResponse } from '../../api/product'
+import { scenarioName, scenarioVersionText } from '../../product/terms'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 import type { ScenarioFormValues } from '../../scenarios/registry'
+import { statusLabel } from '../../ui/StatusTag'
 
 interface FindingCreatePanelProps {
   reviewCase: ReviewCaseResponse
@@ -27,9 +29,9 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
   if (adapter === undefined) {
     return (
       <section className="surface-card" aria-labelledby="create-finding-title">
-        <h2 id="create-finding-title">新建 Finding</h2>
+        <h2 id="create-finding-title">新建发现项</h2>
         <p className="empty-note">
-          当前精确 Scenario UI 不支持创建：{reviewCase.scenario_key}@{reviewCase.scenario_version}。
+          当前审查场景的界面暂不支持创建发现项（{scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}）。
         </p>
       </section>
     )
@@ -51,7 +53,7 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
       })
       navigate(`/findings/${finding.id}`)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Finding 创建失败')
+      setMessage(error instanceof Error ? error.message : '发现项创建失败')
     } finally {
       setSubmitting(false)
     }
@@ -61,8 +63,8 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
     <section className="surface-card" aria-labelledby="create-finding-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">{reviewCase.scenario_key}@{reviewCase.scenario_version}</p>
-          <h2 id="create-finding-title">新建 Finding</h2>
+          <p className="eyebrow">{scenarioName(reviewCase.scenario_key)}</p>
+          <h2 id="create-finding-title">新建发现项</h2>
         </div>
       </div>
       <form className="command-form" onSubmit={(event) => void submit(event)}>
@@ -78,10 +80,10 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
               onChange={(event) => setSeverity(event.target.value as FindingSeverity)}
               disabled={submitting}
             >
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="critical">critical</option>
+              <option value="low">{statusLabel('severity', 'low')}</option>
+              <option value="medium">{statusLabel('severity', 'medium')}</option>
+              <option value="high">{statusLabel('severity', 'high')}</option>
+              <option value="critical">{statusLabel('severity', 'critical')}</option>
             </select>
           </label>
         </div>
@@ -103,8 +105,8 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
         />
         {message === null ? null : <p role="alert">{message}</p>}
         <div className="command-row">
-          <button type="submit" disabled={submitting}>{submitting ? '正在提交…' : '创建 Finding'}</button>
-          <span className="empty-note">服务器验证成功后才会产生持久 Finding。</span>
+          <button type="submit" disabled={submitting}>{submitting ? '正在提交…' : '新建发现项'}</button>
+          <span className="empty-note">服务器校验通过后才会保存发现项。</span>
         </div>
       </form>
     </section>

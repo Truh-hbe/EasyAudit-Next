@@ -11,7 +11,7 @@ import {
 } from './ReviewCaseTeamPanel'
 
 const roleOptions = [
-  { roleKey: 'lead', label: '负责人' },
+  { roleKey: 'lead', label: '审查组长' },
   { roleKey: 'auditor', label: '审查员' },
   { roleKey: 'reviewer', label: '复核员' },
   { roleKey: 'observer', label: '观察员' },
@@ -45,7 +45,7 @@ const member = {
 
 describe('ReviewCaseTeamPanel', () => {
   it('uses only the exact adapter role display definition', () => {
-    expect(roleLabelForCaseMember('lead', roleOptions)).toBe('负责人')
+    expect(roleLabelForCaseMember('lead', roleOptions)).toBe('审查组长')
     expect(roleLabelForCaseMember('future_role', roleOptions)).toBe('future_role')
   })
 
@@ -54,7 +54,7 @@ describe('ReviewCaseTeamPanel', () => {
       '团队状态发生冲突，请刷新后重试。',
     )
     expect(teamMutationErrorMessage(new ApiError(403, 'raw permission'), 'fallback')).toBe(
-      '当前用户没有管理 Case 团队的权限。',
+      '当前用户没有管理审查团队的权限。',
     )
   })
 
@@ -76,7 +76,7 @@ describe('ReviewCaseTeamPanel', () => {
     expect(markup).toContain('value="reviewer"')
     expect(markup).toContain('value="observer"')
     expect(markup).toContain('Team Lead')
-    expect(markup).toContain('负责人')
+    expect(markup).toContain('审查组长')
   })
 
   it('shapes candidate searches with the selected exact role and bounded query', async () => {

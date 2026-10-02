@@ -299,7 +299,7 @@ export function AdminPage() {
           <div className="command-stack"><button type="submit" disabled={busy}>{userId === null ? '创建用户' : '保存用户'}</button>{userId !== null ? <button type="button" className="secondary" onClick={clearUserForm} disabled={busy}>取消编辑</button> : null}</div>
         </form>
         <ul className="surface-list">
-          {users.map((user) => <li key={user.id}><div><strong>{user.display_name}</strong><p>{user.platform_role} · {departmentName(departments, user.primary_department_id)}</p></div><span>{user.is_active ? '启用' : '停用'}</span><button type="button" className="secondary" onClick={() => editUser(user)} disabled={busy}>编辑</button></li>)}
+          {users.map((user) => <li key={user.id}><div><strong>{user.display_name}</strong><p>{user.platform_role === 'system_admin' ? '系统管理员' : '普通用户'} · {departmentName(departments, user.primary_department_id)}</p></div><span>{user.is_active ? '启用' : '停用'}</span><button type="button" className="secondary" onClick={() => editUser(user)} disabled={busy}>编辑</button></li>)}
         </ul>
       </section>
 

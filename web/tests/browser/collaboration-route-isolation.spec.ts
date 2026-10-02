@@ -107,7 +107,7 @@ test('Finding route change clears drafts and ignores a late candidate search fro
   await page.getByLabel('根本原因').fill('Root cause A')
   await page.getByLabel('整改完成说明').fill('Completion A')
   await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByText('正在查询当前目标允许的候选…')).toBeVisible()
+  await expect(page.getByText('正在查询可选人员…')).toBeVisible()
 
   await switchRoute(page, '/findings/finding-route-b')
   await expect(page.getByRole('heading', { name: 'Route Finding finding-route-b' })).toBeVisible()
@@ -157,7 +157,7 @@ test('Action route change clears drafts and ignores a late mutation result from 
   await page.goto('/action-items/action-route-a')
   await page.getByLabel('搜索').fill('Candidate A')
   await page.getByLabel('取消原因').fill('Reason A')
-  await page.getByRole('button', { name: '开始', exact: true }).click()
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
 
   await switchRoute(page, '/action-items/action-route-b')
   await expect(page.getByRole('heading', { name: 'Route Action action-route-b' })).toBeVisible()
@@ -166,5 +166,5 @@ test('Action route change clears drafts and ignores a late mutation result from 
 
   await new Promise((resolve) => setTimeout(resolve, 350))
   await expect(page.getByRole('status')).toHaveCount(0)
-  await expect(page.locator('.status-pill')).toHaveText('todo')
+  await expect(page.getByRole('article').locator('header').getByText('待开始', { exact: true })).toBeVisible()
 })

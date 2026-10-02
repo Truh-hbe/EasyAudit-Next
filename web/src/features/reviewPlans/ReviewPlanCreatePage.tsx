@@ -38,7 +38,7 @@ export function canSubmitPlan(state: PlanSubmitState): boolean {
 
 function planRejectionMessage(error: unknown): string {
   if (isIdempotencyKeyReuse(error)) {
-    return '提交的内容与此前使用同一幂等键的请求不一致。请刷新页面后重试。'
+    return '当前内容与之前提交的创建请求不一致。请刷新页面，确认内容后再试。'
   }
   return errorMessage(error, '审查计划创建被服务器拒绝，请修正后重试。')
 }
@@ -54,7 +54,7 @@ export async function executePlanSubmission(
         ? { status: 'rejected', message: planRejectionMessage(error) }
         : {
             status: 'unknown',
-            message: '审查计划创建结果未知。可以重试保存：同一次提交使用相同的幂等键，不会重复创建；系统不会自动再次提交。',
+            message: '审查计划创建结果未知。可以重试保存：重新提交会沿用这次创建请求，不会重复创建；系统不会自动再次提交。',
           },
     }
   }
@@ -128,7 +128,7 @@ export function ReviewPlanCreatePage() {
           <p className="eyebrow">第 1 步，共 2 步</p>
           <h1 id="review-plan-create-title">新建审查计划</h1>
         </div>
-        <span className="wizard-step">先保存计划，再创建案例</span>
+        <span className="wizard-step">先保存计划，再创建审查活动</span>
       </div>
 
       <div className="surface-card">

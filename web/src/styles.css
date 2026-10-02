@@ -134,30 +134,6 @@ h3 {
   border: 1px solid var(--ant-color-border);
 }
 
-.primary-button,
-.secondary-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  text-decoration: none;
-}
-
-.primary-button {
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: var(--ant-color-primary);
-  color: var(--ant-color-text-light-solid);
-  font-weight: 700;
-}
-
-.secondary-button {
-  padding: 11px 15px;
-  border: 1px solid var(--ant-color-border);
-  border-radius: 10px;
-  color: var(--ant-color-text-secondary);
-  font-weight: 700;
-}
-
 :where(.surface-page, .auth-card, .foundation) [role="alert"]:not(:where(.ui-modern, .ui-modern *)) {
   margin-top: 16px;
 }
@@ -431,12 +407,58 @@ h3 {
   gap: 18px;
 }
 
-.status-pill {
-  flex: 0 0 auto;
-  padding: 8px 11px;
-  border-radius: 999px;
-  background: var(--ant-color-fill-secondary);
-  font-weight: 750;
+/* StatusTag：选择器特异性高于 antd Tag 自身的 .ant-tag.ant-tag-outlined，不依赖样式注入顺序；背景 -1、边框 -3、文字取 docs/design.md 状态表中实测达标的档位。 */
+.app-root .status-tag {
+  margin-inline-end: 0;
+  font-weight: 600;
+}
+
+.app-root .status-tag.status-tag--neutral {
+  color: var(--ant-color-text);
+  background: var(--ant-color-fill-quaternary);
+  border-color: var(--ant-color-border-secondary);
+}
+
+.app-root .status-tag.status-tag--progress {
+  color: var(--ant-blue-7);
+  background: var(--ant-blue-1);
+  border-color: var(--ant-blue-3);
+}
+
+.app-root .status-tag.status-tag--waiting,
+.app-root .status-tag.status-tag--severity-medium {
+  color: var(--ant-orange-8);
+  background: var(--ant-orange-1);
+  border-color: var(--ant-orange-3);
+}
+
+.app-root .status-tag.status-tag--done {
+  color: var(--ant-green-8);
+  background: var(--ant-green-1);
+  border-color: var(--ant-green-3);
+}
+
+.app-root .status-tag.status-tag--overdue {
+  color: var(--ant-red-7);
+  background: var(--ant-red-1);
+  border-color: var(--ant-red-3);
+}
+
+.app-root .status-tag.status-tag--severity-high {
+  color: var(--ant-volcano-8);
+  background: var(--ant-volcano-1);
+  border-color: var(--ant-volcano-3);
+}
+
+.app-root .status-tag.status-tag--severity-critical {
+  color: var(--ant-red-8);
+  background: var(--ant-red-1);
+  border-color: var(--ant-red-3);
+}
+
+.status-tag-raw {
+  color: var(--ant-color-text-secondary);
+  font-size: var(--ant-font-size-sm);
 }
 
 .fact-grid {

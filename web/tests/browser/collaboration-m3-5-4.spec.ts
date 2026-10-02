@@ -190,7 +190,7 @@ test('historical Notification does not grant current Finding access', async ({ p
   await page.goto('/me/notifications')
   await expect(page.getByText('Historical receipt remains visible', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: '打开当前目标' }).click()
-  await expect(page.getByRole('heading', { name: 'Finding 不可用' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
   await expect(page.getByText('Historical receipt remains visible', { exact: true })).toHaveCount(0)
 })
 
@@ -221,12 +221,12 @@ test('late Management response cannot overwrite a newer server filter result', a
   })
 
   await page.goto('/management')
-  await page.getByLabel('Deadline').selectOption('overdue')
+  await page.getByLabel('截止情况').selectOption('overdue')
   await expect(page.getByText('Current overdue result')).toBeVisible()
   slowAll.release()
   await page.waitForTimeout(50)
   await expect(page.getByText('Late all-filter result')).toHaveCount(0)
-  await expect(page.getByText('服务器 total 1')).toBeVisible()
+  await expect(page.getByText('共 1 项', { exact: true })).toBeVisible()
 })
 
 test('Management nudge shortcut calls original bodyless commands and displays only server fan-out result', async ({ page }) => {
@@ -276,10 +276,10 @@ test('Management nudge shortcut calls original bodyless commands and displays on
 
   await page.goto(`/management/review-cases/${caseId}`)
   await expect(page.getByRole('heading', { name: 'Managed nudge case' })).toBeVisible()
-  await page.getByRole('button', { name: '催一下 Finding' }).click()
-  await expect(page.getByText(/2 位接收人，Activity activity-finding-nudge/)).toBeVisible()
-  await page.getByRole('button', { name: '催一下 Action' }).click()
-  await expect(page.getByText(/3 位接收人，Activity activity-action-nudge/)).toBeVisible()
+  await page.getByRole('button', { name: '催办发现项' }).click()
+  await expect(page.getByText(/已通知 2 人，操作记录 activity-finding-nudge/)).toBeVisible()
+  await page.getByRole('button', { name: '催办整改项' }).click()
+  await expect(page.getByText(/已通知 3 人，操作记录 activity-action-nudge/)).toBeVisible()
 })
 
 test('Finding nudge 422 stays authoritative and a late nudge result cannot leak across routes', async ({ page }) => {
@@ -311,7 +311,7 @@ test('Finding nudge 422 stays authoritative and a late nudge result cannot leak 
   })
 
   await page.goto(`/findings/${findingA}`)
-  await page.getByRole('button', { name: '催一下', exact: true }).click()
+  await page.getByRole('button', { name: '催办', exact: true }).click()
   await page.goto(`/findings/${findingB}`)
   await expect(page.getByRole('heading', { name: `Finding ${findingB}` })).toBeVisible()
   slowNudge.release()
@@ -320,7 +320,7 @@ test('Finding nudge 422 stays authoritative and a late nudge result cannot leak 
 
   mode = 'validation'
   await page.goto(`/findings/${findingA}`)
-  await page.getByRole('button', { name: '催一下', exact: true }).click()
+  await page.getByRole('button', { name: '催办', exact: true }).click()
   await expect(page.getByText('No eligible nudge recipients')).toBeVisible()
   await expect(page.getByText(/服务器已确认催办/)).toHaveCount(0)
 })

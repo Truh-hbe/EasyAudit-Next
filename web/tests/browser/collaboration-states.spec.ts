@@ -120,7 +120,7 @@ test('participant candidate lookup exposes loading, no-results, error and select
 
   await search.fill('Slow')
   await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByText('正在查询当前目标允许的候选…')).toBeVisible()
+  await expect(page.getByText('正在查询可选人员…')).toBeVisible()
   await expect(page.getByText('没有匹配候选。')).toBeVisible()
 
   await search.fill('None')
@@ -169,25 +169,25 @@ test('Action detail presents all frozen lifecycles and formats due time without 
   )
 
   await page.goto(`/action-items/${actionId}`)
-  await expect(page.locator('.status-pill')).toHaveText('todo')
-  await expect(page.getByRole('button', { name: '开始', exact: true })).toBeVisible()
+  await expect(page.getByRole('article').locator('header').getByText('待开始', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '开始整改项', exact: true })).toBeVisible()
   await expect(page.getByText(/2026/).first()).toBeVisible()
   await expect(page.getByText(/overdue/i)).toHaveCount(0)
 
   lifecycle = 'in_progress'
   await page.reload()
-  await expect(page.locator('.status-pill')).toHaveText('in progress')
-  await expect(page.getByRole('button', { name: '完成', exact: true })).toBeVisible()
+  await expect(page.getByRole('article').locator('header').getByText('执行中', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '完成整改项', exact: true })).toBeVisible()
 
   lifecycle = 'done'
   await page.reload()
-  await expect(page.locator('.status-pill')).toHaveText('done')
-  await expect(page.getByRole('button', { name: '重新打开', exact: true })).toBeVisible()
+  await expect(page.getByRole('article').locator('header').getByText('已完成', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '重新打开整改项', exact: true })).toBeVisible()
 
   lifecycle = 'cancelled'
   await page.reload()
-  await expect(page.locator('.status-pill')).toHaveText('cancelled')
-  await expect(page.getByText('当前 Action 已取消，无 Product transition。')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Reject' })).toHaveCount(0)
+  await expect(page.getByRole('article').locator('header').getByText('已取消', { exact: true })).toBeVisible()
+  await expect(page.getByText('当前整改项已取消，没有可执行的操作。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '通过验证' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '驳回验证' })).toHaveCount(0)
 })
