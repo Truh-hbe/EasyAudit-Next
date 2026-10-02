@@ -78,7 +78,7 @@ export function LoginPage() {
             />
           ) : null}
           {error === null ? null : <Alert type="error" showIcon title={error} />}
-          <Form form={form} layout="vertical" requiredMark={false} onFinish={(values) => void submit(values)}>
+          <Form form={form} layout="vertical" requiredMark={false} scrollToFirstError={{ focus: true }} onFinish={(values) => void submit(values)}>
             <Form.Item
               label="登录名"
               name="login_name"

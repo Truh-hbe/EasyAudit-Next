@@ -56,7 +56,7 @@ export function CredentialRemediationPage() {
             <p>{state.user.display_name}，服务器要求先完成密码修改，再进入业务界面。</p>
           </Flex>
           {error === null ? null : <Alert type="error" showIcon title={error} />}
-          <Form form={form} layout="vertical" requiredMark={false} onFinish={(values) => void submit(values)}>
+          <Form form={form} layout="vertical" requiredMark={false} scrollToFirstError={{ focus: true }} onFinish={(values) => void submit(values)}>
             <Form.Item
               label="当前密码"
               name="current_password"

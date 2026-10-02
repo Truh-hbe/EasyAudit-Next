@@ -764,6 +764,7 @@ test('password remediation keeps entered values on 422 and blocks mismatched con
   await page.getByLabel('确认新密码').fill('different-password')
   await page.getByRole('button', { name: '修改密码' }).click()
   await expect(page.getByText('两次输入的新密码不一致')).toBeVisible()
+  await expect(page.getByLabel('确认新密码')).toBeFocused()
   expect(submissions).toBe(0)
 
   await page.getByLabel('确认新密码').fill('replacement-password')
@@ -773,4 +774,17 @@ test('password remediation keeps entered values on 422 and blocks mismatched con
   expect(submissions).toBe(1)
   await expect(page.getByLabel('当前密码')).toHaveValue('initial-password')
   await expect(page.getByLabel('新密码', { exact: true })).toHaveValue('replacement-password')
+})
+
+test('login focuses the first invalid field after a failed submit', async ({ page }) => {
+  await stubAnonymous(page)
+  await page.goto('/login')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.getByText('请输入登录名')).toBeVisible()
+  await expect(page.getByLabel('登录名')).toBeFocused()
+
+  await page.getByLabel('登录名').fill('someone')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.getByText('请输入密码')).toBeVisible()
+  await expect(page.getByLabel('密码')).toBeFocused()
 })
