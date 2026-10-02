@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from easyaudit_next.collaboration.recipient_resolution import RecipientResolver
+from easyaudit_next.notifications.copy import COPY
 from easyaudit_next.notifications.models import (
     ActionItemNotificationSubject,
     NotificationKind,
@@ -87,8 +88,8 @@ class AutomaticReminderEvaluator:
             kind=NotificationKind.AUTOMATIC_CASE_REMINDER,
             automatic_origin_key=origin_key,
             subject=ReviewCaseNotificationSubject(ReviewCaseId(current.id)),
-            title="ReviewCase deadline reminder",
-            body="A ReviewCase deadline is overdue.",
+            title=COPY[NotificationKind.AUTOMATIC_CASE_REMINDER].title,
+            body=COPY[NotificationKind.AUTOMATIC_CASE_REMINDER].body,
             created_at=evaluated_at,
         )
         return AutomaticReminderEvaluation(
@@ -147,8 +148,8 @@ class AutomaticReminderEvaluator:
             kind=NotificationKind.AUTOMATIC_ACTION_REMINDER,
             automatic_origin_key=origin_key,
             subject=ActionItemNotificationSubject(ActionItemId(current.id)),
-            title="ActionItem deadline reminder",
-            body="An ActionItem deadline is overdue.",
+            title=COPY[NotificationKind.AUTOMATIC_ACTION_REMINDER].title,
+            body=COPY[NotificationKind.AUTOMATIC_ACTION_REMINDER].body,
             created_at=evaluated_at,
         )
         return AutomaticReminderEvaluation(

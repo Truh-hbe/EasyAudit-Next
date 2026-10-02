@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from easyaudit_next.notifications.copy import COPY
 from easyaudit_next.notifications.models import (
     ActionItemNotificationSubject,
     FindingNotificationSubject,
@@ -71,8 +72,8 @@ class NotificationOrchestrator:
             kind=NotificationKind.CASE_MEMBERSHIP_ADDED,
             origin_activity_id=result.activity_id,
             subject=ReviewCaseNotificationSubject(member.case_id),
-            title="ReviewCase membership added",
-            body="You were added to a ReviewCase.",
+            title=COPY[NotificationKind.CASE_MEMBERSHIP_ADDED].title,
+            body=COPY[NotificationKind.CASE_MEMBERSHIP_ADDED].body,
         )
 
     def finding_participant_added(self, result: FindingParticipantAddedResult) -> None:
@@ -87,8 +88,8 @@ class NotificationOrchestrator:
             kind=NotificationKind.FINDING_PARTICIPANT_ADDED,
             origin_activity_id=result.activity_id,
             subject=FindingNotificationSubject(participant.finding_id),
-            title="Finding participant assigned",
-            body="You were added as a Finding participant.",
+            title=COPY[NotificationKind.FINDING_PARTICIPANT_ADDED].title,
+            body=COPY[NotificationKind.FINDING_PARTICIPANT_ADDED].body,
         )
 
     def action_assignee_added(self, result: ActionAssigneeAddedResult) -> None:
@@ -103,8 +104,8 @@ class NotificationOrchestrator:
             kind=NotificationKind.ACTION_ASSIGNEE_ADDED,
             origin_activity_id=result.activity_id,
             subject=ActionItemNotificationSubject(assignee.action_item_id),
-            title="ActionItem assigned",
-            body="You were assigned to an ActionItem.",
+            title=COPY[NotificationKind.ACTION_ASSIGNEE_ADDED].title,
+            body=COPY[NotificationKind.ACTION_ASSIGNEE_ADDED].body,
         )
 
     def rectification_submitted(self, result: RectificationSubmissionResult) -> None:
@@ -122,8 +123,8 @@ class NotificationOrchestrator:
             kind=NotificationKind.FINDING_SUBMITTED_FOR_VERIFICATION,
             origin_activity_id=result.activity_id,
             subject=FindingNotificationSubject(finding.id),
-            title="Finding awaiting verification",
-            body="A Finding is ready for verification.",
+            title=COPY[NotificationKind.FINDING_SUBMITTED_FOR_VERIFICATION].title,
+            body=COPY[NotificationKind.FINDING_SUBMITTED_FOR_VERIFICATION].body,
         )
 
     def _relationship_recipients(

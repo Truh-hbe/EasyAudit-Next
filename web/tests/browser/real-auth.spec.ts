@@ -525,7 +525,7 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   await page.getByRole('navigation', { name: '主要导航' }).getByRole('link', { name: '通知' }).click()
   await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
   await notificationViewLabel(page, /未读/).click()
-  await expect(page.getByText('Finding nudge', { exact: true })).toBeVisible()
+  await expect(page.getByText('催办发现项', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: '打开当前目标' }).click()
   await expect(page.getByRole('heading', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
 

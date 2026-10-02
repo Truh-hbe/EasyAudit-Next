@@ -11,6 +11,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from easyaudit_next.composition import build_notification_service
+from easyaudit_next.notifications.copy import COPY
 from easyaudit_next.notifications.models import (
     NotificationKind,
     ReviewCaseNotificationSubject,
@@ -357,3 +358,56 @@ def test_inbox_is_bounded_newest_first_and_unread_count_is_recipient_local(
         assert page.unread_count == 2
         assert other_page.items == ()
         assert other_page.unread_count == 0
+
+
+def test_inbox_upgrades_legacy_english_rows_and_new_rows_store_chinese(
+    postgres_engine: Engine,
+) -> None:
+    organization_id, recipient_id, _, review_case_id, activity_id = _seed_delivery_context(
+        postgres_engine
+    )
+    new_activity_id = ActivityId(uuid4())
+    with Session(postgres_engine) as session, session.begin():
+        session.add(
+            ActivityRecord(
+                id=new_activity_id,
+                organization_id=organization_id,
+                actor_id=recipient_id,
+                event_type="review_case.member_added",
+                occurred_at=NOW,
+                review_case_id=review_case_id,
+                metadata_json={"user_id": str(recipient_id), "role_key": "observer"},
+            )
+        )
+        # Legacy English row, as written before the Chinese copy shipped.
+        _deliver_case_membership(
+            session, organization_id, recipient_id, review_case_id, activity_id
+        )
+        build_notification_service(session).deliver(
+            organization_id=organization_id,
+            recipients=(recipient_id,),
+            kind=NotificationKind.CASE_MEMBERSHIP_ADDED,
+            origin_activity_id=new_activity_id,
+            subject=ReviewCaseNotificationSubject(review_case_id),
+            title=COPY[NotificationKind.CASE_MEMBERSHIP_ADDED].title,
+            body=COPY[NotificationKind.CASE_MEMBERSHIP_ADDED].body,
+            created_at=NOW + timedelta(minutes=1),
+        )
+
+    with Session(postgres_engine) as session:
+        page = build_notification_service(session).get_inbox(
+            organization_id, recipient_id, limit=10, offset=0
+        )
+        stored = {
+            row.origin_activity_id: (row.title, row.body)
+            for row in session.scalars(
+                select(NotificationRecord).where(
+                    NotificationRecord.organization_id == organization_id
+                )
+            )
+        }
+
+    expected = COPY[NotificationKind.CASE_MEMBERSHIP_ADDED]
+    assert [(i.title, i.body) for i in page.items] == [(expected.title, expected.body)] * 2
+    assert stored[activity_id] == ("ReviewCase membership added", "You were added to a ReviewCase.")
+    assert stored[new_activity_id] == (expected.title, expected.body)
