@@ -264,6 +264,12 @@ test('mark-read 403 removes protected content immediately and discards a late in
   }
   page.on('requestfinished', countRead)
   page.on('requestfailed', countRead)
+  // StrictMode 的首次挂载会立刻 abort 第一个读请求，它可能在路由处理函数运行前就结束，
+  // 因此“已发起”以 request 事件计数，而不是处理函数计数。
+  let requestedReads = 0
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/v1/me/notifications') requestedReads += 1
+  })
   await stubInbox(page, () => [notification('unread-1', 'Protected notification body', null)], reads)
   await page.route((url) => url.pathname === '/api/v1/me/notifications/unread-1/read', async (route) => {
     await postGate.promise
@@ -272,7 +278,7 @@ test('mark-read 403 removes protected content immediately and discards a late in
 
   await page.goto('/me/notifications')
   await expect(page.getByText('Protected notification body', { exact: true })).toBeVisible()
-  await settleInboxReads(page, () => reads.count, () => finishedReads)
+  await settleInboxReads(page, () => requestedReads, () => finishedReads)
 
   // 写请求在途时切换视图，触发一个被挂起的读请求；之后写请求返回 403。
   await page.getByRole('button', { name: '标记已读' }).click()
@@ -286,7 +292,7 @@ test('mark-read 403 removes protected content immediately and discards a late in
 
   // 放行旧读请求：授权失效后晚到的响应不能把内容恢复出来。
   readGate.release()
-  await settleInboxReads(page, () => reads.count, () => finishedReads)
+  await settleInboxReads(page, () => requestedReads, () => finishedReads)
   await expect(page.getByText('Protected notification body', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '标记已读' })).toHaveCount(0)
   await expect(page.getByRole('alert')).toContainText('内容不存在或无权访问')
@@ -304,6 +310,12 @@ test('mark-read 404 removes that notification immediately and the refreshed list
   }
   page.on('requestfinished', countRead)
   page.on('requestfailed', countRead)
+  // StrictMode 的首次挂载会立刻 abort 第一个读请求，它可能在路由处理函数运行前就结束，
+  // 因此“已发起”以 request 事件计数，而不是处理函数计数。
+  let requestedReads = 0
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/v1/me/notifications') requestedReads += 1
+  })
   await stubInbox(page, () => rows, reads)
   await page.route((url) => url.pathname === '/api/v1/me/notifications/gone-1/read', (route) => {
     // 服务端已不再有这条通知：之后的权威列表不再包含它。
@@ -314,7 +326,7 @@ test('mark-read 404 removes that notification immediately and the refreshed list
   await page.goto('/me/notifications')
   await expect(page.getByText('Vanished notification', { exact: true })).toBeVisible()
   await expect(page.getByText('未读总数 2')).toBeVisible()
-  await settleInboxReads(page, () => reads.count, () => finishedReads)
+  await settleInboxReads(page, () => requestedReads, () => finishedReads)
   const readsBefore = reads.count
   reads.gate = gate.promise
   await page.getByRole('listitem').filter({ hasText: 'Vanished notification' }).getByRole('button', { name: '标记已读' }).click()
@@ -326,7 +338,7 @@ test('mark-read 404 removes that notification immediately and the refreshed list
   gate.release()
   // 只有刷新完成后才会出现的状态：未读总数来自新的权威列表。
   await expect(page.getByText('未读总数 1')).toBeVisible()
-  await settleInboxReads(page, () => reads.count, () => finishedReads)
+  await settleInboxReads(page, () => requestedReads, () => finishedReads)
   await expect(page.getByText('Vanished notification', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Kept notification', { exact: true })).toBeVisible()
 })

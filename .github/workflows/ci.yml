@@ -67,6 +67,8 @@ jobs:
         run: npm run test
       - name: Build frontend
         run: npm run build
+      - name: Check entry chunk excludes antd Table
+        run: npm run check:entry
       - name: Install Chromium for browser acceptance
         run: npx playwright install --with-deps chromium
       - name: Run browser foundation acceptance
