@@ -42,7 +42,9 @@
 
 成功、警告、错误的种子色使用 antd 默认值，不覆盖：antd 由种子色派生整套背景、边框和悬停色，改种子色会连带改变它们。需要可读文字时使用色板中达标的档位（见[状态与颜色](#状态与颜色)）。
 
-**文字层级**：可读信息（说明、时间、副标题）用 `--ant-color-text-secondary`（白底 5.1:1）。`--ant-color-text-tertiary`（2.8:1）和 placeholder 只能用于不承载信息的装饰或示例。
+**文字层级**：可读信息（说明、时间、副标题）用 `--ant-color-text-secondary`（白底 5.1:1）。`--ant-color-text-tertiary`（2.8:1）不用于任何可读文字。
+
+**placeholder**：只提供示例，不能替代 label；它的文字同样要满足 4.5:1。antd 默认 placeholder 色（25% 不透明度，约 1.7:1）不达标，首个输入控件迁移（UI-2）时通过 `colorTextPlaceholder` 调整并实测。
 
 **字号**：页面标题 24px（`--ant-font-size-heading-3`），区块标题 16px（`--ant-font-size-lg`），正文 14px，辅助信息 12px（`--ant-font-size-sm`）。
 
@@ -258,7 +260,7 @@ antd 预设的 `success` / `warning` / `error` 状态 Tag 文字对比度只有 
 ## 可访问性
 
 - 每页一个 `<h1>`，区块标题用 `<h2>`。
-- 表单控件必须有可见的 label（`Form.Item label`），placeholder 只给示例；测试依赖 `getByLabel`。
+- 表单控件必须有可见的 label（`Form.Item label`），测试依赖 `getByLabel`。placeholder 只给示例，不能替代 label，对比度要求同正文。
 - 保留全局 `:focus-visible` 描边（`final-polish.css`）。
 - 对比度目标为 WCAG 2.2 AA，按最终组合实测（见[主题](#主题)）。颜色不能是唯一的信息载体。
 - 地标：`<nav aria-label="主要导航">`、`<main>`。
