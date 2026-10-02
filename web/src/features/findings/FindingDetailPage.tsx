@@ -27,7 +27,7 @@ import type {
   ReviewCaseResponse,
   SubmissionResponse,
 } from '../../api/product'
-import { formatDateTime, lifecycleText } from '../../product/format'
+import { displayZoneInputToIso, formatDateTime, lifecycleText } from '../../product/format'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 import type { ScenarioFindingCommandPorts } from '../../scenarios/registry'
 
@@ -651,7 +651,7 @@ export function FindingDetailPage() {
             onSubmit={(event) => {
               event.preventDefault()
               const dueAt =
-                actionDueAt.length === 0 ? null : new Date(actionDueAt).toISOString()
+                actionDueAt.length === 0 ? null : displayZoneInputToIso(actionDueAt)
               void runCommand('创建 Action Item', () =>
                 createActionItem(finding.id, { title: actionTitle, due_at: dueAt }),
               )

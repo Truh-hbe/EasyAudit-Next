@@ -431,3 +431,39 @@ test('Workbench request failure surfaces safely without inventing fallback work'
   await expect(page.getByRole('alert')).toContainText('Projection unavailable')
   await expect(page.getByText('Server Case A')).toHaveCount(0)
 })
+
+test.describe('device time zone differs from the display time zone', () => {
+  test.use({ timezoneId: 'America/New_York' })
+
+  test('plan dates are entered and shown as Asia/Shanghai wall time', async ({ page }) => {
+    await stubReadySession(page)
+    await page.route('**/api/v1/me/workbench', (route) =>
+      fulfillJson(route, 200, { ...emptyWorkbench, as_of: '2026-08-28T10:00:00Z' }),
+    )
+    await page.goto('/me/workbench')
+    await expect(page.getByText('数据时间 2026/08/28 18:00')).toBeVisible()
+
+    await page.route('**/api/v1/review-catalog', (route) =>
+      fulfillJson(route, 200, [
+        { scenario_key: 'process_review', scenario_version: 1, display_name: '过程审查' },
+      ]),
+    )
+    let planBody: Record<string, unknown> | null = null
+    await page.route('**/api/v1/review-plans', async (route) => {
+      planBody = route.request().postDataJSON() as Record<string, unknown>
+      await fulfillJson(route, 422, { detail: 'stop after capturing the request' })
+    })
+
+    await page.goto('/review-plans/new')
+    await page.getByLabel('计划名称').fill('时区计划')
+    await page.getByLabel('计划开始时间（可选）').fill('2026-08-28T18:00')
+    await page.getByLabel('计划结束时间（可选）').fill('2026-09-01T09:30')
+    await page.getByRole('button', { name: '保存计划并继续' }).click()
+
+    await expect.poll(() => planBody).not.toBeNull()
+    expect(planBody).toMatchObject({
+      planned_start_at: '2026-08-28T10:00:00.000Z',
+      planned_end_at: '2026-09-01T01:30:00.000Z',
+    })
+  })
+})

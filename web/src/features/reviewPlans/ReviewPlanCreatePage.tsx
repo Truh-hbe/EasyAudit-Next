@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router'
 import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
 import { createReviewPlan, getReviewCatalog, newIdempotencyKey } from '../../api/product'
 import type { ReviewCatalogItemResponse, ReviewPlanResponse } from '../../api/product'
+import { displayZoneInputToIso } from '../../product/format'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 
 type CatalogState =
@@ -18,9 +19,7 @@ export type PlanSubmitState =
   | { status: 'unknown'; message: string }
 
 export function dateInputToApi(value: string): string | null {
-  if (value.trim() === '') return null
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+  return displayZoneInputToIso(value)
 }
 
 function errorMessage(error: unknown, fallback: string): string {
