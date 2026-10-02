@@ -435,6 +435,61 @@ test('Workbench request failure surfaces safely without inventing fallback work'
 test.describe('device time zone differs from the display time zone', () => {
   test.use({ timezoneId: 'America/New_York' })
 
+  test('a filled but non-existent Shanghai time blocks plan creation and keeps input and idempotency key', async ({ page }) => {
+    await stubReadySession(page)
+    await page.route('**/api/v1/review-catalog', (route) =>
+      fulfillJson(route, 200, [
+        { scenario_key: 'process_review', scenario_version: 1, display_name: '过程审查' },
+      ]),
+    )
+    const requests: { key: string | null; body: Record<string, unknown> }[] = []
+    await page.route('**/api/v1/review-plans', async (route) => {
+      requests.push({
+        key: await route.request().headerValue('Idempotency-Key'),
+        body: route.request().postDataJSON() as Record<string, unknown>,
+      })
+      if (requests.length === 1) return route.abort('failed')
+      return fulfillJson(route, 422, { detail: 'stop after capturing the request' })
+    })
+
+    await page.goto('/review-plans/new')
+    const start = page.getByLabel('计划开始时间（可选）')
+    const end = page.getByLabel('计划结束时间（可选）')
+    await page.getByLabel('计划名称').fill('无效时间计划')
+    await start.fill('2026-08-28T18:00')
+    await page.getByRole('button', { name: '保存计划并继续' }).click()
+    await expect.poll(() => requests.length).toBe(1)
+    await expect(page.getByRole('button', { name: '重试保存计划' })).toBeEnabled()
+
+    // 1986-05-04 02:00 上海进入夏令时直接跳到 03:00，02:30 不存在；格式合法，原生输入框不会拦截。
+    await end.fill('1986-05-04T02:30')
+    await page.getByRole('button', { name: '重试保存计划' }).click()
+    await expect(page.getByRole('alert')).toHaveText(
+      '计划结束时间无效：请填写存在的上海时间（Asia/Shanghai）。',
+    )
+    await expect(end).toHaveValue('1986-05-04T02:30')
+
+    await end.fill('')
+    await start.fill('1986-05-04T02:30')
+    await page.getByRole('button', { name: '重试保存计划' }).click()
+    await expect(page.getByRole('alert')).toHaveText(
+      '计划开始时间无效：请填写存在的上海时间（Asia/Shanghai）。',
+    )
+    await expect(start).toHaveValue('1986-05-04T02:30')
+    await expect(page.getByLabel('计划名称')).toHaveValue('无效时间计划')
+    expect(requests).toHaveLength(1)
+
+    await start.fill('2026-08-28T18:00')
+    await page.getByRole('button', { name: '重试保存计划' }).click()
+    await expect.poll(() => requests.length).toBe(2)
+    expect(requests[1].body).toMatchObject({
+      planned_start_at: '2026-08-28T10:00:00.000Z',
+      planned_end_at: null,
+    })
+    expect(requests[1].key).not.toBeNull()
+    expect(requests[1].key).toBe(requests[0].key)
+  })
+
   test('plan dates are entered and shown as Asia/Shanghai wall time', async ({ page }) => {
     await stubReadySession(page)
     await page.route('**/api/v1/me/workbench', (route) =>

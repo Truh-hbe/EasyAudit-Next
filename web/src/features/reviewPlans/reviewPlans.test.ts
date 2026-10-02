@@ -11,24 +11,12 @@ import {
 } from './ReviewCaseCreatePage'
 import {
   canSubmitPlan,
-  dateInputToApi,
   executePlanSubmission,
   isDefinitivePlanRejection,
 } from './ReviewPlanCreatePage'
 import type { ReviewCaseResponse, ReviewPlanResponse } from '../../api/product'
 
 describe('M5.2 plan-first creation contracts', () => {
-  it('converts optional date input as Asia/Shanghai wall time regardless of device time zone', () => {
-    vi.stubEnv('TZ', 'America/New_York')
-    try {
-      expect(dateInputToApi('')).toBeNull()
-      expect(dateInputToApi('2026-08-30T09:30')).toBe('2026-08-30T01:30:00.000Z')
-      expect(dateInputToApi('not-a-date')).toBeNull()
-    } finally {
-      vi.unstubAllEnvs()
-    }
-  })
-
   it('builds the exact Case payload without Plan date inheritance', () => {
     const item = {
       scenario_key: 'process_review',

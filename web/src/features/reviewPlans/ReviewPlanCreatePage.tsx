@@ -4,7 +4,11 @@ import { Link, useNavigate } from 'react-router'
 import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
 import { createReviewPlan, getReviewCatalog, newIdempotencyKey } from '../../api/product'
 import type { ReviewCatalogItemResponse, ReviewPlanResponse } from '../../api/product'
-import { DISPLAY_TIME_ZONE_HINT, displayZoneInputToIso } from '../../product/format'
+import {
+  DISPLAY_TIME_ZONE_HINT,
+  invalidDisplayZoneInputMessage,
+  parseOptionalDisplayZoneInput,
+} from '../../product/format'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 
 type CatalogState =
@@ -17,10 +21,6 @@ export type PlanSubmitState =
   | { status: 'submitting' }
   | { status: 'rejected'; message: string }
   | { status: 'unknown'; message: string }
-
-export function dateInputToApi(value: string): string | null {
-  return displayZoneInputToIso(value)
-}
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
@@ -95,11 +95,23 @@ export function ReviewPlanCreatePage() {
       return
     }
 
+    // 无效时间不能当作"未填写"提交；保留输入和幂等键，由用户修改后重试。
+    const startAt = parseOptionalDisplayZoneInput(plannedStartAt)
+    if (!startAt.valid) {
+      setSubmitState({ status: 'rejected', message: invalidDisplayZoneInputMessage('计划开始时间') })
+      return
+    }
+    const endAt = parseOptionalDisplayZoneInput(plannedEndAt)
+    if (!endAt.valid) {
+      setSubmitState({ status: 'rejected', message: invalidDisplayZoneInputMessage('计划结束时间') })
+      return
+    }
+
     setSubmitState({ status: 'submitting' })
     const result = await executePlanSubmission(() => createReviewPlan({
         title,
-        planned_start_at: dateInputToApi(plannedStartAt),
-        planned_end_at: dateInputToApi(plannedEndAt),
+        planned_start_at: startAt.iso,
+        planned_end_at: endAt.iso,
       }, idempotencyKey.current))
     if (result.plan !== undefined) {
       idempotencyKey.current = newIdempotencyKey()

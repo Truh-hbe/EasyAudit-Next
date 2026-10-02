@@ -2,6 +2,10 @@
 export const DISPLAY_TIME_ZONE = 'Asia/Shanghai'
 export const DISPLAY_TIME_ZONE_HINT = '以下时间均按上海时间（Asia/Shanghai）填写和显示。'
 
+export function invalidDisplayZoneInputMessage(field: string): string {
+  return `${field}无效：请填写存在的上海时间（Asia/Shanghai）。`
+}
+
 const dateTimeFormat = new Intl.DateTimeFormat('zh-CN', {
   timeZone: DISPLAY_TIME_ZONE,
   year: 'numeric',
@@ -79,6 +83,15 @@ export function displayZoneInputToIso(value: string): string | null {
   const roundTrip = displayZoneWallTime(utcMs)
   if (roundTrip.some((item, index) => item !== wall[index])) return null
   return new Date(utcMs).toISOString()
+}
+
+export type OptionalDisplayZoneInput = { valid: true; iso: string | null } | { valid: false }
+
+// 可选时间字段：空值合法（提交 null）；非空但无法解析时为无效，调用方必须终止提交，不能当作"未填写"。
+export function parseOptionalDisplayZoneInput(value: string): OptionalDisplayZoneInput {
+  if (value.trim() === '') return { valid: true, iso: null }
+  const iso = displayZoneInputToIso(value)
+  return iso === null ? { valid: false } : { valid: true, iso }
 }
 
 export function lifecycleText(value: string): string {

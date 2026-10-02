@@ -29,9 +29,10 @@ import type {
 } from '../../api/product'
 import {
   DISPLAY_TIME_ZONE_HINT,
-  displayZoneInputToIso,
   formatDateTime,
+  invalidDisplayZoneInputMessage,
   lifecycleText,
+  parseOptionalDisplayZoneInput,
 } from '../../product/format'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 import type { ScenarioFindingCommandPorts } from '../../scenarios/registry'
@@ -655,10 +656,13 @@ export function FindingDetailPage() {
             className="command-form subsurface"
             onSubmit={(event) => {
               event.preventDefault()
-              const dueAt =
-                actionDueAt.length === 0 ? null : displayZoneInputToIso(actionDueAt)
+              const dueAt = parseOptionalDisplayZoneInput(actionDueAt)
+              if (!dueAt.valid) {
+                setCommandMessage(invalidDisplayZoneInputMessage('到期时间'))
+                return
+              }
               void runCommand('创建 Action Item', () =>
-                createActionItem(finding.id, { title: actionTitle, due_at: dueAt }),
+                createActionItem(finding.id, { title: actionTitle, due_at: dueAt.iso }),
               )
             }}
           >

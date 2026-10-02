@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { displayZoneInputToIso, formatDateTime } from './format'
+import { displayZoneInputToIso, formatDateTime, parseOptionalDisplayZoneInput } from './format'
 
 // 设备时区 → 旧写法 new Date('2026-08-28T18:00') 得到的 ISO，用来证明设备时区确实已切换。
 const deviceZones = {
@@ -57,5 +57,17 @@ describe('display time zone is independent of the device time zone', () => {
   it('keeps null and unparseable display values', () => {
     expect(formatDateTime(null)).toBe('—')
     expect(formatDateTime('garbage')).toBe('garbage')
+  })
+
+  it('optional input separates "not filled" from "filled but invalid"', () => {
+    vi.stubEnv('TZ', 'America/New_York')
+    expect(parseOptionalDisplayZoneInput('')).toEqual({ valid: true, iso: null })
+    expect(parseOptionalDisplayZoneInput('   ')).toEqual({ valid: true, iso: null })
+    expect(parseOptionalDisplayZoneInput('2026-08-30T09:30')).toEqual({
+      valid: true,
+      iso: '2026-08-30T01:30:00.000Z',
+    })
+    expect(parseOptionalDisplayZoneInput('1986-05-04T02:30')).toEqual({ valid: false })
+    expect(parseOptionalDisplayZoneInput('not-a-date')).toEqual({ valid: false })
   })
 })
