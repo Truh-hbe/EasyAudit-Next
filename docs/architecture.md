@@ -180,7 +180,7 @@ src/easyaudit_next/
 - 409 表示数据已过期：刷新后让用户重试。禁止自动重放写请求，包括结果未知的创建请求。创建页在表单生命周期内持有一个 `Idempotency-Key`，用户手动重试、双击和网络失败后重新提交复用同一个键；键被不同请求复用（409）时提示刷新，不自动重放。
 - 不在本地长期保存业务状态的影子副本，写操作成功后刷新相关查询。
 - 时间按 `Asia/Shanghai` 展示和解析（与导出、每日提醒一致），不随设备时区变化。展示和 `datetime-local` 输入的转换统一走 `web/src/product/format.ts`，输入区注明按上海时间；越界、不存在或夏令时跳过的时刻直接拒绝，不静默修正。`zh-cn` locale 只决定语言，不决定时区。
-- UI 只用 antd 与 @ant-design/icons，不引入其他组件库或图标库（`web/.oxlintrc.json` 强制）。主题只在 `web/src/app/theme.ts` 中配置，视觉、布局、组件与文案规范见 [design.md](design.md)。
+- UI 只用 antd 与 @ant-design/icons，不引入其他组件库或图标库（`web/.oxlintrc.json` 拦截已列出的常见库，其余由 review 把关）。主题只在 `web/src/app/theme.ts` 中配置，视觉、布局、组件、文案与迁移约束（证据上传、创建幂等、遗留样式隔离）见 [design.md](design.md)。
 
 ## 部署
 

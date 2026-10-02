@@ -7,6 +7,8 @@ export const appTheme: ThemeConfig = {
     colorInfo: '#2f5fca',
     colorTextBase: '#172033',
     colorBgLayout: '#f5f7fb',
+    // 控件边框需满足 WCAG 1.4.11 非文本对比度 ≥ 3:1（antd 默认 #d9d9d9 约 1.4:1）。
+    colorBorder: '#8290a3',
     borderRadius: 8,
     fontFamily:
       '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif',

@@ -9,9 +9,9 @@ M3.5 到 M5 的前端全部手写：只依赖 React 和 react-router，约 45 �
 
 ## 决策
 
-- 组件库固定为 `antd` 6，图标固定为 `@ant-design/icons` 6（只用 Outlined），日期用 antd 依赖的 `dayjs`。版本精确固定。
+- 组件库固定为 `antd` 6，图标固定为 `@ant-design/icons` 6（只用 Outlined），日期用 `dayjs`（显式声明为直接依赖）。版本精确固定。
 - 主题只在 `web/src/app/theme.ts` 中配置。自定义 CSS 通过 antd 输出的 `--ant-*` CSS 变量取值。
-- 禁止引入其他组件库、图标库、CSS 框架和 CSS-in-JS 库，由 `web/.oxlintrc.json` 的 `no-restricted-imports` 强制。
+- 不引入其他组件库、图标库、CSS 框架和 CSS-in-JS 库。`web/.oxlintrc.json` 的 `no-restricted-imports` 拦截已列出的常见库；黑名单不是穷举，新增直接依赖由 review 把关。
 - 具体的视觉、布局、组件选用和文案规范写在 [docs/design.md](../design.md)。
 
 ## 理由
@@ -29,7 +29,8 @@ M3.5 到 M5 的前端全部手写：只依赖 React 和 react-router，约 45 �
 
 ## 后果
 
-- 前端包体积增加：首次构建为 660 kB，gzip 后约 204 kB，Vite 会提示 chunk 过大。私网内部系统可以接受；后续按路由用 `React.lazy` 做代码分割。
+- 前端包体积增加：主 JS 从 352 kB（gzip 97 kB）增长到 660 kB（gzip 204 kB），Vite 会提示 chunk 过大。是否可以接受以试点终端的实测首屏时间为准（UI-3 记录），明显退化时提前做路由代码分割。代码分割无法消除根部 `ConfigProvider` / `App` 的公共成本。
 - antd 在运行时注入 `<style>`。网关将来如果加 CSP，需要允许 `style-src 'unsafe-inline'`，或者通过 `ConfigProvider csp={{ nonce }}` 传入 nonce。
-- 现有页面逐页迁移，期间新旧样式并存。遗留 class 只减不增，迁移完成后删除。
+- 现有页面逐页迁移，期间新旧样式并存。遗留元素规则限定在旧页面容器内且不进入 `.ui-modern` 边界，由浏览器测试守护；遗留 class 只减不增，迁移完成后删除。
+- antd 预设的状态色文字对比度不足，状态 Tag 使用显式的达标配色（见 design.md）。
 - 升级 antd 主版本需要新的 ADR 或修订本文。
