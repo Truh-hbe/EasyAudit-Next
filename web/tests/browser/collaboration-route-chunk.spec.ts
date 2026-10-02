@@ -72,3 +72,39 @@ test('deep link to a lazy route with a failing chunk keeps the shell and the URL
   await expect(page.getByRole('button', { name: '重新加载页面' })).toBeVisible()
   await expect(page).toHaveURL(/\/me\/notifications$/)
 })
+
+test('navigating away from a failed chunk recovers; revisiting it fails again without retrying', async ({ page }) => {
+  await page.route((url) => url.pathname === '/api/v1/me', (route) => fulfillJson(route, user))
+  await page.route((url) => url.pathname === '/api/v1/me/workbench', (route) => fulfillJson(route, emptyWorkbench))
+  let chunkRequests = 0
+  await page.route(notificationChunk, (route) => {
+    chunkRequests += 1
+    return route.abort('failed')
+  })
+  const nav = page.getByRole('navigation', { name: '主要导航' })
+  const failure = page.getByRole('alert').filter({ hasText: '页面加载失败' })
+
+  await page.goto('/me/workbench')
+  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+  await nav.getByRole('link', { name: '通知' }).click()
+  await expect(failure).toBeVisible()
+  const failedRequests = chunkRequests
+
+  // 点导航回到正常页。
+  await nav.getByRole('link', { name: '我的工作' }).click()
+  await expect(page).toHaveURL(/\/me\/workbench$/)
+  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+  await expect(failure).toHaveCount(0)
+
+  // 回到失败路由：仍提示失败，且不重试 chunk 请求。
+  await nav.getByRole('link', { name: '通知' }).click()
+  await expect(failure).toBeVisible()
+  await page.waitForTimeout(300)
+  expect(chunkRequests).toBe(failedRequests)
+
+  // 浏览器后退回到上一页。
+  await page.goBack()
+  await expect(page).toHaveURL(/\/me\/workbench$/)
+  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+  await expect(failure).toHaveCount(0)
+})

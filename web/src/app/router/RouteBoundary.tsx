@@ -1,6 +1,7 @@
 import { Alert, Button } from 'antd'
 import { Component, Suspense } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import { useLocation } from 'react-router'
 
 import { InitialLoading } from '../../ui/InitialLoading'
 
@@ -53,8 +54,11 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode }, BoundaryStat
 }
 
 export function RouteBoundary({ children }: { children: ReactNode }) {
+  // 以路径为 key：导航到其他路径（含后退）时丢弃错误状态，不会卡在失败提示上。
+  // 回到失败的路由时 React.lazy 仍缓存着被拒绝的 Promise，会立即再次显示失败提示，不会重新请求 chunk。
+  const { pathname } = useLocation()
   return (
-    <ChunkErrorBoundary>
+    <ChunkErrorBoundary key={pathname}>
       <Suspense
         fallback={
           <div aria-busy="true">
