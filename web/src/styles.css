@@ -42,7 +42,7 @@ button {
  * 混合页面中的 antd 组件放在 <div className="ui-modern"> 内；整页迁移后根节点不再使用这些容器类。
  * 选择器用 :where 保持与原规则相同的特异性。
  */
-:where(.surface-page, .auth-card, .foundation) button:disabled:not(:where(.ui-modern, .ui-modern *)) {
+:where(.surface-page, .foundation) button:disabled:not(:where(.ui-modern, .ui-modern *)) {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -51,15 +51,10 @@ button {
   min-height: 100vh;
 }
 
-.foundation,
-.auth-card {
+.foundation {
   max-width: 760px;
   margin: 0 auto;
   padding: 96px 24px;
-}
-
-.auth-card {
-  max-width: 480px;
 }
 
 .eyebrow {
@@ -90,25 +85,24 @@ h3 {
 }
 
 .foundation > p:last-child,
-.auth-card > p,
 .placeholder > p {
   margin-top: 24px;
   line-height: 1.7;
 }
 
-:where(.surface-page, .auth-card, .foundation) form:not(:where(.ui-modern, .ui-modern *)) {
+:where(.surface-page, .foundation) form:not(:where(.ui-modern, .ui-modern *)) {
   display: grid;
   gap: 18px;
   margin-top: 32px;
 }
 
-:where(.surface-page, .auth-card, .foundation) label:not(:where(.ui-modern, .ui-modern *)) {
+:where(.surface-page, .foundation) label:not(:where(.ui-modern, .ui-modern *)) {
   display: grid;
   gap: 8px;
   font-weight: 650;
 }
 
-:where(.surface-page, .auth-card, .foundation) :is(input, select, textarea):not(:where(.ui-modern, .ui-modern *)) {
+:where(.surface-page, .foundation) :is(input, select, textarea):not(:where(.ui-modern, .ui-modern *)) {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--ant-color-border);
@@ -117,11 +111,11 @@ h3 {
   color: inherit;
 }
 
-:where(.surface-page, .auth-card, .foundation) textarea:not(:where(.ui-modern, .ui-modern *)) {
+:where(.surface-page, .foundation) textarea:not(:where(.ui-modern, .ui-modern *)) {
   resize: vertical;
 }
 
-:where(.surface-page, .auth-card, .foundation) button:not(:where(.ui-modern, .ui-modern *)) {
+:where(.surface-page, .foundation) button:not(:where(.ui-modern, .ui-modern *)) {
   padding: 12px 16px;
   border: 0;
   border-radius: 10px;
@@ -134,7 +128,7 @@ h3 {
   border: 1px solid var(--ant-color-border);
 }
 
-:where(.surface-page, .auth-card, .foundation) [role="alert"]:not(:where(.ui-modern, .ui-modern *)) {
+:where(.surface-page, .foundation) [role="alert"]:not(:where(.ui-modern, .ui-modern *)) {
   margin-top: 16px;
 }
 
@@ -565,4 +559,18 @@ h3 {
   .case-header {
     flex-direction: column;
   }
+}
+
+.auth-page {
+  min-height: 100vh;
+  padding: 24px 16px;
+}
+
+.auth-panel {
+  width: 400px;
+  max-width: 100%;
+}
+
+.app-root .field-error-text {
+  color: var(--ant-red-7);
 }

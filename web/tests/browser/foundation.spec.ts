@@ -631,3 +631,146 @@ test('system admin can traverse all five primary navigation links with Tab and o
   await page.keyboard.press('Enter')
   await expect(page).toHaveURL(/\/admin$/)
 })
+
+async function stubAnonymous(page: Page) {
+  await page.route('**/api/v1/me', (route) =>
+    fulfillJson(route, 401, { detail: 'Authentication required' }),
+  )
+}
+
+async function horizontalOverflow(page: Page) {
+  return page.evaluate(() => {
+    const root = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+      .document.documentElement
+    return root.scrollWidth - root.clientWidth
+  })
+}
+
+test('auth pages have no horizontal overflow and keep controls reachable at 375px and 320px', async ({ page }) => {
+  await stubAnonymous(page)
+  for (const width of [375, 320]) {
+    await page.setViewportSize({ width, height: 700 })
+    await page.goto('/login')
+    await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(1)
+    const box = await page.getByRole('button', { name: '登录' }).boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width)
+  }
+
+  await page.unroute('**/api/v1/me')
+  await page.route('**/api/v1/me', (route) =>
+    fulfillJson(route, 200, { ...user, must_change_password: true }),
+  )
+  for (const width of [375, 320]) {
+    await page.setViewportSize({ width, height: 700 })
+    await page.goto('/me/credential-remediation')
+    await expect(page.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(1)
+    await page.getByRole('button', { name: '修改密码' }).click()
+    await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible()
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(1)
+  }
+})
+
+test('auth page text, placeholder, alert and link colors meet WCAG AA contrast', async ({ page }) => {
+  await stubAnonymous(page)
+  await page.route('**/api/v1/auth/login', (route) =>
+    fulfillJson(route, 401, { detail: 'Invalid login name or password' }),
+  )
+  await page.goto('/login')
+  const loginName = page.getByLabel('登录名')
+  await loginName.evaluate((element) => element.setAttribute('placeholder', '例如 zhang.san'))
+  await page.getByLabel('密码').fill('wrong-password')
+  await loginName.fill('wrong-user')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.getByRole('alert')).toHaveText('登录名或密码无效')
+  await loginName.fill('')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.getByText('请输入登录名')).toBeVisible()
+
+  const ratios = await page.evaluate(() => {
+    type El = { parentElement: El | null }
+    const doc = (globalThis as unknown as {
+      document: { querySelector: (s: string) => El | null; querySelectorAll: (s: string) => El[] }
+      getComputedStyle: (e: El, pseudo?: string) => Record<string, string>
+    })
+    const parse = (value: string): [number, number, number, number] => {
+      const m = value.match(/rgba?\(([^)]+)\)/)
+      const parts = m ? m[1].split(/[ ,/]+/).filter(Boolean).map(Number) : [0, 0, 0, 0]
+      return [parts[0], parts[1], parts[2], parts[3] ?? 1]
+    }
+    const lum = ([r, g, b]: number[]) => {
+      const f = (c: number) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    }
+    const ratio = (a: number[], b: number[]) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+      return (hi + 0.05) / (lo + 0.05)
+    }
+    const backgroundOf = (element: El) => {
+      let bg: [number, number, number] = [255, 255, 255]
+      const chain: El[] = []
+      for (let e: El | null = element; e; e = e.parentElement) chain.unshift(e)
+      for (const e of chain) {
+        const [r, g, b, a] = parse(doc.getComputedStyle(e).backgroundColor)
+        if (a > 0) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)]
+      }
+      return bg
+    }
+    const byText = (text: string) =>
+      Array.from(doc.document.querySelectorAll('main *')).find(
+        (e) => (e as unknown as { textContent: string; children: { length: number } }).children.length === 0 &&
+          (e as unknown as { textContent: string }).textContent === text,
+      ) ?? null
+    const measure = (element: El | null, pseudo?: string) => {
+      if (!element) throw new Error('element not found')
+      const [r, g, b, a] = parse(doc.getComputedStyle(element, pseudo).color)
+      const bg = backgroundOf(element)
+      const fg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)]
+      return Math.round(ratio(fg, bg) * 100) / 100
+    }
+    return {
+      inputText: measure(doc.document.querySelector('input[autocomplete="username"]')),
+      placeholder: measure(doc.document.querySelector('input[autocomplete="username"]'), '::placeholder'),
+      label: measure(byText('登录名')),
+      alert: measure(byText('登录名或密码无效')),
+      fieldError: measure(byText('请输入登录名')),
+      brand: measure(byText('EasyAudit Next')),
+    }
+  })
+
+  for (const [name, ratio] of Object.entries(ratios)) {
+    expect(ratio, name).toBeGreaterThanOrEqual(4.5)
+  }
+  console.log('auth contrast', JSON.stringify(ratios))
+})
+
+test('password remediation keeps entered values on 422 and blocks mismatched confirmation', async ({ page }) => {
+  let submissions = 0
+  await page.route('**/api/v1/me', (route) =>
+    fulfillJson(route, 200, { ...user, must_change_password: true }),
+  )
+  await page.route('**/api/v1/me/password', async (route) => {
+    submissions += 1
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await fulfillJson(route, 422, { detail: 'Password does not meet policy' })
+  })
+
+  await page.goto('/me/credential-remediation')
+  await page.getByLabel('当前密码').fill('initial-password')
+  await page.getByLabel('新密码', { exact: true }).fill('replacement-password')
+  await page.getByLabel('确认新密码').fill('different-password')
+  await page.getByRole('button', { name: '修改密码' }).click()
+  await expect(page.getByText('两次输入的新密码不一致')).toBeVisible()
+  expect(submissions).toBe(0)
+
+  await page.getByLabel('确认新密码').fill('replacement-password')
+  const submit = page.getByRole('button', { name: '修改密码' })
+  await submit.dblclick()
+  await expect(page.getByRole('alert')).toHaveText('Password does not meet policy')
+  expect(submissions).toBe(1)
+  await expect(page.getByLabel('当前密码')).toHaveValue('initial-password')
+  await expect(page.getByLabel('新密码', { exact: true })).toHaveValue('replacement-password')
+})
