@@ -77,6 +77,55 @@ async function stubCaseSections(page: Page, caseId: string) {
   await page.route(`**/api/v1/management/review-cases/${caseId}/progress`, (route) => fulfillJson(route, 404, { detail: 'Not found' }))
 }
 
+type ContrastTarget = { selector: string; pseudo?: string } | { text: string }
+
+// 在页面内计算文字相对有效背景的对比度（WCAG 2.x）。page.evaluate 会序列化函数，所以必须自包含。
+function measureContrast(targets: Record<string, ContrastTarget>) {
+  type El = { parentElement: El | null }
+  const doc = (globalThis as unknown as {
+    document: { querySelector: (s: string) => El | null; querySelectorAll: (s: string) => El[] }
+    getComputedStyle: (e: El, pseudo?: string) => Record<string, string>
+  })
+  const parse = (value: string): [number, number, number, number] => {
+    const m = value.match(/rgba?\(([^)]+)\)/)
+    const parts = m ? m[1].split(/[ ,/]+/).filter(Boolean).map(Number) : [0, 0, 0, 0]
+    return [parts[0], parts[1], parts[2], parts[3] ?? 1]
+  }
+  const lum = ([r, g, b]: number[]) => {
+    const f = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+  }
+  const ratio = (a: number[], b: number[]) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+    return (hi + 0.05) / (lo + 0.05)
+  }
+  const backgroundOf = (element: El) => {
+    let bg: [number, number, number] = [255, 255, 255]
+    const chain: El[] = []
+    for (let e: El | null = element; e; e = e.parentElement) chain.unshift(e)
+    for (const e of chain) {
+      const [r, g, b, a] = parse(doc.getComputedStyle(e).backgroundColor)
+      if (a > 0) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)]
+    }
+    return bg
+  }
+  const byText = (text: string) =>
+    Array.from(doc.document.querySelectorAll('main *, [data-contrast-probe] *')).find(
+      (e) => (e as unknown as { textContent: string; children: { length: number } }).children.length === 0 &&
+        (e as unknown as { textContent: string }).textContent === text,
+    ) ?? null
+  const result: Record<string, number> = {}
+  for (const [name, target] of Object.entries(targets)) {
+    const element = 'text' in target ? byText(target.text) : doc.document.querySelector(target.selector)
+    if (!element) throw new Error(`element not found: ${name}`)
+    const [r, g, b, a] = parse(doc.getComputedStyle(element, 'pseudo' in target ? target.pseudo : undefined).color)
+    const bg = backgroundOf(element)
+    const fg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)]
+    result[name] = Math.round(ratio(fg, bg) * 100) / 100
+  }
+  return result
+}
+
 test('resolves the server session before choosing anonymous UI', async ({ page }) => {
   const sessionGate = createDeferred()
   await page.route('**/api/v1/me', async (route) => {
@@ -690,61 +739,42 @@ test('auth page text, placeholder, alert and link colors meet WCAG AA contrast',
   await page.getByRole('button', { name: '登录' }).click()
   await expect(page.getByText('请输入登录名')).toBeVisible()
 
-  const ratios = await page.evaluate(() => {
-    type El = { parentElement: El | null }
-    const doc = (globalThis as unknown as {
-      document: { querySelector: (s: string) => El | null; querySelectorAll: (s: string) => El[] }
-      getComputedStyle: (e: El, pseudo?: string) => Record<string, string>
-    })
-    const parse = (value: string): [number, number, number, number] => {
-      const m = value.match(/rgba?\(([^)]+)\)/)
-      const parts = m ? m[1].split(/[ ,/]+/).filter(Boolean).map(Number) : [0, 0, 0, 0]
-      return [parts[0], parts[1], parts[2], parts[3] ?? 1]
-    }
-    const lum = ([r, g, b]: number[]) => {
-      const f = (c: number) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
-    }
-    const ratio = (a: number[], b: number[]) => {
-      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
-      return (hi + 0.05) / (lo + 0.05)
-    }
-    const backgroundOf = (element: El) => {
-      let bg: [number, number, number] = [255, 255, 255]
-      const chain: El[] = []
-      for (let e: El | null = element; e; e = e.parentElement) chain.unshift(e)
-      for (const e of chain) {
-        const [r, g, b, a] = parse(doc.getComputedStyle(e).backgroundColor)
-        if (a > 0) bg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)]
-      }
-      return bg
-    }
-    const byText = (text: string) =>
-      Array.from(doc.document.querySelectorAll('main *')).find(
-        (e) => (e as unknown as { textContent: string; children: { length: number } }).children.length === 0 &&
-          (e as unknown as { textContent: string }).textContent === text,
-      ) ?? null
-    const measure = (element: El | null, pseudo?: string) => {
-      if (!element) throw new Error('element not found')
-      const [r, g, b, a] = parse(doc.getComputedStyle(element, pseudo).color)
-      const bg = backgroundOf(element)
-      const fg = [r * a + bg[0] * (1 - a), g * a + bg[1] * (1 - a), b * a + bg[2] * (1 - a)]
-      return Math.round(ratio(fg, bg) * 100) / 100
-    }
-    return {
-      inputText: measure(doc.document.querySelector('input[autocomplete="username"]')),
-      placeholder: measure(doc.document.querySelector('input[autocomplete="username"]'), '::placeholder'),
-      label: measure(byText('登录名')),
-      alert: measure(byText('登录名或密码无效')),
-      fieldError: measure(byText('请输入登录名')),
-      brand: measure(byText('EasyAudit Next')),
-    }
+  const ratios = await page.evaluate(measureContrast, {
+    inputText: { selector: 'input[autocomplete="username"]' },
+    placeholder: { selector: 'input[autocomplete="username"]', pseudo: '::placeholder' },
+    label: { text: '登录名' },
+    alert: { text: '登录名或密码无效' },
+    fieldError: { text: '请输入登录名' },
+    brand: { text: 'EasyAudit Next' },
   })
 
   for (const [name, ratio] of Object.entries(ratios)) {
     expect(ratio, name).toBeGreaterThanOrEqual(4.5)
   }
   console.log('auth contrast', JSON.stringify(ratios))
+})
+
+test('antd description text meets WCAG AA contrast on white and layout backgrounds', async ({ page }) => {
+  await stubAnonymous(page)
+  await page.goto('/login')
+  await page.evaluate(async () => {
+    // 变量路径：只由浏览器里的 Vite dev server 解析，不参与 tsc 模块解析。
+    const path = '/tests/browser/fixtures/theme-probe.tsx'
+    const probe: { mountThemeProbe: () => void } = await import(path)
+    probe.mountThemeProbe()
+  })
+  const ratios = await page.evaluate(measureContrast, {
+    'secondary on white': { text: 'white-secondary' },
+    'form extra on white': { text: 'white-extra' },
+    'descriptions label on white': { text: 'white-label' },
+    'secondary on layout': { text: 'layout-secondary' },
+    'form extra on layout': { text: 'layout-extra' },
+    'descriptions label on layout': { text: 'layout-label' },
+  })
+  for (const [name, ratio] of Object.entries(ratios)) {
+    expect(ratio, name).toBeGreaterThanOrEqual(4.5)
+  }
+  console.log('description contrast', JSON.stringify(ratios))
 })
 
 test('password remediation keeps entered values on 422 and blocks mismatched confirmation', async ({ page }) => {

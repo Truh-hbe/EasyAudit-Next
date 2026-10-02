@@ -11,8 +11,19 @@ export const appTheme: ThemeConfig = {
     colorBorder: '#8290a3',
     // antd 默认 placeholder 色（25% 不透明度）约 1.7:1；#667085 白底 5.0:1。
     colorTextPlaceholder: '#667085',
+    // antd 的说明文字（Typography secondary、Form extra、Card/List Meta、Steps、Empty 等）用
+    // colorTextDescription，默认等于 tertiary（45% 不透明度，白底 2.8:1）。
+    // 对齐 secondary（65%）：白底 5.1:1，#f5f7fb 上 5.0:1。
+    colorTextDescription: 'rgba(23, 32, 51, 0.65)',
     borderRadius: 8,
     fontFamily:
       '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif',
+  },
+  components: {
+    Descriptions: {
+      // Descriptions 的 label 直接用 colorTextTertiary（2.8:1）。tertiary 同时是 colorIcon，
+      // 全局调高会改变图标层级，所以只改这一个组件：同样 65%，白底 5.1:1。
+      labelColor: 'rgba(23, 32, 51, 0.65)',
+    },
   },
 }

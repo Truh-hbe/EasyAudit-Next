@@ -38,12 +38,14 @@
 | `colorBgLayout` | `#f5f7fb` | 页面底色 |
 | `colorBorder` | `#8290a3` | 控件边框，白底 3.3:1，满足 WCAG 1.4.11（antd 默认 `#d9d9d9` 只有 1.4:1） |
 | `colorTextPlaceholder` | `#667085` | placeholder，白底 5.0:1（antd 默认约 1.7:1） |
+| `colorTextDescription` | `rgba(23, 32, 51, 0.65)` | 说明文字（`Typography type="secondary"`、Form `extra`、Card/List Meta、Steps、Empty 等），与 secondary 等效：白底 5.1:1，`#f5f7fb` 上 5.0:1（antd 默认等于 tertiary，2.8:1） |
+| `components.Descriptions.labelColor` | `rgba(23, 32, 51, 0.65)` | Descriptions 的 label 直接用 tertiary，单独调整：白底 5.0:1，`#f5f7fb` 上 4.9:1 |
 | `borderRadius` | `8` | 统一圆角 |
 | `fontFamily` | 系统字体 + PingFang SC / Microsoft YaHei | 不加载 Web 字体 |
 
 成功、警告、错误的种子色使用 antd 默认值，不覆盖：antd 由种子色派生整套背景、边框和悬停色，改种子色会连带改变它们。需要可读文字时使用色板中达标的档位（见[状态与颜色](#状态与颜色)）。
 
-**文字层级**：可读信息（说明、时间、副标题）用 `--ant-color-text-secondary`（白底 5.1:1）。`--ant-color-text-tertiary`（2.8:1）不用于任何可读文字。
+**文字层级**：可读信息（说明、时间、副标题）用 `--ant-color-text-secondary`（白底 5.1:1）。`--ant-color-text-tertiary`（2.8:1）不用于任何可读文字，也不调高它：它同时是 `colorIcon`，调高会改变图标层级。`Typography type="secondary"` 等说明文字经 `colorTextDescription` 调整后达标；自定义 CSS 不要用 `--ant-color-text-description`/`tertiary` 渲染文字。
 
 **placeholder**：只提供示例，不能替代 label；它的文字同样要满足 4.5:1。antd 默认 placeholder 色（25% 不透明度，约 1.7:1）不达标，已通过 `colorTextPlaceholder` 调整，认证页浏览器测试实测。
 
