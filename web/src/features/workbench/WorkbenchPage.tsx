@@ -129,13 +129,12 @@ export function WorkbenchPage() {
   }, [revision])
 
   if (state.status === 'loading') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.2</p><h1>我的工作</h1><p>正在读取服务器 Workbench…</p></section>
+    return <section className="surface-page"><h1>我的工作</h1><p>正在读取服务器 Workbench…</p></section>
   }
 
   if (state.status === 'error') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.2</p>
         <h1>我的工作</h1>
         <div role="alert" className="surface-card">
           <p>{state.message}</p>
@@ -150,7 +149,6 @@ export function WorkbenchPage() {
     <section className="surface-page" aria-labelledby="workbench-title">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">M3.5.2 · server projection</p>
           <h1 id="workbench-title">我的工作</h1>
         </div>
         <p>数据时间 {formatDateTime(data.as_of)}</p>

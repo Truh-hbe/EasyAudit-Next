@@ -527,3 +527,83 @@ test.describe('device time zone differs from the display time zone', () => {
     })
   })
 })
+
+test('legacy element styles stay inside legacy page containers and never cross the ui-modern boundary', async ({ page }) => {
+  await stubReadySession(page)
+  await stubEmptyWorkbench(page)
+  await page.goto('/me/workbench')
+  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+
+  const styles = await page.evaluate(() => {
+    const browser = globalThis as unknown as {
+      document: {
+        querySelector: (selector: string) => { insertAdjacentHTML: (where: string, html: string) => void }
+        getElementById: (id: string) => unknown
+      }
+      getComputedStyle: (element: unknown) => Record<string, string>
+    }
+    const fixture = (prefix: string) =>
+      `<form id="${prefix}-form"><label id="${prefix}-label">名称<input id="${prefix}-input" /></label>` +
+      `<button id="${prefix}-button" type="button" disabled>提交</button></form>`
+    browser.document
+      .querySelector('.surface-page')
+      .insertAdjacentHTML('beforeend', fixture('legacy') + `<div class="ui-modern">${fixture('modern')}</div>`)
+    const read = (id: string) => browser.getComputedStyle(browser.document.getElementById(id))
+    const pick = (prefix: string) => ({
+      formDisplay: read(`${prefix}-form`).display,
+      labelWeight: read(`${prefix}-label`).fontWeight,
+      inputPadding: read(`${prefix}-input`).padding,
+      buttonOpacity: read(`${prefix}-button`).opacity,
+    })
+    return { legacy: pick('legacy'), modern: pick('modern') }
+  })
+
+  expect(styles.legacy).toEqual({
+    formDisplay: 'grid',
+    labelWeight: '650',
+    inputPadding: '12px 14px',
+    buttonOpacity: '0.5',
+  })
+  expect(styles.modern.formDisplay).toBe('block')
+  expect(styles.modern.labelWeight).not.toBe('650')
+  expect(styles.modern.inputPadding).not.toBe('12px 14px')
+  expect(styles.modern.buttonOpacity).toBe('1')
+})
+
+test('shell switches navigation layout at the 992px breakpoint without document overflow', async ({ page }) => {
+  await stubReadySession(page, 'system_admin')
+  await stubEmptyWorkbench(page)
+  await page.goto('/me/workbench')
+  const nav = page.getByRole('navigation', { name: '主要导航' })
+  const names = ['我的工作', '审查活动', '通知', '管理视图', '管理设置']
+
+  for (const [width, direction] of [[992, 'column'], [991, 'row']] as const) {
+    await page.setViewportSize({ width, height: 800 })
+    await expect(nav).toHaveCSS('flex-direction', direction)
+    for (const name of names) {
+      await expect(nav.getByRole('link', { name })).toBeVisible()
+    }
+    const overflow = await page.evaluate(() => {
+      const root = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement
+      return root.scrollWidth - root.clientWidth
+    })
+    expect(overflow).toBeLessThanOrEqual(1)
+  }
+})
+
+test('system admin can traverse all five primary navigation links with Tab and open one with Enter', async ({ page }) => {
+  await stubReadySession(page, 'system_admin')
+  await stubEmptyWorkbench(page)
+  await page.goto('/me/workbench')
+  const nav = page.getByRole('navigation', { name: '主要导航' })
+  const names = ['我的工作', '审查活动', '通知', '管理视图', '管理设置']
+
+  await nav.getByRole('link', { name: names[0] }).focus()
+  for (const [index, name] of names.entries()) {
+    if (index > 0) await page.keyboard.press('Tab')
+    await expect(nav.getByRole('link', { name })).toBeFocused()
+  }
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/\/admin$/)
+})

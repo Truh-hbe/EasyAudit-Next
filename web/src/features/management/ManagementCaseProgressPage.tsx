@@ -91,17 +91,16 @@ export function ManagementCaseProgressPage() {
 
   const matchesRoute = state.caseId === caseId
   if (!matchesRoute || state.status === 'loading') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.4</p><h1>管理进度</h1><p>正在读取 M3.3 服务器投影…</p></section>
+    return <section className="surface-page"><h1>管理进度</h1><p>正在读取管理进度…</p></section>
   }
 
   if (state.status === 'unavailable') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.4</p><h1>管理进度不可用</h1><p>当前服务器未提供此 ReviewCase 的管理投影。</p></section>
+    return <section className="surface-page"><h1>管理进度不可用</h1><p>当前服务器未提供此 ReviewCase 的管理投影。</p></section>
   }
 
   if (state.status === 'error') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.4</p>
         <h1>管理进度</h1>
         <div role="alert" className="surface-card">
           <p>{state.message}</p>
@@ -116,7 +115,7 @@ export function ManagementCaseProgressPage() {
     <section className="surface-page" aria-labelledby="management-progress-title">
       <header className="case-header surface-card">
         <div>
-          <p className="eyebrow">M3.5.4 · server as_of {formatDateTime(data.as_of)}</p>
+          <p className="eyebrow">数据时间 {formatDateTime(data.as_of)}</p>
           <h1 id="management-progress-title">{data.case.title}</h1>
           <p><Link to="/management">返回管理视图</Link> · <Link to={`/review-cases/${data.case.id}`}>打开原 ReviewCase</Link></p>
         </div>
@@ -217,7 +216,7 @@ export function ManagementCaseProgressPage() {
         )}
       </section>
 
-      <p className="empty-note">管理行只提供原 Finding/Action 命令的快捷入口；recipient 仍由 M3.4 exact Scenario 在服务器解析。</p>
+      <p className="empty-note">此处只提供原 Finding/Action 操作的快捷入口；催办收件人由服务器按审查场景确定。</p>
       {nudgeMessage === null ? null : <p role="status">{nudgeMessage}</p>}
     </section>
   )

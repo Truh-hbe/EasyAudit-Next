@@ -1,3 +1,5 @@
+import { LogoutOutlined } from '@ant-design/icons'
+import { Button } from 'antd'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
@@ -31,13 +33,13 @@ export function LogoutButton({ className }: { className?: string }) {
   }
 
   return (
-    <button
-      type="button"
+    <Button
       className={className}
+      icon={<LogoutOutlined aria-hidden />}
       disabled={submitting}
       onClick={() => void logout()}
     >
       {submitting ? '退出中…' : '退出登录'}
-    </button>
+    </Button>
   )
 }

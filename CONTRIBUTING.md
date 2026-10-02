@@ -1,6 +1,6 @@
 # Contributing
 
-开发流程见 [AGENTS.md](AGENTS.md)，架构规则见 [docs/architecture.md](docs/architecture.md)。
+开发流程见 [AGENTS.md](AGENTS.md)，架构规则见 [docs/architecture.md](docs/architecture.md)，前端 UI 规范见 [docs/design.md](docs/design.md)。
 
 ## 基本原则
 
@@ -10,6 +10,7 @@
 4. 核心关系使用强外键和组织感知的组合外键，不用 Generic FK。
 5. 正式业务动作产生 append-only 的 `Activity`；需要保留原始表达时使用 `Submission`。
 6. 架构级变化需要更新 `docs/architecture.md` 或新增 ADR。
+7. 前端只用 antd 与 @ant-design/icons，按 `docs/design.md` 选用组件，不自造通用组件。
 
 ## 提交
 

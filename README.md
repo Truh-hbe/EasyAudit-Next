@@ -5,11 +5,12 @@ EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Cor
 ## 当前能力
 
 - 组织、部门、用户，本地账号与服务端 Session，最小化管理后台，凭证重置。
-- 审查计划 → 审查案例 → 发现 → 整改项与证据元数据 → 整改提交 → 验证 → 关闭。
-- 个人工作台、站内通知、管理进度与逾期视图、手动催办、自动提醒（调度器尚未接入）。
-- React 产品界面，覆盖以上全部流程。
+- 审查计划 → 审查案例 → 发现 → 整改项与证据文件 → 整改提交 → 验证 → 关闭。
+- 个人工作台、站内通知、管理进度与逾期视图、管理快照导出（CSV/XLSX）、手动催办、每日自动提醒。
+- React + Ant Design 产品界面，覆盖以上全部流程。
+- 私有网络部署（HTTPS 网关、对象存储、备份与恢复演练）、健康检查、结构化日志，见 [deploy/README.md](deploy/README.md)。
 
-尚未具备：生产部署、证据文件存储、定时调度、导出。见 [路线](docs/roadmap.md)。
+尚未具备：OIDC/SSO、MFA、邮件或企业 IM 通知、数据保留策略。见 [路线](docs/roadmap.md)。
 
 ## 快速开始
 
@@ -65,6 +66,7 @@ cd web && npm run typecheck && npm run lint && npm run test && npm run test:brow
 
 - [docs/architecture.md](docs/architecture.md)：架构规则
 - [docs/domain.md](docs/domain.md)：领域模型与场景
+- [docs/design.md](docs/design.md)：前端 UI 规范
 - [docs/roadmap.md](docs/roadmap.md)：路线
 - [docs/adr/](docs/adr/)：架构决策记录
 - [AGENTS.md](AGENTS.md)：开发流程与 Agent 分工

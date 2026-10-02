@@ -178,13 +178,13 @@ export function ReviewCaseCreatePage() {
   }
 
   if (loadState.status === 'loading') {
-    return <section className="surface-page"><p className="eyebrow">M5.2 · step 2 of 2</p><h1>新建审查案例</h1><p role="status">正在恢复计划并读取当前可用场景…</p></section>
+    return <section className="surface-page"><p className="eyebrow">第 2 步，共 2 步</p><h1>新建审查案例</h1><p role="status">正在恢复计划并读取当前可用场景…</p></section>
   }
 
   if (loadState.status === 'error') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M5.2 · step 2 of 2</p>
+        <p className="eyebrow">第 2 步，共 2 步</p>
         <h1>无法继续创建案例</h1>
         <div className="surface-card" role="alert">
           <p>{loadState.message}</p>
@@ -200,7 +200,7 @@ export function ReviewCaseCreatePage() {
     <section className="surface-page" aria-labelledby="review-case-create-title">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">M5.2 · step 2 of 2</p>
+          <p className="eyebrow">第 2 步，共 2 步</p>
           <h1 id="review-case-create-title">新建审查案例</h1>
         </div>
         <span className="wizard-step">计划已保存</span>

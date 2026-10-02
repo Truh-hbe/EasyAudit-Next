@@ -329,17 +329,17 @@ export function ActionItemDetailPage() {
   }
 
   if (!primaryMatchesRoute || primary.status === 'loading') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.3</p><h1>Action Item</h1><p>正在确认当前 Action 授权…</p></section>
+    return <section className="surface-page"><h1>Action Item</h1><p>正在确认当前 Action 授权…</p></section>
   }
 
   if (primary.status === 'unavailable') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.3</p><h1>Action Item 不可用</h1><p>当前服务器未提供此 Action 的可见内容。</p></section>
+    return <section className="surface-page"><h1>Action Item 不可用</h1><p>当前服务器未提供此 Action 的可见内容。</p></section>
   }
 
   if (primary.status === 'error') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.3</p><h1>Action Item</h1>
+        <h1>Action Item</h1>
         <div role="alert" className="surface-card"><p>{primary.message}</p><button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button></div>
       </section>
     )

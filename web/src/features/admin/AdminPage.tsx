@@ -114,7 +114,7 @@ export function AdminPage() {
   if (state.status === 'error') {
     return (
       <section className="surface-page" aria-labelledby="admin-title">
-        <div className="page-heading"><div><p className="eyebrow">M5.4 · administration</p><h1 id="admin-title">管理设置</h1></div></div>
+        <div className="page-heading"><div><h1 id="admin-title">管理设置</h1></div></div>
         <section className="surface-card" role="alert">
           <p>{state.message}</p>
           <button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button>
@@ -261,7 +261,7 @@ export function AdminPage() {
   return (
     <section className="surface-page" aria-labelledby="admin-title">
       <div className="page-heading">
-        <div><p className="eyebrow">M5.4 · minimal pilot administration</p><h1 id="admin-title">管理设置</h1></div>
+        <div><h1 id="admin-title">管理设置</h1></div>
         <p>{organization.name} · {organization.is_active ? '启用' : '停用'}</p>
       </div>
 

@@ -125,7 +125,7 @@ export function ReviewPlanCreatePage() {
     <section className="surface-page" aria-labelledby="review-plan-create-title">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">M5.2 · step 1 of 2</p>
+          <p className="eyebrow">第 1 步，共 2 步</p>
           <h1 id="review-plan-create-title">新建审查计划</h1>
         </div>
         <span className="wizard-step">先保存计划，再创建案例</span>
