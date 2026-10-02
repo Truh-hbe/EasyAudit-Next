@@ -42,6 +42,12 @@ const columns: TableColumnsType<ReviewCaseResponse> = [
     render: (_title: string, reviewCase) => <Link to={`/review-cases/${reviewCase.id}`}>{reviewCase.title}</Link>,
   },
   {
+    title: '状态',
+    dataIndex: 'lifecycle',
+    key: 'lifecycle',
+    render: (_lifecycle: unknown, reviewCase) => <StatusTag kind="reviewCase" value={reviewCase.lifecycle} />,
+  },
+  {
     title: '审查场景',
     key: 'scenario',
     render: (_value: unknown, reviewCase) => (
@@ -52,12 +58,6 @@ const columns: TableColumnsType<ReviewCaseResponse> = [
         </Typography.Text>
       </Flex>
     ),
-  },
-  {
-    title: '状态',
-    dataIndex: 'lifecycle',
-    key: 'lifecycle',
-    render: (_lifecycle: unknown, reviewCase) => <StatusTag kind="reviewCase" value={reviewCase.lifecycle} />,
   },
   {
     title: '计划开始',
