@@ -240,6 +240,7 @@ export function NotificationCenterPage() {
             <Button
               type={mode === 'all' ? 'primary' : 'default'}
               aria-pressed={mode === 'all'}
+              autoInsertSpace={false}
               onClick={() => changeMode('all')}
             >
               全部
