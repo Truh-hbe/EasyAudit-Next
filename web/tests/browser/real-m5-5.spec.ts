@@ -284,7 +284,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     const processPlanId = await createPlan(firstPage, 'M5.5 Process Plan')
     await expectStepTwoReload(firstPage, processPlanId)
     await firstPage.getByLabel('审查场景').selectOption('process_review@1')
-    await firstPage.getByLabel('案例名称').fill('M5.5 Process Case')
+    await firstPage.getByLabel('审查活动名称').fill('M5.5 Process Case')
     await firstPage.getByLabel('区域代码').fill('M55-PROCESS')
     await firstPage.getByLabel('审查类型').fill('')
     const rejectedCasePromise = firstPage.waitForResponse(
@@ -355,7 +355,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await firstPage.getByRole('link', { name: '新建审查计划' }).click()
     const compliancePlanId = await createPlan(firstPage, 'M5.5 Compliance Plan')
     await firstPage.getByLabel('审查场景').selectOption('compliance_review@1')
-    await firstPage.getByLabel('案例名称').fill('M5.5 Compliance Case')
+    await firstPage.getByLabel('审查活动名称').fill('M5.5 Compliance Case')
     await firstPage.getByLabel('标准 / 依据').fill('M55-STANDARD')
     await firstPage.getByLabel('范围摘要').fill('M5.5 controlled pilot scope')
     const complianceCasePromise = firstPage.waitForResponse(
@@ -383,7 +383,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await firstPage.getByRole('link', { name: '新建审查计划' }).click()
     const ambiguousPlanId = await createPlan(firstPage, 'M5.5 Ambiguous Case Plan')
     await firstPage.getByLabel('审查场景').selectOption('process_review@1')
-    await firstPage.getByLabel('案例名称').fill('M5.5 Ambiguous Case')
+    await firstPage.getByLabel('审查活动名称').fill('M5.5 Ambiguous Case')
     await firstPage.getByLabel('区域代码').fill('M55-AMBIGUOUS')
     await firstPage.getByLabel('审查类型').fill('standard')
     const abortHandler = async (route: Route) => {
@@ -426,7 +426,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     expect(inactiveCandidate.status).toBe(200)
     expect(inactiveCandidate.body).not.toContain(INACTIVE_DISPLAY_NAME)
     await firstPage.goto(`/review-cases/${FOREIGN_CASE_ID}`)
-    await expect(firstPage.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
+    await expect(firstPage.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
     await expect(firstPage.locator('body')).not.toContainText('M5.5 Foreign Case Must Stay Hidden')
 
     const adminOnlyCase = await fetchStatus(page, `/api/v1/review-cases/${ADMIN_CASE_ID}`)
@@ -476,7 +476,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await expect(firstPage.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
     await expect(firstPage.locator('body')).not.toContainText(FIRST_RESET_PASSWORD)
     await submitPasswordChange(firstPage, FIRST_RESET_PASSWORD, FIRST_RESET_CHANGED_PASSWORD)
-    await expect(firstPage.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
+    await expect(firstPage.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
   } finally {
     await secondContext.close()
     await firstContext.close()

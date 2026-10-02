@@ -16,6 +16,7 @@ import type {
 } from '../../api/product'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import type { ScenarioCaseAdapter, ScenarioFormValues } from '../../scenarios/registry'
+import { ButtonLink } from '../../ui/ButtonLink'
 
 type LoadState =
   | { status: 'loading' }
@@ -57,7 +58,7 @@ function caseRejectionMessage(error: unknown): string {
   if (isIdempotencyKeyReuse(error)) {
     return '提交的内容与此前使用同一幂等键的请求不一致。请刷新页面后重试。'
   }
-  return errorMessage(error, '案例创建被服务器拒绝，请修正后重试。')
+  return errorMessage(error, '审查活动创建被服务器拒绝，请修正后重试。')
 }
 
 export async function executeCaseSubmission(
@@ -71,7 +72,7 @@ export async function executeCaseSubmission(
         ? { status: 'rejected', message: caseRejectionMessage(error) }
         : {
             status: 'unknown',
-            message: '案例创建结果未知。可以重试创建：同一次提交使用相同的幂等键，不会重复创建；系统不会自动再次提交。',
+            message: '审查活动创建结果未知。可以重试创建：同一次提交使用相同的幂等键，不会重复创建；系统不会自动再次提交。',
           },
     }
   }
@@ -106,7 +107,7 @@ export function ReviewCaseCreatePage() {
 
   useEffect(() => {
     if (planId === undefined || planId.trim() === '') {
-      setLoadState({ status: 'error', message: '缺少审查计划编号，无法继续创建案例。' })
+      setLoadState({ status: 'error', message: '缺少审查计划编号，无法继续创建审查活动。' })
       return
     }
     const controller = new AbortController()
@@ -156,11 +157,11 @@ export function ReviewCaseCreatePage() {
       !canCreateCase(scenarioAdapter, submitState)
     ) return
     if (caseTitle.trim() === '') {
-      setSubmitState({ status: 'rejected', message: '请输入案例名称。' })
+      setSubmitState({ status: 'rejected', message: '请输入审查活动名称。' })
       return
     }
     if (caseTitle !== caseTitle.trim()) {
-      setSubmitState({ status: 'rejected', message: '案例名称前后不能有空格。' })
+      setSubmitState({ status: 'rejected', message: '审查活动名称前后不能有空格。' })
       return
     }
 
@@ -178,14 +179,14 @@ export function ReviewCaseCreatePage() {
   }
 
   if (loadState.status === 'loading') {
-    return <section className="surface-page"><p className="eyebrow">第 2 步，共 2 步</p><h1>新建审查案例</h1><p role="status">正在恢复计划并读取当前可用场景…</p></section>
+    return <section className="surface-page"><p className="eyebrow">第 2 步，共 2 步</p><h1>新建审查活动</h1><p role="status">正在恢复计划并读取当前可用场景…</p></section>
   }
 
   if (loadState.status === 'error') {
     return (
       <section className="surface-page">
         <p className="eyebrow">第 2 步，共 2 步</p>
-        <h1>无法继续创建案例</h1>
+        <h1>无法继续创建审查活动</h1>
         <div className="surface-card" role="alert">
           <p>{loadState.message}</p>
           <Link to="/review-cases">返回审查活动</Link>
@@ -201,7 +202,7 @@ export function ReviewCaseCreatePage() {
       <div className="page-heading">
         <div>
           <p className="eyebrow">第 2 步，共 2 步</p>
-          <h1 id="review-case-create-title">新建审查案例</h1>
+          <h1 id="review-case-create-title">新建审查活动</h1>
         </div>
         <span className="wizard-step">计划已保存</span>
       </div>
@@ -215,8 +216,8 @@ export function ReviewCaseCreatePage() {
       </div>
 
       <div className="surface-card">
-        <h2>案例信息</h2>
-        <p className="field-help">案例名称必须单独填写；计划名称和计划日期不会自动复制到案例。</p>
+        <h2>审查活动信息</h2>
+        <p className="field-help">审查活动名称必须单独填写；计划名称和计划日期不会自动复制到审查活动。</p>
         <form
           onSubmit={(event) => {
             event.preventDefault()
@@ -224,7 +225,7 @@ export function ReviewCaseCreatePage() {
           }}
         >
           <label>
-            案例名称
+            审查活动名称
             <input
               value={caseTitle}
               onChange={(event) => setCaseTitle(event.target.value)}
@@ -245,7 +246,7 @@ export function ReviewCaseCreatePage() {
               }}
               disabled={!canSubmitCase(submitState)}
             >
-              <option value="" disabled>请选择精确场景版本</option>
+              <option value="" disabled>请选择审查场景</option>
               {loadState.catalog.map((item) => (
                 <option
                   key={identity(item)}
@@ -258,7 +259,7 @@ export function ReviewCaseCreatePage() {
             </select>
           </label>
           {unsupportedSelection ? (
-            <p role="alert">当前精确场景版本没有可用的页面适配器，创建已关闭。</p>
+            <p role="alert">当前版本的审查场景界面暂不支持，创建已关闭。</p>
           ) : null}
           {CaseCreateFields === undefined ? null : (
             <CaseCreateFields
@@ -270,16 +271,16 @@ export function ReviewCaseCreatePage() {
           {submitState.status === 'rejected' ? <p role="alert">{submitState.message}</p> : null}
           {submitState.status === 'unknown' ? <p role="alert">{submitState.message}</p> : null}
           <div className="wizard-actions">
-            <Link className="secondary-button" to="/review-cases">取消</Link>
+            <ButtonLink to="/review-cases">取消</ButtonLink>
             <button
               type="submit"
               disabled={!canCreateCase(scenarioAdapter, submitState)}
             >
               {submitState.status === 'submitting'
-                ? '正在创建案例…'
+                ? '正在创建审查活动…'
                 : submitState.status === 'unknown'
-                  ? '重试创建案例'
-                  : '创建案例'}
+                  ? '重试创建审查活动'
+                  : '创建审查活动'}
             </button>
           </div>
           {submitState.status === 'unknown' ? (

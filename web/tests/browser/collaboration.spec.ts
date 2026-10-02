@@ -115,7 +115,7 @@ test('Finding primary refusal prevents all subordinate reads and protected stale
   )
 
   await page.goto('/findings/blocked')
-  await expect(page.getByRole('heading', { name: 'Finding 不可用' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
   await expect(page.getByText('Calibration evidence gap')).toHaveCount(0)
   expect(subordinateRequests).toBe(0)
 })
@@ -135,7 +135,7 @@ test('Action primary refusal prevents assignee evidence activity and parent read
   )
 
   await page.goto('/action-items/blocked')
-  await expect(page.getByRole('heading', { name: 'Action Item 不可用' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '整改项不可用' })).toBeVisible()
   await expect(page.getByText('Restore calibration record')).toHaveCount(0)
   expect(subordinateRequests).toBe(0)
 })
@@ -162,7 +162,7 @@ test('exact process_review@1 Finding renders Scenario data while unknown version
   version = 99
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Calibration evidence gap' })).toBeVisible()
-  await expect(page.getByText('不支持当前精确 Scenario UI：process_review@99。通用 Finding 信息仍可查看。')).toBeVisible()
+  await expect(page.getByText('暂不支持当前版本的审查场景界面（过程审查 · process_review@99）。仍可查看发现项的通用信息。')).toBeVisible()
   await expect(page.getByRole('heading', { name: '业务操作' })).toHaveCount(0)
 })
 
@@ -201,7 +201,7 @@ test('stale participant add 409 refetches terminal Finding and never persists a 
   await expect(page.getByText('Quality Department')).toBeVisible()
   await page.getByRole('button', { name: '添加', exact: true }).click()
 
-  await expect(page.locator('.status-pill')).toHaveText('closed')
+  await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
   await expect(page.getByText('暂无参与关系。')).toBeVisible()
   await expect(page.getByText('Quality Department')).toHaveCount(0)
   expect(participantPostCount).toBe(1)
@@ -253,9 +253,9 @@ test('Action stale transition 409 refetches server lifecycle and Evidence stays 
   await expect(page.getByText('calibration-report.pdf')).toBeVisible()
   await expect(page.getByText('private/storage/key')).toHaveCount(0)
   await expect(page.getByText('a'.repeat(64))).toHaveCount(0)
-  await page.getByRole('button', { name: '开始', exact: true }).click()
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
 
-  await expect(page.locator('.status-pill')).toHaveText('in progress')
+  await expect(page.getByRole('article').locator('header').getByText('执行中', { exact: true })).toBeVisible()
   await expect(page.getByRole('status')).toContainText('stale Action lifecycle')
 })
 
@@ -294,9 +294,9 @@ test('Finding creation uses server response as truth and validation failure crea
   await page.getByLabel('标题').fill('New Finding')
   await page.getByLabel('问题类型').fill('control_gap')
   await page.getByLabel('项目类别').fill('assembly')
-  await page.getByRole('button', { name: '创建 Finding' }).click()
+  await page.getByRole('button', { name: '新建发现项' }).click()
   await expect(page.getByRole('alert')).toContainText('Scenario validation failed')
-  await expect(page.getByText('暂无 Finding。')).toBeVisible()
+  await expect(page.getByText('暂无发现项。')).toBeVisible()
   await expect(page).toHaveURL(/\/review-cases\/case-1$/)
 
   shouldSucceed = true
@@ -321,7 +321,7 @@ test('Finding creation uses server response as truth and validation failure crea
     (route) => fulfillJson(route, 200, []),
   )
 
-  await page.getByRole('button', { name: '创建 Finding' }).click()
+  await page.getByRole('button', { name: '新建发现项' }).click()
   await expect(page).toHaveURL(/\/findings\/finding-new$/)
   await expect(page.getByRole('heading', { name: 'Calibration evidence gap' })).toBeVisible()
 })

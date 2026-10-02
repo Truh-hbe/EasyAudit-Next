@@ -92,7 +92,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   await expectStepTwoReload(page, firstPlan.id)
   await page.getByLabel('审查场景').selectOption('process_review@1')
   await expect(page.getByLabel('区域代码')).toBeVisible()
-  await page.getByLabel('案例名称').fill('M5.2 Process Case')
+  await page.getByLabel('审查活动名称').fill('M5.2 Process Case')
   await page.getByLabel('区域代码').fill('area-a')
   await page.getByLabel('审查类型').fill('')
 
@@ -157,7 +157,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
   await page.getByLabel('审查场景').selectOption('compliance_review@1')
   await expect(page.getByLabel('标准 / 依据')).toBeVisible()
-  await page.getByLabel('案例名称').fill('M5.2 Compliance Case')
+  await page.getByLabel('审查活动名称').fill('M5.2 Compliance Case')
   await page.getByLabel('标准 / 依据').fill('standard-a')
   await page.getByLabel('范围摘要').fill('pilot scope')
 

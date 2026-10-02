@@ -59,7 +59,7 @@ test('real Case team searches all exact roles, adds, removes, and protects final
   const team = page.getByRole('region', { name: '团队管理' })
   await expect(team.getByText(LEAD_DISPLAY_NAME)).toBeVisible()
   const leadMember = team.locator('li').filter({ hasText: LEAD_DISPLAY_NAME })
-  await expect(leadMember.getByText('负责人', { exact: true })).toBeVisible()
+  await expect(leadMember.getByText('审查组长', { exact: true })).toBeVisible()
 
   for (const roleKey of ['lead', 'auditor', 'reviewer', 'observer']) {
     await searchRole(page, roleKey)

@@ -25,13 +25,13 @@ const PAGE_SIZE = 20
 function notificationKindText(kind: NotificationResponse['kind']): string {
   const labels: Record<NotificationResponse['kind'], string> = {
     case_membership_added: '审查成员变更',
-    finding_participant_added: 'Finding 参与关系',
-    action_assignee_added: 'Action 执行关系',
-    finding_submitted_for_verification: 'Finding 待验证',
-    manual_finding_nudge: 'Finding 催办',
-    manual_action_nudge: 'Action 催办',
+    finding_participant_added: '发现项参与关系',
+    action_assignee_added: '整改项执行关系',
+    finding_submitted_for_verification: '发现项待验证',
+    manual_finding_nudge: '发现项催办',
+    manual_action_nudge: '整改项催办',
     automatic_case_reminder: '审查到期提醒',
-    automatic_action_reminder: 'Action 到期提醒',
+    automatic_action_reminder: '整改项到期提醒',
   }
   return labels[kind]
 }
@@ -52,11 +52,11 @@ function subjectPath(subject: NotificationSubjectResponse): string | null {
 function subjectText(subject: NotificationSubjectResponse): string {
   switch (subject.kind) {
     case 'review_case':
-      return 'ReviewCase'
+      return '审查活动'
     case 'finding':
-      return 'Finding'
+      return '发现项'
     case 'action_item':
-      return 'Action Item'
+      return '整改项'
     default:
       return '未知目标'
   }

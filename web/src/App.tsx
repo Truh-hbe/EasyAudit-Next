@@ -14,7 +14,7 @@ function ResolvingPage() {
   return (
     <main className="foundation" aria-labelledby="resolving-title">
       <h1 id="resolving-title">正在确认服务器会话</h1>
-      <p>受保护界面会在服务器 Session 与凭据状态确认后再决定是否呈现。</p>
+      <p>受保护界面会在服务器确认登录状态与密码状态确认后再决定是否呈现。</p>
       {resolutionError === null ? null : (
         <div role="alert">
           <p>{resolutionError}</p>

@@ -73,10 +73,10 @@ test('real compliance observation closes through shared Product routes and exact
   await findingLink.click()
   await expect(page.getByRole('heading', { name: FINDING_TITLE })).toBeVisible()
   await expect(page.getByText('7.5.3')).toBeVisible()
-  await expect(page.getByText('observation', { exact: true })).toBeVisible()
-  await expect(page.getByText('暂无 Action Item。')).toBeVisible()
-  await expect(page.getByText('暂无 Finding Submission。')).toBeVisible()
-  await expect(page.getByRole('button', { name: '接受 Observation' })).toBeVisible()
+  await expect(page.getByText('观察项', { exact: true })).toBeVisible()
+  await expect(page.getByText('暂无整改项。')).toBeVisible()
+  await expect(page.getByText('暂无提交记录。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '接受观察项' })).toBeVisible()
   await expect(page.getByRole('button', { name: '签发不符合项' })).toHaveCount(0)
 
   const nudgeRequestPromise = page.waitForRequest(
@@ -89,7 +89,7 @@ test('real compliance observation closes through shared Product routes and exact
       apiPath(response.url()) === `/api/v1/findings/${FINDING_ID}/nudge` &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: '催一下', exact: true }).click()
+  await page.getByRole('button', { name: '催办', exact: true }).click()
   const nudgeRequest = await nudgeRequestPromise
   const nudgeResponse = await nudgeResponsePromise
   expect(nudgeRequest.postData()).toBeNull()
@@ -105,7 +105,7 @@ test('real compliance observation closes through shared Product routes and exact
       apiPath(response.url()) === `/api/v1/findings/${FINDING_ID}/transitions` &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: '接受 Observation' }).click()
+  await page.getByRole('button', { name: '接受观察项' }).click()
 
   const transitionRequest = await transitionRequestPromise
   const requestPayload = transitionRequest.postDataJSON() as {
@@ -118,10 +118,10 @@ test('real compliance observation closes through shared Product routes and exact
   const transitionPayload = (await transitionResponse.json()) as { lifecycle: string }
   expect(transitionPayload.lifecycle).toBe('closed')
 
-  await expect(page.locator('.status-pill')).toHaveText('closed')
-  await expect(page.getByText('Observation 已接受并闭环。')).toBeVisible()
-  await expect(page.getByRole('button', { name: '接受 Observation' })).toHaveCount(0)
-  await expect(page.getByText('暂无 Action Item。')).toBeVisible()
-  await expect(page.getByText('暂无 Finding Submission。')).toBeVisible()
+  await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
+  await expect(page.getByText('观察项已接受并闭环。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '接受观察项' })).toHaveCount(0)
+  await expect(page.getByText('暂无整改项。')).toBeVisible()
+  await expect(page.getByText('暂无提交记录。')).toBeVisible()
   await expect(page.getByText('finding.transitioned', { exact: true })).toBeVisible()
 })

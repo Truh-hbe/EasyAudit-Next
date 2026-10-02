@@ -276,7 +276,7 @@ test('ReviewCase collection uses the server envelope for pagination and never re
   })
 
   await page.goto('/review-cases?limit=2&offset=0')
-  await expect(page.getByText('正在读取服务器授权后的 ReviewCase 页面…')).toBeVisible()
+  await expect(page.getByText('正在读取审查活动…')).toBeVisible()
   firstPageGate.resolve()
   await expect(page.getByText('Visible A')).toBeVisible()
   await expect(page.getByText('Visible B')).toBeVisible()
@@ -288,6 +288,30 @@ test('ReviewCase collection uses the server envelope for pagination and never re
   await expect(page.getByText('Visible C')).toBeVisible()
   await expect(page.getByText('Visible A')).toHaveCount(0)
   await expect(page.getByText('3–3 / 3')).toBeVisible()
+})
+
+test('审查活动列表：新建入口是链接，状态显示为中文 StatusTag', async ({ page }) => {
+  await stubReadySession(page)
+  await page.route((url) => url.pathname === '/api/v1/review-cases', async (route) => {
+    await fulfillJson(route, 200, {
+      items: [caseResponse('case-a', { title: 'Visible A', lifecycle: 'in_progress' })],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    })
+  })
+
+  await page.goto('/review-cases')
+  const create = page.getByRole('link', { name: '新建审查计划' })
+  await expect(create).toHaveAttribute('href', '/review-plans/new')
+  await expect(page.getByRole('button', { name: '新建审查计划' })).toHaveCount(0)
+  const tag = page.getByText('审查中', { exact: true })
+  await expect(tag).toBeVisible()
+  await expect(tag).toHaveCSS('color', 'rgb(9, 88, 217)')
+  await expect(page.getByText('in_progress')).toHaveCount(0)
+
+  await create.click()
+  await expect(page).toHaveURL(/\/review-plans\/new$/)
 })
 
 test('ReviewCase primary authorization failure prevents all subordinate reads and stale detail rendering', async ({ page }) => {
@@ -308,9 +332,9 @@ test('ReviewCase primary authorization failure prevents all subordinate reads an
   })
 
   await page.goto('/review-cases/blocked')
-  await expect(page.getByText('正在确认当前 ReviewCase 授权…')).toBeVisible()
+  await expect(page.getByText('正在确认访问权限…')).toBeVisible()
   caseGate.resolve()
-  await expect(page.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
   await expect(page.getByText('Foundation Case')).toHaveCount(0)
   expect(subordinateRequests).toBe(0)
 })
@@ -363,11 +387,11 @@ test('ReviewCase route change binds rendered and subordinate state to the newly 
   `)
 
   await expect(page).toHaveURL(/\/review-cases\/case-b$/)
-  await expect(page.getByText('正在确认当前 ReviewCase 授权…')).toBeVisible()
+  await expect(page.getByText('正在确认访问权限…')).toBeVisible()
   await expect(page.getByText('Authorized Case A')).toHaveCount(0)
   await expect(page.getByText('Case A Member')).toHaveCount(0)
   caseBGate.resolve()
-  await expect(page.getByRole('heading', { name: 'ReviewCase 不可用' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
   expect(blockedSubordinateRequests).toBe(0)
 })
 
@@ -384,7 +408,7 @@ test('visible Case keeps generic truth when exact Scenario UI is unsupported and
 
   await page.goto('/review-cases/case-99')
   await expect(page.getByRole('heading', { name: 'Unknown Version Case' })).toBeVisible()
-  await expect(page.getByText('不支持当前精确 Scenario UI：process_review@99。通用 Case 信息仍可查看。')).toBeVisible()
+  await expect(page.getByText('暂不支持当前版本的审查场景界面（过程审查 · process_review@99）。仍可查看审查活动的通用信息。')).toBeVisible()
   await expect(page.getByText('SHOULD-NOT-FALLBACK')).toHaveCount(0)
   await expect(page.getByText('当前用户没有可用的管理进度摘要。')).toBeVisible()
 })
@@ -418,8 +442,8 @@ test('visible process_review@1 Case renders Case-scoped identity, Findings, serv
   await expect(page.getByText('Human Member')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Visible Finding' })).toHaveAttribute('href', '/findings/finding-real')
   await expect(page.getByText('review_case.created')).toBeVisible()
-  await expect(page.getByText('Action overdue')).toBeVisible()
-  await expect(page.locator('.compact-facts > div', { hasText: 'Action overdue' }).locator('dd')).toHaveText('1')
+  await expect(page.getByText('整改项已逾期')).toBeVisible()
+  await expect(page.locator('.compact-facts > div', { hasText: '整改项已逾期' }).locator('dd')).toHaveText('1')
   await expect(page.getByText('metadata')).toHaveCount(0)
 })
 

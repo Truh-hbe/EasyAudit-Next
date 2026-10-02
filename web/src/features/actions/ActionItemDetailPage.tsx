@@ -26,7 +26,9 @@ import type {
   FindingResponse,
   ReviewCaseResponse,
 } from '../../api/product'
-import { formatDateTime, lifecycleText } from '../../product/format'
+import { formatDateTime } from '../../product/format'
+import { assignmentRoleName } from '../../product/terms'
+import { StatusTag } from '../../ui/StatusTag'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 
 type PrimaryState =
@@ -157,7 +159,7 @@ export function ActionItemDetailPage() {
         setPrimary(
           unavailable(error)
             ? { status: 'unavailable', actionItemId: requestedId }
-            : { status: 'error', actionItemId: requestedId, message: errorMessage(error, 'ActionItem 请求失败') },
+            : { status: 'error', actionItemId: requestedId, message: errorMessage(error, '整改项请求失败') },
         )
       })
     return () => controller.abort()
@@ -189,7 +191,7 @@ export function ActionItemDetailPage() {
           setReviewCase(
             unavailable(error)
               ? { status: 'unavailable', actionItemId: authorizedActionId }
-              : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, 'ReviewCase 请求失败') },
+              : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '审查活动请求失败') },
           )
         }
       })
@@ -198,7 +200,7 @@ export function ActionItemDetailPage() {
         setFinding(
           unavailable(error)
             ? { status: 'unavailable', actionItemId: authorizedActionId }
-            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, 'Finding 请求失败') },
+            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '发现项请求失败') },
         )
         setReviewCase({ status: 'unavailable', actionItemId: authorizedActionId })
       })
@@ -225,7 +227,7 @@ export function ActionItemDetailPage() {
         setEvidences(
           unavailable(error)
             ? { status: 'unavailable', actionItemId: authorizedActionId }
-            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, 'Evidence 请求失败') },
+            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '证据请求失败') },
         )
       })
 
@@ -238,7 +240,7 @@ export function ActionItemDetailPage() {
         setActivities(
           unavailable(error)
             ? { status: 'unavailable', actionItemId: authorizedActionId }
-            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, 'Activity 请求失败') },
+            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '操作记录请求失败') },
         )
       })
 
@@ -276,12 +278,12 @@ export function ActionItemDetailPage() {
       const result = await nudgeActionItem(currentActionId)
       if (currentActionItemIdRef.current !== commandActionItemId) return
       setNudgeMessage(
-        `服务器已确认催办：${result.recipient_count} 位接收人，Activity ${result.activity_id}。`,
+        `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
       )
       setRevision((value) => value + 1)
     } catch (error) {
       if (currentActionItemIdRef.current !== commandActionItemId) return
-      setNudgeMessage(errorMessage(error, 'Action 催办失败'))
+      setNudgeMessage(errorMessage(error, '整改项催办失败'))
       if (error instanceof ApiError && error.status === 404) {
         setRevision((value) => value + 1)
       }
@@ -329,17 +331,17 @@ export function ActionItemDetailPage() {
   }
 
   if (!primaryMatchesRoute || primary.status === 'loading') {
-    return <section className="surface-page"><h1>Action Item</h1><p>正在确认当前 Action 授权…</p></section>
+    return <section className="surface-page"><h1>整改项</h1><p>正在确认访问权限…</p></section>
   }
 
   if (primary.status === 'unavailable') {
-    return <section className="surface-page"><h1>Action Item 不可用</h1><p>当前服务器未提供此 Action 的可见内容。</p></section>
+    return <section className="surface-page"><h1>整改项不可用</h1><p>当前没有可见的整改项内容。</p></section>
   }
 
   if (primary.status === 'error') {
     return (
       <section className="surface-page">
-        <h1>Action Item</h1>
+        <h1>整改项</h1>
         <div role="alert" className="surface-card"><p>{primary.message}</p><button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button></div>
       </section>
     )
@@ -392,30 +394,30 @@ export function ActionItemDetailPage() {
     <article className="surface-page" aria-labelledby="action-title">
       <header className="case-header surface-card">
         <div>
-          <p className="eyebrow">Action Item</p>
+          <p className="eyebrow">整改项</p>
           <h1 id="action-title">{action.title}</h1>
-          <p><Link to={`/findings/${action.finding_id}`}>返回 Finding</Link></p>
+          <p><Link to={`/findings/${action.finding_id}`}>返回发现项</Link></p>
         </div>
-        <span className="status-pill">{lifecycleText(action.lifecycle)}</span>
+        <StatusTag kind="actionItem" value={action.lifecycle} />
       </header>
 
       <section className="surface-card" aria-labelledby="action-overview-title">
         <h2 id="action-overview-title">整改事项</h2>
         <dl className="fact-grid">
-          <div><dt>Action ID</dt><dd>{action.id}</dd></div>
-          <div><dt>Finding</dt><dd>{action.finding_id}</dd></div>
+          <div><dt>整改项 ID</dt><dd>{action.id}</dd></div>
+          <div><dt>发现项</dt><dd>{action.finding_id}</dd></div>
           <div><dt>到期时间</dt><dd>{formatDateTime(action.due_at)}</dd></div>
           <div><dt>完成时间</dt><dd>{formatDateTime(action.completed_at)}</dd></div>
         </dl>
-        <p className="empty-note">到期时间按 wire fact 展示；本页不计算新的逾期规则。</p>
+        <p className="empty-note">到期时间以服务器记录为准；本页不计算新的逾期规则。</p>
       </section>
 
       <section className="surface-card" aria-labelledby="action-parent-title">
-        <h2 id="action-parent-title">所属 Finding</h2>
-        {findingState.status === 'idle' || findingState.status === 'loading' ? <p>正在读取 Finding…</p> : null}
-        {findingState.status === 'unavailable' ? <p className="empty-note">Finding 上下文不可用。</p> : null}
+        <h2 id="action-parent-title">所属发现项</h2>
+        {findingState.status === 'idle' || findingState.status === 'loading' ? <p>正在读取发现项…</p> : null}
+        {findingState.status === 'unavailable' ? <p className="empty-note">发现项信息不可用。</p> : null}
         {findingState.status === 'error' ? <p role="alert">{findingState.message}</p> : null}
-        {findingState.status === 'ready' ? <p><Link to={`/findings/${findingState.data.id}`}>{findingState.data.title}</Link> · {lifecycleText(findingState.data.lifecycle)}</p> : null}
+        {findingState.status === 'ready' ? <p><Link to={`/findings/${findingState.data.id}`}>{findingState.data.title}</Link> · <StatusTag kind="finding" value={findingState.data.lifecycle} /></p> : null}
       </section>
 
       <section className="surface-card" aria-labelledby="assignees-title">
@@ -429,7 +431,7 @@ export function ActionItemDetailPage() {
             {assigneeState.data.map((assignee) => (
               <li key={`${assignee.actor_kind}-${assignee.actor_id}-${assignee.role}`}>
                 <strong>{assignee.display_name}</strong>
-                <span>{assignee.role} · {actorKindText(assignee.actor_kind)}</span>
+                <span>{assignmentRoleName(assignee.role)} · {actorKindText(assignee.actor_kind)}</span>
                 <span>加入于 {formatDateTime(assignee.assigned_at)}</span>
               </li>
             ))}
@@ -457,7 +459,7 @@ export function ActionItemDetailPage() {
               <label>搜索<input value={candidateQuery} onChange={(event) => setCandidateQuery(event.target.value)} disabled={commandBusy} placeholder="至少 2 个字符" /></label>
             </div>
             <button type="button" className="secondary" onClick={() => void searchAssignees()} disabled={commandBusy}>搜索候选</button>
-            {candidateState.status === 'loading' ? <p>正在查询当前 Action 允许的候选…</p> : null}
+            {candidateState.status === 'loading' ? <p>正在查询可选人员…</p> : null}
             {candidateState.status === 'error' ? <p role="alert">{candidateState.message}</p> : null}
             {candidateState.status === 'ready' && candidateState.data.length === 0 ? <p className="empty-note">没有匹配候选。</p> : null}
             {candidateState.status === 'ready' && candidateState.data.length > 0 ? (
@@ -476,58 +478,58 @@ export function ActionItemDetailPage() {
       </section>
 
       {scenarioAdapter === undefined ? (
-        <section className="surface-card"><h2>业务操作</h2><p className="empty-note">精确 Scenario UI 不可用，Action mutation 已关闭。</p></section>
+        <section className="surface-card"><h2>业务操作</h2><p className="empty-note">当前审查场景的界面不可用，整改项操作已关闭。</p></section>
       ) : (
         <section className="surface-card" aria-labelledby="action-command-title">
           <h2 id="action-command-title">业务操作</h2>
-          <p className="empty-note">当前 lifecycle 只用于隐藏明显无关操作；服务器授权与并发校验仍是最终结果。</p>
+          <p className="empty-note">这里只隐藏明显无关的操作；最终授权与并发校验以服务器为准。</p>
           {action.lifecycle === 'todo' ? (
             <div className="command-stack">
-              <button type="button" onClick={() => void runCommand('开始 Action', () => transitionActionItem(action.id, 'start'))} disabled={commandBusy}>开始</button>
+              <button type="button" onClick={() => void runCommand('开始整改项', () => transitionActionItem(action.id, 'start'))} disabled={commandBusy}>开始整改项</button>
               <label>取消原因<input value={transitionReason} onChange={(event) => setTransitionReason(event.target.value)} disabled={commandBusy} /></label>
-              <button type="button" className="secondary" onClick={() => void runCommand('取消 Action', () => transitionActionItem(action.id, 'cancel', transitionReason))} disabled={commandBusy}>取消</button>
+              <button type="button" className="secondary" onClick={() => void runCommand('取消整改项', () => transitionActionItem(action.id, 'cancel', transitionReason))} disabled={commandBusy}>取消整改项</button>
             </div>
           ) : null}
           {action.lifecycle === 'in_progress' ? (
             <div className="command-stack">
-              <button type="button" onClick={() => void runCommand('完成 Action', () => transitionActionItem(action.id, 'complete'))} disabled={commandBusy}>完成</button>
+              <button type="button" onClick={() => void runCommand('完成整改项', () => transitionActionItem(action.id, 'complete'))} disabled={commandBusy}>完成整改项</button>
               <label>取消原因<input value={transitionReason} onChange={(event) => setTransitionReason(event.target.value)} disabled={commandBusy} /></label>
-              <button type="button" className="secondary" onClick={() => void runCommand('取消 Action', () => transitionActionItem(action.id, 'cancel', transitionReason))} disabled={commandBusy}>取消</button>
+              <button type="button" className="secondary" onClick={() => void runCommand('取消整改项', () => transitionActionItem(action.id, 'cancel', transitionReason))} disabled={commandBusy}>取消整改项</button>
             </div>
           ) : null}
-          {action.lifecycle === 'done' ? <button type="button" onClick={() => void runCommand('重新打开 Action', () => transitionActionItem(action.id, 'reopen'))} disabled={commandBusy}>重新打开</button> : null}
-          {action.lifecycle === 'cancelled' ? <p className="empty-note">当前 Action 已取消，无 Product transition。</p> : null}
+          {action.lifecycle === 'done' ? <button type="button" onClick={() => void runCommand('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))} disabled={commandBusy}>重新打开整改项</button> : null}
+          {action.lifecycle === 'cancelled' ? <p className="empty-note">当前整改项已取消，没有可执行的操作。</p> : null}
           {commandMessage === null ? null : <p role="status">{commandMessage}</p>}
         </section>
       )}
 
       <section className="surface-card" aria-labelledby="action-nudge-title">
         <h2 id="action-nudge-title">协作提醒</h2>
-        <p className="empty-note">按钮不证明催办权限，也不选择接收人；服务器按当前 exact Scenario 与关系事实重新授权并解析 recipient。</p>
+        <p className="empty-note">按钮不代表有催办权限，也不选择被催办的人；服务器会按当前审查场景和相关人员重新授权并确定对象。</p>
         <button
           type="button"
           className="secondary"
           disabled={nudgeBusy}
           onClick={() => void runNudge(action.id)}
         >
-          {nudgeBusy ? '正在催办…' : '催一下'}
+          {nudgeBusy ? '正在催办…' : '催办'}
         </button>
         {nudgeMessage === null ? null : <p role="status">{nudgeMessage}</p>}
       </section>
 
       <section className="surface-card" aria-labelledby="evidence-title">
-        <h2 id="evidence-title">Evidence</h2>
-        {evidenceState.status === 'idle' || evidenceState.status === 'loading' ? <p>正在读取 Evidence metadata…</p> : null}
-        {evidenceState.status === 'unavailable' ? <p className="empty-note">Evidence 不可用。</p> : null}
+        <h2 id="evidence-title">证据</h2>
+        {evidenceState.status === 'idle' || evidenceState.status === 'loading' ? <p>正在读取证据…</p> : null}
+        {evidenceState.status === 'unavailable' ? <p className="empty-note">证据不可用。</p> : null}
         {evidenceState.status === 'error' ? <p role="alert">{evidenceState.message}</p> : null}
-        {evidenceState.status === 'ready' && evidenceState.data.length === 0 ? <p className="empty-note">暂无 Evidence metadata。</p> : null}
+        {evidenceState.status === 'ready' && evidenceState.data.length === 0 ? <p className="empty-note">暂无证据。</p> : null}
         {evidenceState.status === 'ready' && evidenceState.data.length > 0 ? (
           <ul className="surface-list">
             {evidenceState.data.map((evidence) => (
               <li key={evidence.id}>
                 <strong>{evidence.original_name}</strong>
                 <a href={evidenceDownloadUrl(evidence.id)} aria-label={`下载 ${evidence.original_name}`}>下载</a>
-                <span>{evidence.content_type ?? 'unknown type'} · {formatBytes(evidence.size_bytes)}</span>
+                <span>{evidence.content_type ?? '未知类型'} · {formatBytes(evidence.size_bytes)}</span>
                 <span>{evidence.description ?? '无说明'}</span>
                 <span>上传人 {evidence.uploaded_by} · {formatDateTime(evidence.created_at)}</span>
               </li>
@@ -535,7 +537,7 @@ export function ActionItemDetailPage() {
           </ul>
         ) : null}
         {action.lifecycle === 'cancelled' ? (
-          <p className="empty-note">当前 Action 已取消，不能上传证据。</p>
+          <p className="empty-note">当前整改项已取消，不能上传证据。</p>
         ) : (
           <form onSubmit={(event) => void submitEvidence(event, action.id)} aria-label="上传证据">
             <div className="form-grid">
@@ -573,18 +575,18 @@ export function ActionItemDetailPage() {
       </section>
 
       <section className="surface-card" aria-labelledby="action-activity-title">
-        <h2 id="action-activity-title">Action Activity</h2>
-        {activityState.status === 'idle' || activityState.status === 'loading' ? <p>正在读取 Activity…</p> : null}
-        {activityState.status === 'unavailable' ? <p className="empty-note">Activity 不可用。</p> : null}
+        <h2 id="action-activity-title">操作记录</h2>
+        {activityState.status === 'idle' || activityState.status === 'loading' ? <p>正在读取操作记录…</p> : null}
+        {activityState.status === 'unavailable' ? <p className="empty-note">操作记录不可用。</p> : null}
         {activityState.status === 'error' ? <p role="alert">{activityState.message}</p> : null}
-        {activityState.status === 'ready' && activityState.data.length === 0 ? <p className="empty-note">暂无 ActionItem-subject Activity。</p> : null}
+        {activityState.status === 'ready' && activityState.data.length === 0 ? <p className="empty-note">暂无操作记录。</p> : null}
         {activityState.status === 'ready' && activityState.data.length > 0 ? (
           <ol className="activity-list">
             {activityState.data.map((activity) => (
               <li key={activity.id}>
                 <strong>{activity.event_type}</strong>
                 <span>{formatDateTime(activity.occurred_at)}</span>
-                <span>Actor {activity.actor_id ?? 'system'}</span>
+                <span>操作人 {activity.actor_id ?? '系统'}</span>
               </li>
             ))}
           </ol>

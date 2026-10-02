@@ -44,7 +44,7 @@ describe('ScenarioUiRegistry exact version lookup', () => {
 
     expect(adapter.participantOptions).toEqual([
       { roleKey: 'responsible_department', actorKind: 'department', label: '责任部门' },
-      { roleKey: 'owner', actorKind: 'user', label: '负责人' },
+      { roleKey: 'owner', actorKind: 'user', label: '整改负责人' },
       { roleKey: 'collaborator', actorKind: 'user', label: '协作者' },
     ])
     expect(adapter.assigneeOptions.every((option) => option.actorKind === 'user')).toBe(true)
@@ -79,7 +79,7 @@ describe('ScenarioUiRegistry exact version lookup', () => {
 
     expect(adapter.participantOptions).toEqual([
       { roleKey: 'responsible_department', actorKind: 'department', label: '责任部门' },
-      { roleKey: 'owner', actorKind: 'user', label: '负责人' },
+      { roleKey: 'owner', actorKind: 'user', label: '整改负责人' },
       { roleKey: 'collaborator', actorKind: 'user', label: '协作者' },
     ])
     expect(adapter.assigneeOptions.every((option) => option.actorKind === 'user')).toBe(true)

@@ -3,7 +3,10 @@ import { Link, useSearchParams } from 'react-router'
 
 import { listReviewCases } from '../../api/product'
 import type { ReviewCaseCollectionResponse } from '../../api/product'
-import { formatDateTime, lifecycleText } from '../../product/format'
+import { formatDateTime } from '../../product/format'
+import { scenarioName, scenarioVersionText } from '../../product/terms'
+import { ButtonLink } from '../../ui/ButtonLink'
+import { StatusTag } from '../../ui/StatusTag'
 
 type CollectionState =
   | { status: 'loading' }
@@ -39,7 +42,7 @@ export function ReviewCaseCollectionPage() {
         if (controller.signal.aborted) return
         setState({
           status: 'error',
-          message: error instanceof Error ? error.message : 'ReviewCase 列表请求失败',
+          message: error instanceof Error ? error.message : '审查活动列表请求失败',
         })
       })
     return () => controller.abort()
@@ -50,7 +53,7 @@ export function ReviewCaseCollectionPage() {
   }
 
   if (state.status === 'loading') {
-    return <section className="surface-page"><h1>审查活动</h1><p>正在读取服务器授权后的 ReviewCase 页面…</p></section>
+    return <section className="surface-page"><h1>审查活动</h1><p>正在读取审查活动…</p></section>
   }
 
   if (state.status === 'error') {
@@ -74,13 +77,13 @@ export function ReviewCaseCollectionPage() {
           <h1 id="review-case-list-title">审查活动</h1>
         </div>
         <div className="heading-actions">
-          <Link className="primary-button" to="/review-plans/new">新建审查计划</Link>
+          <ButtonLink type="primary" to="/review-plans/new">新建审查计划</ButtonLink>
           <p>已授权 {data.total} 项</p>
         </div>
       </div>
 
       {data.items.length === 0 ? (
-        <div className="surface-card"><p className="empty-note">当前页面没有可见 ReviewCase。</p></div>
+        <div className="surface-card"><p className="empty-note">当前页面没有可见的审查活动。</p></div>
       ) : (
         <div className="surface-card">
           <ul className="case-list">
@@ -88,9 +91,9 @@ export function ReviewCaseCollectionPage() {
               <li key={reviewCase.id}>
                 <div>
                   <Link className="case-title-link" to={`/review-cases/${reviewCase.id}`}>{reviewCase.title}</Link>
-                  <p>{reviewCase.scenario_key}@{reviewCase.scenario_version}</p>
+                  <p>{scenarioName(reviewCase.scenario_key)} · {scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}</p>
                 </div>
-                <span>{lifecycleText(reviewCase.lifecycle)}</span>
+                <span><StatusTag kind="reviewCase" value={reviewCase.lifecycle} /></span>
                 <span>计划开始 {formatDateTime(reviewCase.planned_start_at)}</span>
                 <span>计划结束 {formatDateTime(reviewCase.planned_end_at)}</span>
               </li>
@@ -99,7 +102,7 @@ export function ReviewCaseCollectionPage() {
         </div>
       )}
 
-      <nav className="pagination" aria-label="ReviewCase 分页">
+      <nav className="pagination" aria-label="审查活动分页">
         <button
           type="button"
           disabled={data.offset === 0}

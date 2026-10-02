@@ -22,7 +22,6 @@ export function ProcessReviewV1CaseSection({ reviewCase }: ScenarioCaseSectionPr
     <section className="surface-card" aria-labelledby="process-review-v1-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">process_review@1</p>
           <h2 id="process-review-v1-title">过程审查信息</h2>
         </div>
       </div>
@@ -72,8 +71,7 @@ export function ProcessReviewV1FindingSection({ finding }: ScenarioFindingSectio
     <section className="surface-card" aria-labelledby="process-review-v1-finding-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">process_review@1</p>
-          <h2 id="process-review-v1-finding-title">过程审查 Finding 信息</h2>
+          <h2 id="process-review-v1-finding-title">过程审查发现项信息</h2>
         </div>
       </div>
       <dl className="fact-grid">
@@ -103,7 +101,7 @@ export function ProcessReviewV1FindingCreateFields({
           value={formValue(values, 'issue_type')}
           onChange={(event) => onChange('issue_type', event.target.value)}
           disabled={disabled}
-          placeholder="由 Scenario 校验"
+          placeholder="由审查场景校验"
         />
       </label>
       <label>
@@ -112,7 +110,7 @@ export function ProcessReviewV1FindingCreateFields({
           value={formValue(values, 'project_category')}
           onChange={(event) => onChange('project_category', event.target.value)}
           disabled={disabled}
-          placeholder="由 Scenario 校验"
+          placeholder="由审查场景校验"
         />
       </label>
     </div>
@@ -135,17 +133,17 @@ export function ProcessReviewV1FindingInteraction({
     <section className="surface-card" aria-labelledby="finding-command-title">
       <h2 id="finding-command-title">业务操作</h2>
       <p className="empty-note">
-        当前操作由 process_review@1 adapter 展示；最终授权、生命周期与并发判断仍由服务器决定。
+        以下操作按过程审查场景展示；最终授权、状态与并发判断以服务器为准。
       </p>
       {finding.lifecycle === 'open' ? (
         <div className="command-stack">
           <button
             type="button"
             data-scenario-action="issue"
-            onClick={() => void execute('签发 Finding', () => commands.transition('issue'))}
+            onClick={() => void execute('签发发现项', () => commands.transition('issue'))}
             disabled={disabled}
           >
-            签发 Finding
+            签发发现项
           </button>
           <label>
             作废原因
@@ -160,11 +158,11 @@ export function ProcessReviewV1FindingInteraction({
             className="secondary"
             data-scenario-action="void"
             onClick={() =>
-              void execute('作废 Finding', () => commands.transition('void', voidReason))
+              void execute('作废发现项', () => commands.transition('void', voidReason))
             }
             disabled={disabled}
           >
-            作废 Finding
+            作废发现项
           </button>
         </div>
       ) : null}
@@ -189,11 +187,11 @@ export function ProcessReviewV1FindingInteraction({
                 value={rootCause}
                 onChange={(event) => setRootCause(event.target.value)}
                 disabled={disabled}
-                placeholder="由后端验证必填规则"
+                placeholder="由服务器校验必填规则"
               />
             </label>
             <button type="submit" data-scenario-action="submit_plan" disabled={disabled}>
-              提交正式计划
+              提交整改计划
             </button>
           </form>
           <form
@@ -215,7 +213,7 @@ export function ProcessReviewV1FindingInteraction({
                 value={completionComment}
                 onChange={(event) => setCompletionComment(event.target.value)}
                 disabled={disabled}
-                placeholder="后端将验证 Action 完成状态与说明"
+                placeholder="服务器将校验整改项完成状态与说明"
               />
             </label>
             <button
@@ -242,7 +240,7 @@ export function ProcessReviewV1FindingInteraction({
               }
               disabled={disabled}
             >
-              Approve
+              通过验证
             </button>
           </div>
           <form
@@ -264,7 +262,7 @@ export function ProcessReviewV1FindingInteraction({
                 value={verificationComment}
                 onChange={(event) => setVerificationComment(event.target.value)}
                 disabled={disabled}
-                placeholder="驳回时由后端验证必填规则"
+                placeholder="驳回时由服务器校验必填规则"
               />
             </label>
             <button
@@ -273,7 +271,7 @@ export function ProcessReviewV1FindingInteraction({
               data-scenario-action="reject"
               disabled={disabled}
             >
-              Reject
+              驳回验证
             </button>
           </form>
         </div>
@@ -283,7 +281,7 @@ export function ProcessReviewV1FindingInteraction({
           className="command-form"
           onSubmit={(event) => {
             event.preventDefault()
-            void execute('重新打开 Finding', () => commands.reopen(reopenReason))
+            void execute('重新打开发现项', () => commands.reopen(reopenReason))
           }}
         >
           <label>
@@ -300,7 +298,7 @@ export function ProcessReviewV1FindingInteraction({
         </form>
       ) : null}
       {finding.lifecycle === 'voided' ? (
-        <p className="empty-note">当前 Finding 已作废，无可用 Product mutation。</p>
+        <p className="empty-note">当前发现项已作废，没有可执行的操作。</p>
       ) : null}
     </section>
   )
@@ -314,7 +312,7 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
     review_type: formValue(values, 'review_type'),
   }),
   caseMemberRoleOptions: [
-    { roleKey: 'lead', label: '负责人' },
+    { roleKey: 'lead', label: '审查组长' },
     { roleKey: 'auditor', label: '审查员' },
     { roleKey: 'reviewer', label: '复核员' },
     { roleKey: 'observer', label: '观察员' },
@@ -331,7 +329,7 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
       actorKind: 'department',
       label: '责任部门',
     },
-    { roleKey: 'owner', actorKind: 'user', label: '负责人' },
+    { roleKey: 'owner', actorKind: 'user', label: '整改负责人' },
     { roleKey: 'collaborator', actorKind: 'user', label: '协作者' },
   ],
   assigneeOptions: [

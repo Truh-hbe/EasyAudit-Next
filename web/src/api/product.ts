@@ -10,6 +10,7 @@ export type ReviewCaseLifecycle =
 export type FindingLifecycle = 'open' | 'rectifying' | 'verifying' | 'closed' | 'voided'
 export type FindingSeverity = 'low' | 'medium' | 'high' | 'critical'
 export type ActionItemLifecycle = 'todo' | 'in_progress' | 'done' | 'cancelled'
+export type DeadlineBucket = 'overdue' | 'due_soon' | 'later' | 'none'
 export type ActorKind = 'user' | 'department'
 export type AssignmentRole = 'primary' | 'collaborator'
 export type SubmissionPurpose = 'finding_report' | 'rectification' | 'verification' | 'closure'
@@ -298,7 +299,7 @@ export interface ManagementCaseSummary {
   lifecycle: ReviewCaseLifecycle
   planned_start_at: string | null
   planned_end_at: string | null
-  deadline_bucket: 'overdue' | 'due_soon' | 'later' | 'none'
+  deadline_bucket: DeadlineBucket
   findings: FindingLifecycleCounts
   actions: ActionLifecycleCounts
 }

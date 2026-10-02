@@ -107,7 +107,7 @@ test('uploading a file sends the raw bytes and shows the server-confirmed metada
   })
 
   await page.goto('/action-items/action-1')
-  await expect(page.getByText('暂无 Evidence metadata。')).toBeVisible()
+  await expect(page.getByText('暂无证据。')).toBeVisible()
   await page.getByLabel('证据文件').setInputFiles({
     name: '整改报告.pdf',
     mimeType: 'application/pdf',
@@ -121,7 +121,7 @@ test('uploading a file sends the raw bytes and shows the server-confirmed metada
   await expect(page.getByRole('status')).toContainText(`SHA-256 ${SHA.slice(0, 12)}`)
   await expect(page.getByRole('status')).not.toContainText(SHA)
   await expect(page.getByRole('listitem').filter({ hasText: '整改报告.pdf' })).toBeVisible() // refreshed list
-  await expect(page.getByText('暂无 Evidence metadata。')).toHaveCount(0)
+  await expect(page.getByText('暂无证据。')).toHaveCount(0)
   await expect(page.getByText('private-key')).toHaveCount(0)
 
   expect(uploads).toHaveLength(1)
@@ -215,7 +215,7 @@ test('a cancelled Action offers no upload form', async ({ page }) => {
 
   await page.goto('/action-items/action-1')
 
-  await expect(page.getByText('当前 Action 已取消，不能上传证据。')).toBeVisible()
+  await expect(page.getByText('当前整改项已取消，不能上传证据。')).toBeVisible()
   await expect(page.getByLabel('证据文件')).toHaveCount(0)
 })
 

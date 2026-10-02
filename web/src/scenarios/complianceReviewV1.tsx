@@ -13,6 +13,12 @@ function scenarioText(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : '—'
 }
 
+function findingTypeText(value: unknown): string {
+  if (value === 'nonconformity') return '不符合项'
+  if (value === 'observation') return '观察项'
+  return scenarioText(value)
+}
+
 function formValue(values: ScenarioFormValues, name: string): string {
   return values[name] ?? ''
 }
@@ -22,7 +28,6 @@ export function ComplianceReviewV1CaseSection({ reviewCase }: ScenarioCaseSectio
     <section className="surface-card" aria-labelledby="compliance-review-v1-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">compliance_review@1</p>
           <h2 id="compliance-review-v1-title">合规审查信息</h2>
         </div>
       </div>
@@ -72,8 +77,7 @@ export function ComplianceReviewV1FindingSection({ finding }: ScenarioFindingSec
     <section className="surface-card" aria-labelledby="compliance-review-v1-finding-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">compliance_review@1</p>
-          <h2 id="compliance-review-v1-finding-title">合规 Finding 信息</h2>
+          <h2 id="compliance-review-v1-finding-title">合规审查发现项信息</h2>
         </div>
       </div>
       <dl className="fact-grid">
@@ -82,8 +86,8 @@ export function ComplianceReviewV1FindingSection({ finding }: ScenarioFindingSec
           <dd>{scenarioText(finding.scenario_data.criterion_reference)}</dd>
         </div>
         <div>
-          <dt>Finding 类型</dt>
-          <dd>{scenarioText(finding.scenario_data.finding_type)}</dd>
+          <dt>发现项类型</dt>
+          <dd>{findingTypeText(finding.scenario_data.finding_type)}</dd>
         </div>
       </dl>
     </section>
@@ -107,15 +111,15 @@ export function ComplianceReviewV1FindingCreateFields({
         />
       </label>
       <label>
-        Finding 类型
+        发现项类型
         <select
           value={formValue(values, 'finding_type')}
           onChange={(event) => onChange('finding_type', event.target.value)}
           disabled={disabled}
         >
           <option value="">请选择</option>
-          <option value="nonconformity">Nonconformity</option>
-          <option value="observation">Observation</option>
+          <option value="nonconformity">不符合项</option>
+          <option value="observation">观察项</option>
         </select>
       </label>
     </div>
@@ -139,7 +143,7 @@ export function ComplianceReviewV1FindingInteraction({
     <section className="surface-card" aria-labelledby="finding-command-title">
       <h2 id="finding-command-title">业务操作</h2>
       <p className="empty-note">
-        当前操作由 compliance_review@1 adapter 展示；最终授权、生命周期与并发判断仍由服务器决定。
+        以下操作按合规审查场景展示；最终授权、状态与并发判断以服务器为准。
       </p>
       {finding.lifecycle === 'open' && findingType === 'observation' ? (
         <div className="command-stack">
@@ -147,11 +151,11 @@ export function ComplianceReviewV1FindingInteraction({
             type="button"
             data-scenario-action="accept_observation"
             onClick={() =>
-              void execute('接受 Observation', () => commands.transition('accept_observation'))
+              void execute('接受观察项', () => commands.transition('accept_observation'))
             }
             disabled={disabled}
           >
-            接受 Observation
+            接受观察项
           </button>
         </div>
       ) : null}
@@ -183,18 +187,18 @@ export function ComplianceReviewV1FindingInteraction({
             className="secondary"
             data-scenario-action="void"
             onClick={() =>
-              void execute('作废 Finding', () => commands.transition('void', voidReason))
+              void execute('作废发现项', () => commands.transition('void', voidReason))
             }
             disabled={disabled}
           >
-            作废 Finding
+            作废发现项
           </button>
         </div>
       ) : null}
       {finding.lifecycle === 'open' &&
       findingType !== 'observation' &&
       findingType !== 'nonconformity' ? (
-        <p role="status">当前 Finding 类型无法由 compliance_review@1 解释，业务操作已关闭。</p>
+        <p role="status">当前发现项类型无法解释，业务操作已关闭。</p>
       ) : null}
       {finding.lifecycle === 'rectifying' ? (
         <div className="command-grid">
@@ -217,11 +221,11 @@ export function ComplianceReviewV1FindingInteraction({
                 value={rootCause}
                 onChange={(event) => setRootCause(event.target.value)}
                 disabled={disabled}
-                placeholder="由后端验证必填规则"
+                placeholder="由服务器校验必填规则"
               />
             </label>
             <button type="submit" data-scenario-action="submit_plan" disabled={disabled}>
-              提交正式计划
+              提交整改计划
             </button>
           </form>
           <form
@@ -269,7 +273,7 @@ export function ComplianceReviewV1FindingInteraction({
               }
               disabled={disabled}
             >
-              Approve
+              通过验证
             </button>
           </div>
           <form
@@ -299,7 +303,7 @@ export function ComplianceReviewV1FindingInteraction({
               data-scenario-action="reject"
               disabled={disabled}
             >
-              Reject
+              驳回验证
             </button>
           </form>
         </div>
@@ -309,7 +313,7 @@ export function ComplianceReviewV1FindingInteraction({
           className="command-form"
           onSubmit={(event) => {
             event.preventDefault()
-            void execute('重新打开 Finding', () => commands.reopen(reopenReason))
+            void execute('重新打开发现项', () => commands.reopen(reopenReason))
           }}
         >
           <label>
@@ -326,10 +330,10 @@ export function ComplianceReviewV1FindingInteraction({
         </form>
       ) : null}
       {finding.lifecycle === 'closed' && findingType === 'observation' ? (
-        <p className="empty-note">Observation 已接受并闭环。</p>
+        <p className="empty-note">观察项已接受并闭环。</p>
       ) : null}
       {finding.lifecycle === 'voided' ? (
-        <p className="empty-note">当前 Finding 已作废，无可用 Product mutation。</p>
+        <p className="empty-note">当前发现项已作废，没有可执行的操作。</p>
       ) : null}
     </section>
   )
@@ -343,7 +347,7 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
     scope_summary: formValue(values, 'scope_summary'),
   }),
   caseMemberRoleOptions: [
-    { roleKey: 'lead', label: '负责人' },
+    { roleKey: 'lead', label: '审查组长' },
     { roleKey: 'auditor', label: '审查员' },
     { roleKey: 'reviewer', label: '复核员' },
     { roleKey: 'observer', label: '观察员' },
@@ -360,7 +364,7 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
       actorKind: 'department',
       label: '责任部门',
     },
-    { roleKey: 'owner', actorKind: 'user', label: '负责人' },
+    { roleKey: 'owner', actorKind: 'user', label: '整改负责人' },
     { roleKey: 'collaborator', actorKind: 'user', label: '协作者' },
   ],
   assigneeOptions: [

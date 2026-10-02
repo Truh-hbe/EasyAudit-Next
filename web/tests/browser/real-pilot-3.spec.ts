@@ -89,7 +89,7 @@ test('a retry after a lost Case response creates exactly one case', async ({ pag
 
   const keys = await loseFirstResponse(page, '/api/v1/review-cases')
   await page.getByLabel('审查场景').selectOption('process_review@1')
-  await page.getByLabel('案例名称').fill('Pilot-3 Retried Case')
+  await page.getByLabel('审查活动名称').fill('Pilot-3 Retried Case')
   await page.getByLabel('区域代码').fill('area-a')
   await page.getByLabel('审查类型').fill('standard')
   await page.getByRole('button', { name: '创建案例' }).click()

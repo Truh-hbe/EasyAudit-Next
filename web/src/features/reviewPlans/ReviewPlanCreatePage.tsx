@@ -128,7 +128,7 @@ export function ReviewPlanCreatePage() {
           <p className="eyebrow">第 1 步，共 2 步</p>
           <h1 id="review-plan-create-title">新建审查计划</h1>
         </div>
-        <span className="wizard-step">先保存计划，再创建案例</span>
+        <span className="wizard-step">先保存计划，再创建审查活动</span>
       </div>
 
       <div className="surface-card">

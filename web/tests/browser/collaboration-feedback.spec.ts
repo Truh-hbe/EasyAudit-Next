@@ -58,7 +58,7 @@ test('Finding participant 409 remains visible after authoritative terminal refet
   await page.getByRole('button', { name: '搜索候选' }).click()
   await page.getByRole('button', { name: '添加', exact: true }).click()
 
-  await expect(page.locator('.status-pill')).toHaveText('closed')
+  await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
   await expect(page.getByRole('status')).toContainText('Concurrent Finding transition')
   await expect(page.getByText('Quality Department')).toHaveCount(0)
   await expect(page.getByText('暂无参与关系。')).toBeVisible()
@@ -106,7 +106,7 @@ test('Action command feedback is retained for refetch but cleared when the route
   )
 
   await page.goto('/action-items/action-a')
-  await page.getByRole('button', { name: '开始', exact: true }).click()
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('Action A stale transition')
   await expect(page.getByRole('heading', { name: 'Action A', exact: true })).toBeVisible()
 

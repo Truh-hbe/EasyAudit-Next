@@ -16,7 +16,9 @@ import type {
   ReviewCaseActivityResponse,
   ReviewCaseResponse,
 } from '../../api/product'
-import { formatDateTime, lifecycleText } from '../../product/format'
+import { formatDateTime } from '../../product/format'
+import { scenarioName, scenarioVersionText } from '../../product/terms'
+import { isDeadlineStatus, StatusTag } from '../../ui/StatusTag'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import { FindingCreatePanel } from '../findings/FindingCreatePanel'
 import { ReviewCaseTeamPanel } from './ReviewCaseTeamPanel'
@@ -51,17 +53,17 @@ function stateForCase<T>(state: SectionState<T>, caseId: string): SectionState<T
 function FindingSection({ state }: { state: SectionState<FindingResponse[]> }) {
   return (
     <section className="surface-card" aria-labelledby="findings-title">
-      <h2 id="findings-title">Findings</h2>
-      {state.status === 'loading' || state.status === 'idle' ? <p>正在读取 Findings…</p> : null}
-      {state.status === 'unavailable' ? <p className="empty-note">Finding 列表不可用。</p> : null}
+      <h2 id="findings-title">发现项</h2>
+      {state.status === 'loading' || state.status === 'idle' ? <p>正在读取发现项…</p> : null}
+      {state.status === 'unavailable' ? <p className="empty-note">发现项列表不可用。</p> : null}
       {state.status === 'error' ? <p role="alert">{state.message}</p> : null}
-      {state.status === 'ready' && state.data.length === 0 ? <p className="empty-note">暂无 Finding。</p> : null}
+      {state.status === 'ready' && state.data.length === 0 ? <p className="empty-note">暂无发现项。</p> : null}
       {state.status === 'ready' && state.data.length > 0 ? (
         <ul className="surface-list">
           {state.data.map((finding) => (
             <li key={finding.id}>
               <Link to={`/findings/${finding.id}`}>{finding.title}</Link>
-              <span>{finding.severity} · {lifecycleText(finding.lifecycle)}</span>
+              <span>严重度 <StatusTag kind="severity" value={finding.severity} /> <StatusTag kind="finding" value={finding.lifecycle} /></span>
               <span>提出于 {formatDateTime(finding.raised_at)}</span>
             </li>
           ))}
@@ -74,18 +76,18 @@ function FindingSection({ state }: { state: SectionState<FindingResponse[]> }) {
 function ActivitySection({ state }: { state: SectionState<ReviewCaseActivityResponse[]> }) {
   return (
     <section className="surface-card" aria-labelledby="activity-title">
-      <h2 id="activity-title">Activity</h2>
-      {state.status === 'loading' || state.status === 'idle' ? <p>正在读取 Case Activity…</p> : null}
-      {state.status === 'unavailable' ? <p className="empty-note">Activity 不可用。</p> : null}
+      <h2 id="activity-title">操作记录</h2>
+      {state.status === 'loading' || state.status === 'idle' ? <p>正在读取操作记录…</p> : null}
+      {state.status === 'unavailable' ? <p className="empty-note">操作记录不可用。</p> : null}
       {state.status === 'error' ? <p role="alert">{state.message}</p> : null}
-      {state.status === 'ready' && state.data.length === 0 ? <p className="empty-note">暂无 ReviewCase Activity。</p> : null}
+      {state.status === 'ready' && state.data.length === 0 ? <p className="empty-note">暂无操作记录。</p> : null}
       {state.status === 'ready' && state.data.length > 0 ? (
         <ol className="activity-list">
           {state.data.map((activity) => (
             <li key={activity.id}>
               <strong>{activity.event_type}</strong>
               <span>{formatDateTime(activity.occurred_at)}</span>
-              <span>Actor {activity.actor_id ?? 'system'}</span>
+              <span>操作人 {activity.actor_id ?? '系统'}</span>
             </li>
           ))}
         </ol>
@@ -103,12 +105,12 @@ function ManagementProgressSection({ state }: { state: SectionState<ManagementCa
       {state.status === 'error' ? <p role="alert">{state.message}</p> : null}
       {state.status === 'ready' ? (
         <dl className="fact-grid compact-facts">
-          <div><dt>Deadline</dt><dd>{state.data.case.deadline_bucket}</dd></div>
-          <div><dt>Findings</dt><dd>{state.data.case.findings.total}</dd></div>
-          <div><dt>Open / Rectifying / Verifying</dt><dd>{state.data.case.findings.open} / {state.data.case.findings.rectifying} / {state.data.case.findings.verifying}</dd></div>
-          <div><dt>Actions</dt><dd>{state.data.case.actions.total}</dd></div>
-          <div><dt>Action overdue</dt><dd>{state.data.case.actions.overdue}</dd></div>
-          <div><dt>Action due soon</dt><dd>{state.data.case.actions.due_soon}</dd></div>
+          <div><dt>截止状态</dt><dd>{isDeadlineStatus(state.data.case.deadline_bucket) ? <StatusTag kind="deadline" value={state.data.case.deadline_bucket} /> : '未临近截止'}</dd></div>
+          <div><dt>发现项</dt><dd>{state.data.case.findings.total}</dd></div>
+          <div><dt>待处理 / 整改中 / 待验证</dt><dd>{state.data.case.findings.open} / {state.data.case.findings.rectifying} / {state.data.case.findings.verifying}</dd></div>
+          <div><dt>整改项</dt><dd>{state.data.case.actions.total}</dd></div>
+          <div><dt>整改项已逾期</dt><dd>{state.data.case.actions.overdue}</dd></div>
+          <div><dt>整改项即将到期</dt><dd>{state.data.case.actions.due_soon}</dd></div>
         </dl>
       ) : null}
     </section>
@@ -154,7 +156,7 @@ export function ReviewCaseDetailPage() {
         setPrimary({
           status: 'error',
           caseId: requestedCaseId,
-          message: sectionMessage(error, 'ReviewCase 请求失败'),
+          message: sectionMessage(error, '审查活动请求失败'),
         })
       })
     return () => controller.abort()
@@ -202,7 +204,7 @@ export function ReviewCaseDetailPage() {
             : {
                 status: 'error',
                 caseId: authorizedCaseId,
-                message: sectionMessage(error, 'Activity 请求失败'),
+                message: sectionMessage(error, '操作记录请求失败'),
               },
         )
       })
@@ -230,7 +232,7 @@ export function ReviewCaseDetailPage() {
             : {
                 status: 'error',
                 caseId: authorizedCaseId,
-                message: sectionMessage(error, 'Finding 请求失败'),
+                message: sectionMessage(error, '发现项请求失败'),
               },
         )
       })
@@ -258,17 +260,17 @@ export function ReviewCaseDetailPage() {
   }, [authorizedCaseId])
 
   if (!primaryMatchesRoute || primary.status === 'loading') {
-    return <section className="surface-page"><h1>ReviewCase</h1><p>正在确认当前 ReviewCase 授权…</p></section>
+    return <section className="surface-page"><h1>审查活动</h1><p>正在确认访问权限…</p></section>
   }
 
   if (primary.status === 'unavailable') {
-    return <section className="surface-page"><h1>ReviewCase 不可用</h1><p>当前服务器未提供此 ReviewCase 的可见内容。</p></section>
+    return <section className="surface-page"><h1>审查活动不可用</h1><p>当前没有可见的审查活动内容。</p></section>
   }
 
   if (primary.status === 'error') {
     return (
       <section className="surface-page">
-        <h1>ReviewCase</h1>
+        <h1>审查活动</h1>
         <div role="alert" className="surface-card">
           <p>{primary.message}</p>
           <button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button>
@@ -290,17 +292,18 @@ export function ReviewCaseDetailPage() {
     <article className="surface-page" aria-labelledby="case-title">
       <header className="case-header surface-card">
         <div>
-          <p className="eyebrow">{reviewCase.scenario_key}@{reviewCase.scenario_version}</p>
+          <p className="eyebrow">{scenarioName(reviewCase.scenario_key)}</p>
           <h1 id="case-title">{reviewCase.title}</h1>
         </div>
-        <span className="status-pill">{lifecycleText(reviewCase.lifecycle)}</span>
+        <StatusTag kind="reviewCase" value={reviewCase.lifecycle} />
       </header>
 
       <section className="surface-card" aria-labelledby="overview-title">
         <h2 id="overview-title">概览</h2>
         <dl className="fact-grid">
-          <div><dt>ReviewCase ID</dt><dd>{reviewCase.id}</dd></div>
-          <div><dt>ReviewPlan</dt><dd>{reviewCase.plan_id ?? '—'}</dd></div>
+          <div><dt>审查活动 ID</dt><dd>{reviewCase.id}</dd></div>
+          <div><dt>场景版本</dt><dd>{scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}</dd></div>
+          <div><dt>审查计划</dt><dd>{reviewCase.plan_id ?? '—'}</dd></div>
           <div><dt>计划开始</dt><dd>{formatDateTime(reviewCase.planned_start_at)}</dd></div>
           <div><dt>计划结束</dt><dd>{formatDateTime(reviewCase.planned_end_at)}</dd></div>
           <div><dt>实际开始</dt><dd>{formatDateTime(reviewCase.started_at)}</dd></div>
@@ -312,8 +315,8 @@ export function ReviewCaseDetailPage() {
 
       {ScenarioSection === undefined ? (
         <section className="surface-card" aria-labelledby="scenario-unsupported-title">
-          <h2 id="scenario-unsupported-title">Scenario 信息</h2>
-          <p role="status">不支持当前精确 Scenario UI：{reviewCase.scenario_key}@{reviewCase.scenario_version}。通用 Case 信息仍可查看。</p>
+          <h2 id="scenario-unsupported-title">审查场景</h2>
+          <p role="status">暂不支持当前版本的审查场景界面（{scenarioName(reviewCase.scenario_key)} · {scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}）。仍可查看审查活动的通用信息。</p>
         </section>
       ) : (
         <ScenarioSection reviewCase={reviewCase} />
