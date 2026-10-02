@@ -1,122 +1,163 @@
+import { ReloadOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Col, Empty, Flex, Row, Skeleton, Spin, Table, Typography } from 'antd'
+import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import { getWorkbench } from '../../api/product'
-import type {
-  WorkbenchActionDeadline,
-  WorkbenchActionResponsibility,
-  WorkbenchCaseDeadline,
-  WorkbenchCaseResponsibility,
-  WorkbenchFindingResponsibility,
-  WorkbenchResponse,
-  WorkbenchVerificationItem,
-} from '../../api/product'
+import type { WorkbenchResponse } from '../../api/product'
 import { formatDateTime } from '../../product/format'
+import { PageHeader } from '../../ui/PageHeader'
 import { StatusTag } from '../../ui/StatusTag'
 
 type WorkbenchState =
-  | { status: 'loading' }
+  | { status: 'loading'; data: WorkbenchResponse | null }
   | { status: 'error'; message: string }
   | { status: 'ready'; data: WorkbenchResponse }
 
-function CaseRows({ items }: { items: WorkbenchCaseResponsibility[] }) {
-  if (items.length === 0) return <p className="empty-note">暂无我参与的审查。</p>
+interface WorkRow {
+  key: string
+  to: string
+  title: string
+  meta: ReactNode
+}
+
+function WorkList({ rows, emptyText }: { rows: WorkRow[]; emptyText: string }) {
   return (
-    <ul className="surface-list">
-      {items.map((item) => (
-        <li key={item.id}>
-          <Link to={`/review-cases/${item.id}`}>{item.title}</Link>
-          <span><StatusTag kind="reviewCase" value={item.lifecycle} /></span>
-          <span>计划结束 {formatDateTime(item.planned_end_at)}</span>
-          <span>关系 {item.role_keys.join(' / ') || '—'}</span>
-        </li>
-      ))}
-    </ul>
+    <Table<WorkRow>
+      size="middle"
+      showHeader={false}
+      pagination={false}
+      rowKey="key"
+      dataSource={rows}
+      locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} /> }}
+      columns={[
+        {
+          key: 'item',
+          render: (_, row) => (
+            <Flex vertical gap={4}>
+              <Link to={row.to}>{row.title}</Link>
+              <Flex align="center" wrap gap={8}>{row.meta}</Flex>
+            </Flex>
+          ),
+        },
+      ]}
+    />
   )
 }
 
-function FindingRows({ items }: { items: WorkbenchFindingResponsibility[] }) {
-  if (items.length === 0) return <p className="empty-note">暂无发现项责任。</p>
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <ul className="surface-list">
-      {items.map((item) => (
-        <li key={item.id}>
-          <Link to={`/findings/${item.id}`}>{item.title}</Link>
-          <span>严重度 <StatusTag kind="severity" value={item.severity} /> <StatusTag kind="finding" value={item.lifecycle} /></span>
-          <span>提出于 {formatDateTime(item.raised_at)}</span>
-        </li>
-      ))}
-    </ul>
+    <Col xs={24} lg={12}>
+      <Card>
+        <Flex vertical gap={12}>
+          <h2>{title}</h2>
+          {children}
+        </Flex>
+      </Card>
+    </Col>
   )
 }
 
-function ActionRows({ items }: { items: WorkbenchActionResponsibility[] }) {
-  if (items.length === 0) return <p className="empty-note">暂无整改项责任。</p>
-  return (
-    <ul className="surface-list">
-      {items.map((item) => (
-        <li key={item.id}>
-          <Link to={`/action-items/${item.id}`}>{item.title}</Link>
-          <span><StatusTag kind="actionItem" value={item.lifecycle} /></span>
-          <span>到期 {formatDateTime(item.due_at)}</span>
-        </li>
-      ))}
-    </ul>
-  )
+function secondary(text: string) {
+  return <Typography.Text type="secondary">{text}</Typography.Text>
 }
 
-function VerificationRows({ items }: { items: WorkbenchVerificationItem[] }) {
-  if (items.length === 0) return <p className="empty-note">暂无待验证发现项。</p>
-  return (
-    <ul className="surface-list">
-      {items.map((item) => (
-        <li key={item.id}>
-          <Link to={`/findings/${item.id}`}>{item.title}</Link>
-          <span>严重度 <StatusTag kind="severity" value={item.severity} /></span>
-          <span>提出于 {formatDateTime(item.raised_at)}</span>
-        </li>
-      ))}
-    </ul>
-  )
-}
+function sections(data: WorkbenchResponse) {
+  const verification: WorkRow[] = data.verification_queue.map((item) => ({
+    key: item.id,
+    to: `/findings/${item.id}`,
+    title: item.title,
+    meta: (
+      <>
+        <StatusTag kind="severity" value={item.severity} />
+        {secondary(`提出于 ${formatDateTime(item.raised_at)}`)}
+      </>
+    ),
+  }))
+  const findings: WorkRow[] = data.finding_responsibilities.map((item) => ({
+    key: item.id,
+    to: `/findings/${item.id}`,
+    title: item.title,
+    meta: (
+      <>
+        <StatusTag kind="severity" value={item.severity} />
+        <StatusTag kind="finding" value={item.lifecycle} />
+        {secondary(`提出于 ${formatDateTime(item.raised_at)}`)}
+      </>
+    ),
+  }))
+  const actions: WorkRow[] = data.action_responsibilities.map((item) => ({
+    key: item.id,
+    to: `/action-items/${item.id}`,
+    title: item.title,
+    meta: (
+      <>
+        <StatusTag kind="actionItem" value={item.lifecycle} />
+        {secondary(`到期 ${formatDateTime(item.due_at)}`)}
+      </>
+    ),
+  }))
+  const deadlines = (group: WorkbenchResponse['overdue']): WorkRow[] => [
+    ...group.cases.map((item) => ({
+      key: `case-${item.id}`,
+      to: `/review-cases/${item.id}`,
+      title: item.title,
+      meta: (
+        <>
+          {secondary('审查活动')}
+          <StatusTag kind="reviewCase" value={item.lifecycle} />
+          {secondary(formatDateTime(item.deadline))}
+        </>
+      ),
+    })),
+    ...group.actions.map((item) => ({
+      key: `action-${item.id}`,
+      to: `/action-items/${item.id}`,
+      title: item.title,
+      meta: (
+        <>
+          {secondary('整改项')}
+          <StatusTag kind="actionItem" value={item.lifecycle} />
+          {secondary(formatDateTime(item.deadline))}
+        </>
+      ),
+    })),
+  ]
+  const cases: WorkRow[] = data.case_responsibilities.map((item) => ({
+    key: item.id,
+    to: `/review-cases/${item.id}`,
+    title: item.title,
+    meta: (
+      <>
+        <StatusTag kind="reviewCase" value={item.lifecycle} />
+        {secondary(`计划结束 ${formatDateTime(item.planned_end_at)}`)}
+        {secondary(`关系 ${item.role_keys.join(' / ') || '—'}`)}
+      </>
+    ),
+  }))
 
-function DeadlineRows({
-  cases,
-  actions,
-  emptyText,
-}: {
-  cases: WorkbenchCaseDeadline[]
-  actions: WorkbenchActionDeadline[]
-  emptyText: string
-}) {
-  if (cases.length === 0 && actions.length === 0) return <p className="empty-note">{emptyText}</p>
-  return (
-    <ul className="surface-list">
-      {cases.map((item) => (
-        <li key={`case-${item.id}`}>
-          <Link to={`/review-cases/${item.id}`}>{item.title}</Link>
-          <span>审查活动 · <StatusTag kind="reviewCase" value={item.lifecycle} /></span>
-          <span>{formatDateTime(item.deadline)}</span>
-        </li>
-      ))}
-      {actions.map((item) => (
-        <li key={`action-${item.id}`}>
-          <Link to={`/action-items/${item.id}`}>{item.title}</Link>
-          <span>整改项 · <StatusTag kind="actionItem" value={item.lifecycle} /></span>
-          <span>{formatDateTime(item.deadline)}</span>
-        </li>
-      ))}
-    </ul>
-  )
+  return [
+    { title: '待我验证', rows: verification, emptyText: '暂无待验证发现项。' },
+    { title: '发现项责任', rows: findings, emptyText: '暂无发现项责任。' },
+    { title: '整改项责任', rows: actions, emptyText: '暂无整改项责任。' },
+    { title: '已逾期', rows: deadlines(data.overdue), emptyText: '暂无已逾期事项。' },
+    { title: '即将到期', rows: deadlines(data.due_soon), emptyText: '暂无即将到期事项。' },
+    { title: '我参与的审查', rows: cases, emptyText: '暂无我参与的审查。' },
+  ]
 }
 
 export function WorkbenchPage() {
   const [revision, setRevision] = useState(0)
-  const [state, setState] = useState<WorkbenchState>({ status: 'loading' })
+  const [state, setState] = useState<WorkbenchState>({ status: 'loading', data: null })
 
   useEffect(() => {
     const controller = new AbortController()
-    setState({ status: 'loading' })
+    // 刷新时保留旧内容；请求失败则移除，不用旧数据兜底。
+    setState((previous) => ({
+      status: 'loading',
+      data: previous.status === 'error' ? null : previous.data,
+    }))
     void getWorkbench(controller.signal)
       .then((data) => setState({ status: 'ready', data }))
       .catch((error: unknown) => {
@@ -129,40 +170,50 @@ export function WorkbenchPage() {
     return () => controller.abort()
   }, [revision])
 
-  if (state.status === 'loading') {
-    return <section className="surface-page"><h1>我的工作</h1><p>正在读取我的工作…</p></section>
-  }
+  const data = state.status === 'error' ? null : state.data
+  const refreshing = state.status === 'loading' && state.data !== null
 
-  if (state.status === 'error') {
-    return (
-      <section className="surface-page">
-        <h1>我的工作</h1>
-        <div role="alert" className="surface-card">
-          <p>{state.message}</p>
-          <button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button>
-        </div>
-      </section>
-    )
-  }
-
-  const { data } = state
   return (
-    <section className="surface-page" aria-labelledby="workbench-title">
-      <div className="page-heading">
-        <div>
-          <h1 id="workbench-title">我的工作</h1>
-        </div>
-        <p>数据时间 {formatDateTime(data.as_of)}</p>
-      </div>
-
-      <div className="surface-grid">
-        <section className="surface-card"><h2>待我验证</h2><VerificationRows items={data.verification_queue} /></section>
-        <section className="surface-card"><h2>发现项责任</h2><FindingRows items={data.finding_responsibilities} /></section>
-        <section className="surface-card"><h2>整改项责任</h2><ActionRows items={data.action_responsibilities} /></section>
-        <section className="surface-card"><h2>已逾期</h2><DeadlineRows cases={data.overdue.cases} actions={data.overdue.actions} emptyText="暂无已逾期事项。" /></section>
-        <section className="surface-card"><h2>即将到期</h2><DeadlineRows cases={data.due_soon.cases} actions={data.due_soon.actions} emptyText="暂无即将到期事项。" /></section>
-        <section className="surface-card"><h2>我参与的审查</h2><CaseRows items={data.case_responsibilities} /></section>
-      </div>
-    </section>
+    <Spin spinning={refreshing}>
+      <Flex vertical gap={16}>
+        <PageHeader
+          title="我的工作"
+          titleId="workbench-title"
+          meta={data === null ? undefined : secondary(`数据时间 ${formatDateTime(data.as_of)}`)}
+          extra={
+            <Button
+              icon={<ReloadOutlined aria-hidden />}
+              loading={refreshing}
+              disabled={state.status === 'loading'}
+              onClick={() => setRevision((value) => value + 1)}
+            >
+              刷新
+            </Button>
+          }
+        />
+        {state.status === 'error' ? (
+          <Alert
+            type="error"
+            showIcon
+            title={state.message}
+            action={
+              <Button size="small" onClick={() => setRevision((value) => value + 1)}>
+                重新加载
+              </Button>
+            }
+          />
+        ) : null}
+        {state.status === 'loading' && data === null ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
+        {data === null ? null : (
+          <Row gutter={[16, 16]}>
+            {sections(data).map((section) => (
+              <Section key={section.title} title={section.title}>
+                <WorkList rows={section.rows} emptyText={section.emptyText} />
+              </Section>
+            ))}
+          </Row>
+        )}
+      </Flex>
+    </Spin>
   )
 }

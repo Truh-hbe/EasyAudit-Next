@@ -603,9 +603,12 @@ test.describe('device time zone differs from the display time zone', () => {
 
 test('legacy element styles stay inside legacy page containers and never cross the ui-modern boundary', async ({ page }) => {
   await stubReadySession(page)
-  await stubEmptyWorkbench(page)
-  await page.goto('/me/workbench')
-  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+  // 选用仍为遗留容器（.surface-page）的页面；每迁移完一页，这里要换成下一个尚未迁移的页面。
+  await page.route('**/api/v1/review-cases**', (route) =>
+    fulfillJson(route, 200, { items: [], total: 0, limit: 20, offset: 0 }),
+  )
+  await page.goto('/review-cases')
+  await expect(page.getByRole('heading', { name: '审查活动' })).toBeVisible()
 
   const styles = await page.evaluate(() => {
     const browser = globalThis as unknown as {

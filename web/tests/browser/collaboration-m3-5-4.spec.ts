@@ -168,8 +168,58 @@ test('Notification 未读视图来自 server unread_only query and mark-read ref
   expect(requestedModes).toContain('true')
 
   await page.getByRole('button', { name: '标记已读' }).click()
-  await expect(page.getByText('当前视图暂无通知。')).toBeVisible()
+  await expect(page.getByText('没有未读通知。')).toBeVisible()
   await expect(page.getByText('未读总数 0')).toBeVisible()
+})
+
+test('mark-read 409 and unknown outcome refetch the list without replaying the write', async ({ page }) => {
+  await stubReadySession(page)
+  let listReads = 0
+  let markRequests = 0
+  const outcomes = [409, 'abort'] as const
+  await page.route((url) => url.pathname === '/api/v1/me/notifications', (route) => {
+    listReads += 1
+    return fulfillJson(route, 200, {
+      items: [notification('unread-1', 'Still unread row', null)],
+      unread_count: 1,
+      limit: 20,
+      offset: 0,
+    })
+  })
+  await page.route((url) => url.pathname === '/api/v1/me/notifications/unread-1/read', (route) => {
+    const outcome = outcomes[markRequests]
+    markRequests += 1
+    if (outcome === 409) return fulfillJson(route, 409, { detail: 'Conflict' })
+    return route.abort('failed')
+  })
+
+  await page.goto('/me/notifications')
+  await expect(page.getByText('Still unread row', { exact: true })).toBeVisible()
+  const initialReads = listReads
+
+  await page.getByRole('button', { name: '标记已读' }).click()
+  await expect(page.getByText('数据已变化，正在获取最新状态。')).toBeVisible()
+  await expect.poll(() => listReads).toBe(initialReads + 1)
+  await expect(page.getByText('Still unread row', { exact: true })).toBeVisible()
+  expect(markRequests).toBe(1)
+
+  await page.getByRole('button', { name: '标记已读' }).click()
+  await expect(page.getByText(/未确认是否已标记为已读/)).toBeVisible()
+  await expect.poll(() => listReads).toBe(initialReads + 2)
+  expect(markRequests).toBe(2)
+})
+
+test('notification empty state tells an empty inbox from an empty unread filter', async ({ page }) => {
+  await stubReadySession(page)
+  await page.route((url) => url.pathname === '/api/v1/me/notifications', (route) =>
+    fulfillJson(route, 200, { items: [], unread_count: 0, limit: 20, offset: 0 }),
+  )
+  await page.goto('/me/notifications')
+  await expect(page.getByText('暂无通知。')).toBeVisible()
+  await page.getByRole('button', { name: /未读/ }).click()
+  await expect(page.getByText('没有未读通知。')).toBeVisible()
+  await page.getByRole('button', { name: '查看全部通知' }).click()
+  await expect(page.getByText('暂无通知。')).toBeVisible()
 })
 
 test('historical Notification does not grant current Finding access', async ({ page }) => {

@@ -232,6 +232,14 @@ async function expectNoDocumentOverflow(page: Page) {
   })).toBeLessThanOrEqual(1)
 }
 
+async function expectInsideViewport(page: Page, locator: Locator) {
+  const box = await locator.boundingBox()
+  const viewport = page.viewportSize()
+  expect(box).not.toBeNull()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width + 1)
+}
+
 async function visibleOutline(locator: Locator) {
   return locator.evaluate((element) => {
     const browser = globalThis as unknown as {
@@ -307,6 +315,33 @@ test('M3.5.5 keyboard focus is visible and primary navigation remains keyboard-o
   await expect(unreadButton).toBeFocused()
   expect((await visibleOutline(unreadButton)).style).not.toBe('none')
 })
+
+for (const width of [375, 320]) {
+  test(`Workbench and notification center keep task entries and unread actions usable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 740 })
+    await stubProduct(page)
+
+    await page.goto('/me/workbench')
+    await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+    await expectNoDocumentOverflow(page)
+    const workLink = page.getByRole('link', { name: longTitle }).first()
+    await expect(workLink).toBeVisible()
+    await expectInsideViewport(page, workLink)
+
+    await page.goto('/me/notifications')
+    await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
+    await expectNoDocumentOverflow(page)
+    for (const control of [
+      page.getByRole('button', { name: /未读/ }),
+      page.getByRole('link', { name: '打开当前目标' }),
+      page.getByRole('button', { name: '标记已读' }),
+      page.getByRole('button', { name: '下一页' }),
+    ]) {
+      await expect(control).toBeVisible()
+      await expectInsideViewport(page, control)
+    }
+  })
+}
 
 test('M3.5.5 management nudge success survives authoritative same-case refetch', async ({ page }) => {
   await stubProduct(page)

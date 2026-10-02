@@ -1,5 +1,5 @@
+import { Alert, App, Badge, Button, Card, Empty, Flex, Skeleton, Spin, Table, Typography } from 'antd'
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
 
 import { ApiError } from '../../api/client'
 import {
@@ -12,13 +12,23 @@ import type {
   NotificationSubjectResponse,
 } from '../../api/notifications'
 import { formatDateTime } from '../../product/format'
+import { ButtonLink } from '../../ui/ButtonLink'
+import { PageHeader } from '../../ui/PageHeader'
 
 type InboxMode = 'all' | 'unread'
 
-type InboxState =
-  | { status: 'loading'; key: string }
-  | { status: 'error'; key: string; message: string }
-  | { status: 'ready'; key: string; data: NotificationInboxResponse }
+interface InboxState {
+  // 仅保留最近一次成功的结果；请求失败时清空，不用旧数据兜底。
+  data: NotificationInboxResponse | null
+  dataKey: string | null
+  loading: boolean
+  error: string | null
+}
+
+interface Notice {
+  type: 'warning' | 'error'
+  text: string
+}
 
 const PAGE_SIZE = 20
 
@@ -67,12 +77,13 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 export function NotificationCenterPage() {
+  const { message } = App.useApp()
   const [mode, setMode] = useState<InboxMode>('all')
   const [offset, setOffset] = useState(0)
   const [revision, setRevision] = useState(0)
-  const [state, setState] = useState<InboxState>({ status: 'loading', key: 'all:0' })
+  const [state, setState] = useState<InboxState>({ data: null, dataKey: null, loading: true, error: null })
   const [markingId, setMarkingId] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
   const requestSequenceRef = useRef(0)
   const currentViewRef = useRef({ mode, offset })
   currentViewRef.current = { mode, offset }
@@ -84,172 +95,225 @@ export function NotificationCenterPage() {
     const sequence = requestSequenceRef.current + 1
     requestSequenceRef.current = sequence
     const requestedKey = viewKey
-    setState({ status: 'loading', key: requestedKey })
-    setMessage(null)
+    setState((previous) => ({ ...previous, loading: true, error: null }))
 
     void listNotifications(mode === 'unread', PAGE_SIZE, offset, controller.signal)
       .then((data) => {
         if (controller.signal.aborted || requestSequenceRef.current !== sequence) return
-        setState({ status: 'ready', key: requestedKey, data })
+        setState({ data, dataKey: requestedKey, loading: false, error: null })
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || requestSequenceRef.current !== sequence) return
         setState({
-          status: 'error',
-          key: requestedKey,
-          message: errorMessage(error, '通知请求失败'),
+          data: null,
+          dataKey: null,
+          loading: false,
+          error: errorMessage(error, '通知请求失败'),
         })
       })
 
     return () => controller.abort()
   }, [mode, offset, revision, viewKey])
 
+  function reload() {
+    setNotice(null)
+    setRevision((value) => value + 1)
+  }
+
   function changeMode(nextMode: InboxMode) {
     if (nextMode === mode) return
     setMode(nextMode)
     setOffset(0)
     setMarkingId(null)
-    setMessage(null)
+    setNotice(null)
+  }
+
+  function changeOffset(next: (value: number) => number) {
+    setOffset(next)
+    setMarkingId(null)
+    setNotice(null)
   }
 
   async function markRead(notificationId: string) {
     const commandView = currentViewRef.current
+    const inCommandView = () => {
+      const currentView = currentViewRef.current
+      return currentView.mode === commandView.mode && currentView.offset === commandView.offset
+    }
     setMarkingId(notificationId)
-    setMessage(null)
+    setNotice(null)
     try {
       await markNotificationRead(notificationId)
-      const currentView = currentViewRef.current
-      if (currentView.mode !== commandView.mode || currentView.offset !== commandView.offset) return
-      setMessage('已由服务器确认阅读状态。')
+      if (!inCommandView()) return
+      void message.success('已标记为已读')
       setRevision((value) => value + 1)
     } catch (error) {
-      const currentView = currentViewRef.current
-      if (currentView.mode !== commandView.mode || currentView.offset !== commandView.offset) return
-      setMessage(errorMessage(error, '标记已读失败'))
-      if (error instanceof ApiError && error.status === 404) {
+      if (!inCommandView()) return
+      // 写操作不自动重放：只重新读取列表核对，是否再次标记由用户决定。
+      if (error instanceof ApiError && error.status === 409) {
+        setNotice({ type: 'warning', text: '数据已变化，正在获取最新状态。' })
+        setRevision((value) => value + 1)
+      } else if (error instanceof ApiError && error.status === 404) {
+        setNotice({ type: 'warning', text: errorMessage(error, '通知已不存在，正在获取最新状态。') })
+        setRevision((value) => value + 1)
+      } else if (error instanceof ApiError && error.status < 500) {
+        setNotice({ type: 'error', text: errorMessage(error, '标记已读失败') })
+      } else {
+        setNotice({
+          type: 'warning',
+          text: '未确认是否已标记为已读，已重新读取列表供核对；如仍为未读可再次点击。',
+        })
         setRevision((value) => value + 1)
       }
     } finally {
-      const currentView = currentViewRef.current
-      if (currentView.mode === commandView.mode && currentView.offset === commandView.offset) {
-        setMarkingId(null)
-      }
+      if (inCommandView()) setMarkingId(null)
     }
   }
 
-  const currentState = state.key === viewKey ? state : { status: 'loading', key: viewKey } as const
-  const data = currentState.status === 'ready' ? currentState.data : null
+  const data = state.dataKey === viewKey ? state.data : null
+  const refreshing = state.loading && data !== null
   const hasPrevious = offset > 0
   const hasPossibleNext = data !== null && data.items.length === data.limit
 
+  const columns = [
+    {
+      key: 'notification',
+      render: (_: unknown, item: NotificationResponse) => {
+        const targetPath = subjectPath(item.subject)
+        return (
+          <Flex vertical gap={8}>
+            <Flex vertical gap={4}>
+              <Typography.Text strong>{item.title}</Typography.Text>
+              <Typography.Text>{item.body}</Typography.Text>
+            </Flex>
+            <Flex align="center" wrap gap={8}>
+              {item.read_at === null ? (
+                <Badge color="blue" text="未读" />
+              ) : (
+                <Typography.Text type="secondary">已读 {formatDateTime(item.read_at)}</Typography.Text>
+              )}
+              <Typography.Text type="secondary">
+                {notificationKindText(item.kind)} · {formatDateTime(item.created_at)}
+              </Typography.Text>
+              <Typography.Text type="secondary">{subjectText(item.subject)}</Typography.Text>
+            </Flex>
+            <Flex align="center" wrap gap={8}>
+              {targetPath === null ? (
+                <Typography.Text type="secondary">目标类型不可用</Typography.Text>
+              ) : (
+                <ButtonLink to={targetPath}>打开当前目标</ButtonLink>
+              )}
+              {item.read_at === null ? (
+                <Button
+                  loading={markingId === item.id}
+                  disabled={markingId !== null && markingId !== item.id}
+                  onClick={() => void markRead(item.id)}
+                >
+                  标记已读
+                </Button>
+              ) : null}
+            </Flex>
+          </Flex>
+        )
+      },
+    },
+  ]
+
+  const emptyText =
+    offset > 0
+      ? '当前页没有通知。'
+      : mode === 'unread'
+        ? '没有未读通知。'
+        : '暂无通知。'
+
   return (
-    <section className="surface-page" aria-labelledby="notifications-title">
-      <div className="page-heading">
-        <div>
-          <h1 id="notifications-title">通知</h1>
-        </div>
-        <p>未读总数 {data?.unread_count ?? '—'}</p>
-      </div>
+    <Flex vertical gap={16}>
+      <PageHeader
+        title="通知"
+        titleId="notifications-title"
+        meta={<Typography.Text type="secondary">未读总数 {data?.unread_count ?? '—'}</Typography.Text>}
+      />
 
-      <section className="surface-card" aria-label="通知视图">
-        <div className="command-stack">
-          <button
-            type="button"
-            className={mode === 'all' ? undefined : 'secondary'}
-            aria-pressed={mode === 'all'}
-            onClick={() => changeMode('all')}
-          >
-            全部
-          </button>
-          <button
-            type="button"
-            className={mode === 'unread' ? undefined : 'secondary'}
-            aria-pressed={mode === 'unread'}
-            onClick={() => changeMode('unread')}
-          >
-            未读{data === null ? '' : ` (${data.unread_count})`}
-          </button>
-        </div>
-        <p className="empty-note">
-          Notification 是历史投递记录，不代表当前责任或访问权限；打开目标后仍由目标 API 重新授权。
-        </p>
-      </section>
+      <Card>
+        <Flex vertical gap={12}>
+          <Flex role="group" aria-label="通知视图" align="center" wrap gap={8}>
+            <Button
+              type={mode === 'all' ? 'primary' : 'default'}
+              aria-pressed={mode === 'all'}
+              onClick={() => changeMode('all')}
+            >
+              全部
+            </Button>
+            <Button
+              type={mode === 'unread' ? 'primary' : 'default'}
+              aria-pressed={mode === 'unread'}
+              onClick={() => changeMode('unread')}
+            >
+              未读{data === null ? '' : ` (${data.unread_count})`}
+            </Button>
+          </Flex>
+          <Typography.Text type="secondary">
+            通知是历史投递记录，不代表当前责任或访问权限；打开目标后仍会重新校验权限。
+          </Typography.Text>
+        </Flex>
+      </Card>
 
-      {currentState.status === 'loading' ? (
-        <section className="surface-card"><p>正在读取服务器通知…</p></section>
+      {state.error === null ? null : (
+        <Alert
+          type="error"
+          showIcon
+          title={state.error}
+          action={<Button size="small" onClick={reload}>重新加载</Button>}
+        />
+      )}
+      {notice === null ? null : (
+        <Alert type={notice.type} showIcon role="status" title={notice.text} closable={{ onClose: () => setNotice(null) }} />
+      )}
+
+      {state.loading && data === null ? (
+        <Card><Skeleton active paragraph={{ rows: 6 }} /></Card>
       ) : null}
 
-      {currentState.status === 'error' ? (
-        <section className="surface-card" role="alert">
-          <p>{currentState.message}</p>
-          <button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button>
-        </section>
-      ) : null}
-
-      {data !== null && data.items.length === 0 ? (
-        <section className="surface-card"><p className="empty-note">当前视图暂无通知。</p></section>
-      ) : null}
-
-      {data !== null && data.items.length > 0 ? (
-        <ol className="surface-list" aria-label={mode === 'unread' ? '未读通知' : '全部通知'}>
-          {data.items.map((item) => {
-            const targetPath = subjectPath(item.subject)
-            return (
-              <li key={item.id}>
-                <div>
-                  <strong>{item.title}</strong>
-                  <p>{item.body}</p>
-                </div>
-                <span>{notificationKindText(item.kind)} · {formatDateTime(item.created_at)}</span>
-                <span>{item.read_at === null ? '未读' : `已读 ${formatDateTime(item.read_at)}`}</span>
-                <span>{subjectText(item.subject)}</span>
-                <div className="command-stack">
-                  {targetPath === null ? (
-                    <span>目标类型不可用</span>
-                  ) : (
-                    <Link to={targetPath}>打开当前目标</Link>
-                  )}
-                  {item.read_at === null ? (
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={markingId !== null}
-                      onClick={() => void markRead(item.id)}
-                    >
-                      {markingId === item.id ? '正在确认…' : '标记已读'}
-                    </button>
-                  ) : null}
-                </div>
-              </li>
-            )
-          })}
-        </ol>
-      ) : null}
-
-      {data !== null ? (
-        <section className="surface-card" aria-label="通知分页">
-          <p>当前 offset {data.offset} · 每页上限 {data.limit}</p>
-          <div className="command-stack">
-            <button
-              type="button"
-              className="secondary"
-              disabled={!hasPrevious}
-              onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
-            >上一页</button>
-            <button
-              type="button"
-              className="secondary"
-              disabled={!hasPossibleNext}
-              onClick={() => setOffset((value) => value + PAGE_SIZE)}
-            >下一页</button>
-          </div>
-          {mode === 'all' ? (
-            <p className="empty-note">通知列表不显示总条数；“下一页”仅表示当前页已满。</p>
-          ) : null}
-        </section>
-      ) : null}
-
-      {message === null ? null : <p role="status">{message}</p>}
-    </section>
+      {data === null ? null : (
+        <Spin spinning={refreshing}>
+          <Card>
+            <Flex vertical gap={16}>
+              <Table<NotificationResponse>
+                size="middle"
+                showHeader={false}
+                pagination={false}
+                rowKey="id"
+                aria-label={mode === 'unread' ? '未读通知' : '全部通知'}
+                columns={columns}
+                dataSource={data.items}
+                locale={{
+                  emptyText: (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText}>
+                      {mode === 'unread' ? <Button onClick={() => changeMode('all')}>查看全部通知</Button> : null}
+                    </Empty>
+                  ),
+                }}
+              />
+              <Flex component="nav" aria-label="通知分页" align="center" wrap gap={8}>
+                <Button
+                  disabled={!hasPrevious}
+                  onClick={() => changeOffset((value) => Math.max(0, value - PAGE_SIZE))}
+                >上一页</Button>
+                <Typography.Text type="secondary">第 {Math.floor(data.offset / data.limit) + 1} 页</Typography.Text>
+                <Button
+                  disabled={!hasPossibleNext}
+                  onClick={() => changeOffset((value) => value + PAGE_SIZE)}
+                >下一页</Button>
+              </Flex>
+              {mode === 'all' ? (
+                <Typography.Text type="secondary">
+                  通知列表不显示总条数；“下一页”仅表示当前页已满。
+                </Typography.Text>
+              ) : null}
+            </Flex>
+          </Card>
+        </Spin>
+      )}
+    </Flex>
   )
 }

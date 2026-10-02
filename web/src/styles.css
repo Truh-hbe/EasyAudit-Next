@@ -331,7 +331,6 @@ h3 {
   line-height: 1.6;
 }
 
-.surface-grid,
 .command-grid,
 .form-grid {
   display: grid;
@@ -531,7 +530,6 @@ h3 {
 }
 
 @media (max-width: 820px) {
-  .surface-grid,
   .command-grid,
   .form-grid,
   .fact-grid {
