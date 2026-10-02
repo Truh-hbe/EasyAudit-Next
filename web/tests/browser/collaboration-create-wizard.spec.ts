@@ -385,3 +385,24 @@ test.describe('case step', () => {
     expect(requests).toHaveLength(0)
   })
 })
+
+test.describe('narrow screens', () => {
+  for (const width of [375, 320]) {
+    test(`both steps have no horizontal overflow at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 })
+      await stubShell(page)
+      const overflows = () =>
+        page.evaluate(() => {
+          const root = globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } }
+          return root.document.documentElement.scrollWidth > root.document.documentElement.clientWidth
+        })
+      await page.goto('/review-plans/new')
+      await expect(page.getByRole('heading', { name: '新建审查计划' })).toBeVisible()
+      expect(await overflows()).toBe(false)
+      await page.goto('/review-plans/plan-1/review-cases/new')
+      await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
+      await expect(page.getByText('Wizard Plan')).toBeVisible()
+      expect(await overflows()).toBe(false)
+    })
+  }
+})

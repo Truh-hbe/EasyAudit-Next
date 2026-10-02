@@ -125,7 +125,7 @@
 | 表单 | `Form` + `Form.Item`（`label`、`rules`、`required`） | 手写 `<label>` 和校验状态 |
 | 输入 | `Input`、`Input.TextArea`、`Input.Password`、`InputNumber` | |
 | 选择 | 选项 ≤ 4 用 `Radio.Group`，否则用 `Select`；候选人用 `Select showSearch` + 服务端授权的候选接口 | 原生 `<select>` |
-| 日期 | `DatePicker`（时区见[时间](#文案与术语)） | 原生 `datetime-local` |
+| 日期 | `DatePicker`（时区见[时间](#文案与术语)）；日期时间字段用 `ui/ShanghaiDateTimePicker`，表单值是 `YYYY/MM/DD HH:mm` 文本，经 `format.ts` 的 `displayZoneTextToIso` 转换 | 原生 `datetime-local`；直接把 `DatePicker` 的 dayjs 值当作时刻使用 |
 | 表格数据 | `Table`（`size="middle"`，`rowKey="id"`，分页来自服务端 envelope） | 手写 grid 列表 |
 | 简单条目 | `ui/ItemList`（语义 `<ul>`/`<li>`，空状态用 `Empty`）；需要列、排序、分页的数据用 `Table` | `List`（已弃用）；`Listy`（输出无列表语义的 `div`，无法补 role）；用 `Table` 渲染无表头的条目（单页约 +88 kB gzip，见 ADR-0006 体积说明） |
 | 字段展示 | `Descriptions`（`column={{ xs: 1, md: 2 }}`） | 手写 `<dl>` |
@@ -204,7 +204,7 @@ antd 预设的 `success` / `warning` / `error` 状态 Tag 文字对比度只有 
 - 按钮以动词开头，说清对象和结果：新建整改项、提交完成情况、通过验证、确认关闭。不用一排无上下文的"确认"。
 - **名称**：只用已授权接口返回的名称（成员、参与人、指派对象和候选搜索接口）。接口只给 ID 时显示"名称暂不可用"，加次级短 ID。不借用管理员用户目录为普通用户补名；需要新名称时另开读侧设计 PR。
 - **人称**：面向用户的提示需要人称时用“您”，能省略就省略。
-- **时间**：展示时区固定为 `Asia/Shanghai`（与导出和提醒一致），显示格式 `2026/08/28 18:00`，空值显示 `—`。日期输入也按该时区解析为 ISO 时间，不受设备时区影响。`zh-cn` locale 只决定语言，不决定时区。统一入口在 `web/src/product/format.ts`。
+- **时间**：展示时区固定为 `Asia/Shanghai`（与导出和提醒一致），显示格式 `2026/08/28 18:00`，空值显示 `—`。日期输入也按该时区解析为 ISO 时间，不受设备时区影响。`DatePicker` 键入的文本由设备时区的 dayjs 解析：无效日期和设备夏令时空洞里的时刻会被静默丢弃，日期框里按 Enter 还会提交表单，所以 `ShanghaiDateTimePicker` 以键入的原始文本为准交给表单校验，Enter 只确认日期。`zh-cn` locale 只决定语言，不决定时区。统一入口在 `web/src/product/format.ts`。
 
 | 领域概念 | 界面用语 |
 |---|---|

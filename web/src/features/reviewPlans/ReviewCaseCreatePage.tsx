@@ -364,7 +364,7 @@ export function ReviewCaseCreatePage() {
               />
             ) : null}
             <Flex justify="flex-end" gap={8} wrap>
-              <ButtonLink to="/review-cases">取消</ButtonLink>
+              <ButtonLink to="/review-cases" autoInsertSpace={false}>取消</ButtonLink>
               <Button
                 type="primary"
                 htmlType="submit"
