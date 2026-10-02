@@ -88,14 +88,14 @@ db_scalar() { db_tool psql -X -At -v ON_ERROR_STOP=1 -c "$1"; }
 require_empty_database() {
   local tables
   tables="$(db_scalar "select count(*) from information_schema.tables where table_schema not in ('pg_catalog','information_schema')")"
-  [ "$tables" = "0" ] || fail "refusing to restore: the database is not empty ($tables tables). Restore only writes into an empty database; use a fresh environment (docker compose down -v)."
+  [ "$tables" = "0" ] || fail "refusing to restore: the database is not empty ($tables tables). Restore rejected for this non-empty target; overwrite is not authorized. Create or select a separate disposable isolated restore target. Manually confirm the project, volumes, and target identity before retrying restoration."
 }
 
 # Refuse to restore into a bucket that already has objects.
 require_empty_bucket() {
   local listing
   listing="$(object_tool_net lsf --max-depth 1 "$S3_REMOTE")" || fail "cannot list bucket $BUCKET"
-  [ -z "$listing" ] || fail "refusing to restore: bucket $BUCKET is not empty. Restore only writes into an empty bucket; use a fresh environment (docker compose down -v)."
+  [ -z "$listing" ] || fail "refusing to restore: bucket $BUCKET is not empty. Restore rejected for this non-empty target; overwrite is not authorized. Create or select a separate disposable isolated restore target. Manually confirm the project, volumes, and target identity before retrying restoration."
 }
 
 # Backup directory names: easyaudit-backup-YYYYmmddTHHMMSSZ
