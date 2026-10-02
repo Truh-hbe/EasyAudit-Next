@@ -21,24 +21,20 @@ import { RouteBoundary } from '../router/RouteBoundary'
 const ActionItemDetailPage = lazy(() =>
   import('../../features/actions/ActionItemDetailPage').then((m) => ({ default: m.ActionItemDetailPage })),
 )
-const AdminPage = lazy(() =>
-  import('../../features/admin/AdminPage').then((m) => ({ default: m.AdminPage })),
-)
+const loadAdminPage = () => import('../../features/admin/AdminPage')
+const AdminPage = lazy(() => loadAdminPage().then((m) => ({ default: m.AdminPage })))
 const FindingDetailPage = lazy(() =>
   import('../../features/findings/FindingDetailPage').then((m) => ({ default: m.FindingDetailPage })),
 )
 const ManagementCaseProgressPage = lazy(() =>
   import('../../features/management/ManagementCaseProgressPage').then((m) => ({ default: m.ManagementCaseProgressPage })),
 )
-const ManagementPage = lazy(() =>
-  import('../../features/management/ManagementPage').then((m) => ({ default: m.ManagementPage })),
-)
-const NotificationCenterPage = lazy(() =>
-  import('../../features/notifications/NotificationCenterPage').then((m) => ({ default: m.NotificationCenterPage })),
-)
-const ReviewCaseCollectionPage = lazy(() =>
-  import('../../features/reviewCases/ReviewCaseCollectionPage').then((m) => ({ default: m.ReviewCaseCollectionPage })),
-)
+const loadManagementPage = () => import('../../features/management/ManagementPage')
+const ManagementPage = lazy(() => loadManagementPage().then((m) => ({ default: m.ManagementPage })))
+const loadNotificationCenterPage = () => import('../../features/notifications/NotificationCenterPage')
+const NotificationCenterPage = lazy(() => loadNotificationCenterPage().then((m) => ({ default: m.NotificationCenterPage })))
+const loadReviewCaseCollectionPage = () => import('../../features/reviewCases/ReviewCaseCollectionPage')
+const ReviewCaseCollectionPage = lazy(() => loadReviewCaseCollectionPage().then((m) => ({ default: m.ReviewCaseCollectionPage })))
 const ReviewCaseDetailPage = lazy(() =>
   import('../../features/reviewCases/ReviewCaseDetailPage').then((m) => ({ default: m.ReviewCaseDetailPage })),
 )
@@ -49,17 +45,30 @@ const ReviewPlanCreatePage = lazy(() =>
   import('../../features/reviewPlans/ReviewPlanCreatePage').then((m) => ({ default: m.ReviewPlanCreatePage })),
 )
 
-const primaryNavigation: readonly { to: string; label: string; icon: ReactNode }[] = [
+// 悬停/聚焦导航链接时提前拉取对应页面的 chunk；失败不影响导航，真正渲染时失败仍由 RouteBoundary 处理。
+function prefetch(load: (() => Promise<unknown>) | undefined) {
+  if (load !== undefined) void load().catch(() => undefined)
+}
+
+interface NavigationItem {
+  to: string
+  label: string
+  icon: ReactNode
+  load?: () => Promise<unknown>
+}
+
+const primaryNavigation: readonly NavigationItem[] = [
   { to: '/me/workbench', label: '我的工作', icon: <HomeOutlined aria-hidden /> },
-  { to: '/review-cases', label: '审查活动', icon: <FileSearchOutlined aria-hidden /> },
-  { to: '/me/notifications', label: '通知', icon: <BellOutlined aria-hidden /> },
-  { to: '/management', label: '管理视图', icon: <BarChartOutlined aria-hidden /> },
+  { to: '/review-cases', label: '审查活动', icon: <FileSearchOutlined aria-hidden />, load: loadReviewCaseCollectionPage },
+  { to: '/me/notifications', label: '通知', icon: <BellOutlined aria-hidden />, load: loadNotificationCenterPage },
+  { to: '/management', label: '管理视图', icon: <BarChartOutlined aria-hidden />, load: loadManagementPage },
 ]
 
-const adminNavigation = {
+const adminNavigation: NavigationItem = {
   to: '/admin',
   label: '管理设置',
   icon: <SettingOutlined aria-hidden />,
+  load: loadAdminPage,
 }
 
 export function ProductShell() {
@@ -90,7 +99,12 @@ export function ProductShell() {
 
       <nav className="app-nav" aria-label="主要导航">
         {navigation.map((item) => (
-          <NavLink key={item.to} to={item.to}>
+          <NavLink
+            key={item.to}
+            to={item.to}
+            onMouseEnter={() => prefetch(item.load)}
+            onFocus={() => prefetch(item.load)}
+          >
             {item.icon}
             <span>{item.label}</span>
           </NavLink>
