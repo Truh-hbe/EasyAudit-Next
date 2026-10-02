@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process'
 
 import { expect, test, type Page } from '@playwright/test'
 
+import { confirmRemoveMember, dropdownOption, searchCandidates, submitCandidate, teamMemberRow } from './caseTeamView.js'
+
 const ADMIN_LOGIN_NAME = 'browser-m5-4-admin'
 const ADMIN_PASSWORD = 'm5-4-browser-admin-password-000'
 const MANAGER_DISPLAY_NAME = 'M5.4 Browser Case Manager'
@@ -49,42 +51,15 @@ async function submitPasswordChange(page: Page, currentPassword: string, newPass
 }
 
 async function addLeadMember(page: Page, search: string, displayName: string) {
-  const team = page.getByRole('region', { name: '团队管理' })
-  await team.getByLabel('团队角色').selectOption('lead')
-  await team.getByLabel('搜索成员').fill(search)
-  const searchResponsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/member-candidates` &&
-      response.request().method() === 'GET',
-  )
-  await team.getByRole('button', { name: '搜索候选人' }).click()
-  expect((await searchResponsePromise).status()).toBe(200)
-  const candidate = team
-    .getByRole('list', { name: '候选成员' })
-    .getByRole('listitem')
-    .filter({ hasText: displayName })
-  await expect(candidate).toBeVisible()
-  const addResponsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/members` &&
-      response.request().method() === 'POST',
-  )
-  await candidate.getByRole('button', { name: '添加' }).click()
-  expect((await addResponsePromise).status()).toBe(201)
-  await expect(team.locator('ul.surface-list').first().getByText(displayName)).toBeVisible()
+  const { drawer, response } = await searchCandidates(page, CASE_ID, 'lead', search)
+  expect(response.status()).toBe(200)
+  await expect(dropdownOption(page, displayName)).toBeVisible()
+  expect((await submitCandidate(page, CASE_ID, drawer, displayName)).status()).toBe(201)
+  await expect(teamMemberRow(page, displayName)).toBeVisible()
 }
 
 async function removeMember(page: Page, userId: string, displayName: string) {
-  const team = page.getByRole('region', { name: '团队管理' })
-  const member = team.locator('ul.surface-list').first().locator('li').filter({ hasText: displayName })
-  await expect(member).toBeVisible()
-  const removeResponsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === `/api/v1/review-cases/${CASE_ID}/members/${userId}` &&
-      response.request().method() === 'DELETE',
-  )
-  await member.getByRole('button', { name: '移除' }).click()
-  expect((await removeResponsePromise).status()).toBe(200)
+  expect((await confirmRemoveMember(page, CASE_ID, userId, displayName)).status()).toBe(200)
 }
 
 test.describe.configure({ mode: 'serial', retries: 0 })
@@ -149,12 +124,12 @@ test('real administrator configures users, protects Case managers, and resets cr
   await expect(users.getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME })).toBeVisible()
 
   const targetContext = await browser.newContext({
-    baseURL: 'https://127.0.0.1:4173',
+    baseURL: `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`,
     ignoreHTTPSErrors: true,
   })
   const targetPage = await targetContext.newPage()
   const managerContext = await browser.newContext({
-    baseURL: 'https://127.0.0.1:4173',
+    baseURL: `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`,
     ignoreHTTPSErrors: true,
   })
   const managerPage = await managerContext.newPage()

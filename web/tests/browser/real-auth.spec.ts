@@ -464,7 +464,7 @@ test('real stale Workbench link revalidates current Case authorization and obser
   )
   await page.getByRole('link', { name: STALE_CASE_TITLE }).click()
   expect((await refusedCasePromise).status()).toBe(403)
-  await expect(page.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   await expect(page.getByText(STALE_CASE_TITLE)).toHaveCount(0)
   await expect(page.getByText('LINE-A')).toHaveCount(0)
   await expect(page.getByText(VIEWER_DISPLAY_NAME)).toHaveCount(1)
@@ -474,7 +474,7 @@ test('real stale Workbench link revalidates current Case authorization and obser
   )
   await page.reload()
   expect((await reloadRefusedPromise).status()).toBe(403)
-  await expect(page.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   await expect(page.getByText(STALE_CASE_TITLE)).toHaveCount(0)
 
   await submitLogout(page)
