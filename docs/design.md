@@ -261,6 +261,7 @@ antd 预设的 `success` / `warning` / `error` 状态 Tag 文字对比度只有 
 - **遗留样式隔离**：`styles.css` 中的遗留元素规则（`form`、`label`、`input`、`button`、`[role="alert"]` 等）只作用于旧页面容器 `.surface-page` / `.auth-card` / `.foundation` 内部，且不进入 `.ui-modern` 边界。
   - 混合页面中的新组件放在 `<div className="ui-modern">` 内。
   - 整页迁移后，根节点不再使用旧容器类，也就不需要这层包裹。
+  - 已迁移页面里若还嵌着与未迁移页面共用的遗留子组件（如场景适配器、发现项创建面板），只在该子组件外包一层 `<div className="surface-page">` 作为遗留孤岛；页面根节点不用旧容器类。子组件迁移后删除这层包裹。
   - antd 弹层渲染到 `body`，本来就不受影响。
   - 浏览器测试 `legacy element styles stay inside legacy page containers…` 守护这条边界。
 

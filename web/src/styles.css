@@ -284,7 +284,6 @@ h3 {
 .placeholder-note,
 .empty-note,
 .surface-list span,
-.case-list span,
 .activity-list span,
 .page-heading > p {
   color: var(--ant-color-text-secondary);
@@ -305,18 +304,6 @@ h3 {
 }
 
 .page-heading > p {
-  margin: 8px 0 0;
-}
-
-.heading-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.heading-actions > p {
   margin: 8px 0 0;
 }
 
@@ -360,7 +347,6 @@ h3 {
 }
 
 .surface-list,
-.case-list,
 .activity-list {
   list-style: none;
   margin: 0;
@@ -368,7 +354,6 @@ h3 {
 }
 
 .surface-list li,
-.case-list li,
 .activity-list li {
   display: grid;
   gap: 6px;
@@ -377,35 +362,14 @@ h3 {
 }
 
 .surface-list li:first-child,
-.case-list li:first-child,
 .activity-list li:first-child {
   padding-top: 0;
   border-top: 0;
 }
 
-.surface-list a,
-.case-title-link {
+.surface-list a {
   color: var(--ant-color-text);
   font-weight: 750;
-}
-
-.case-list li {
-  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(140px, 0.8fr));
-  align-items: center;
-  gap: 14px;
-}
-
-.case-list p {
-  margin: 4px 0 0;
-  color: var(--ant-color-text-secondary);
-  font-size: 0.85rem;
-}
-
-.pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
 }
 
 /* StatusTag：选择器特异性高于 antd Tag 自身的 .ant-tag.ant-tag-outlined，不依赖样式注入顺序；背景 -1、边框 -3、文字取 docs/design.md 状态表中实测达标的档位。 */
@@ -548,7 +512,6 @@ h3 {
     grid-column: auto;
   }
 
-  .case-list li,
   .candidate-list li {
     grid-template-columns: 1fr;
   }

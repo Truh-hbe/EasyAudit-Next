@@ -8,7 +8,6 @@
 .surface-page,
 .surface-card,
 .surface-list li,
-.case-list li,
 .activity-list li,
 .subsurface,
 .command-row,
@@ -21,7 +20,6 @@
 .surface-page,
 .surface-card,
 .surface-list li,
-.case-list li,
 .activity-list li,
 .fact-grid dd,
 .app-brand-context,
@@ -44,15 +42,13 @@ canvas {
     padding: 18px;
   }
 
-  .command-row,
-  .pagination {
+  .command-row {
     align-items: stretch;
     flex-direction: column;
   }
 
   .command-row > button,
   .command-row > a,
-  .pagination > button,
   .candidate-list button {
     width: 100%;
   }
