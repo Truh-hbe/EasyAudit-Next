@@ -123,5 +123,5 @@ test('real compliance observation closes through shared Product routes and exact
   await expect(page.getByRole('button', { name: '接受观察项' })).toHaveCount(0)
   await expect(page.getByText('暂无整改项。')).toBeVisible()
   await expect(page.getByText('暂无提交记录。')).toBeVisible()
-  await expect(page.getByText('finding.transitioned', { exact: true })).toBeVisible()
+  await expect(page.getByText('发现项状态变更', { exact: true })).toBeVisible()
 })

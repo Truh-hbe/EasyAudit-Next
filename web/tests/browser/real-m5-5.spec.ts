@@ -324,7 +324,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
 
     await addMember(firstPage, processCase.id, 'reviewer', SECOND_DISPLAY_NAME, SECOND_DISPLAY_NAME)
     expect(await removeMember(firstPage, processCase.id, secondUserId, SECOND_DISPLAY_NAME)).toBe(200)
-    await expect(firstPage.getByText('review_case.member_removed')).toBeVisible()
+    await expect(firstPage.getByText('移除审查成员')).toBeVisible()
     const activitiesBeforeFinalManager = await fetchStatus(
       firstPage,
       `/api/v1/review-cases/${processCase.id}/activities`,

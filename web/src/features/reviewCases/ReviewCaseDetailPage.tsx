@@ -18,6 +18,7 @@ import type {
 } from '../../api/product'
 import { formatDateTime } from '../../product/format'
 import { scenarioName, scenarioVersionText } from '../../product/terms'
+import { ActivityEventName } from '../../ui/ActivityEventName'
 import { isDeadlineStatus, StatusTag } from '../../ui/StatusTag'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import { FindingCreatePanel } from '../findings/FindingCreatePanel'
@@ -85,7 +86,7 @@ function ActivitySection({ state }: { state: SectionState<ReviewCaseActivityResp
         <ol className="activity-list">
           {state.data.map((activity) => (
             <li key={activity.id}>
-              <strong>{activity.event_type}</strong>
+              <ActivityEventName eventType={activity.event_type} />
               <span>{formatDateTime(activity.occurred_at)}</span>
               <span>操作人 {activity.actor_id ?? '系统'}</span>
             </li>

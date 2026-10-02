@@ -28,6 +28,7 @@ import type {
 } from '../../api/product'
 import { formatDateTime } from '../../product/format'
 import { assignmentRoleName } from '../../product/terms'
+import { ActivityEventName } from '../../ui/ActivityEventName'
 import { StatusTag } from '../../ui/StatusTag'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 
@@ -584,7 +585,7 @@ export function ActionItemDetailPage() {
           <ol className="activity-list">
             {activityState.data.map((activity) => (
               <li key={activity.id}>
-                <strong>{activity.event_type}</strong>
+                <ActivityEventName eventType={activity.event_type} />
                 <span>{formatDateTime(activity.occurred_at)}</span>
                 <span>操作人 {activity.actor_id ?? '系统'}</span>
               </li>

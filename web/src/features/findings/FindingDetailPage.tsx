@@ -36,6 +36,7 @@ import {
 import { participantRoleName, scenarioName, scenarioVersionText, submissionPurposeName } from '../../product/terms'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 import type { ScenarioFindingCommandPorts } from '../../scenarios/registry'
+import { ActivityEventName } from '../../ui/ActivityEventName'
 import { StatusTag } from '../../ui/StatusTag'
 
 type PrimaryState =
@@ -89,7 +90,7 @@ function ActivitySection({ state }: { state: ChildState<FindingActivityResponse[
         <ol className="activity-list">
           {state.data.map((activity) => (
             <li key={activity.id}>
-              <strong>{activity.event_type}</strong>
+              <ActivityEventName eventType={activity.event_type} />
               <span>{formatDateTime(activity.occurred_at)}</span>
               <span>操作人 {activity.actor_id ?? '系统'}</span>
             </li>
