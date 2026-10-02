@@ -441,7 +441,7 @@ test('visible process_review@1 Case renders Case-scoped identity, Findings, serv
   await expect(page.getByText('A-01')).toBeVisible()
   await expect(page.getByText('Human Member')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Visible Finding' })).toHaveAttribute('href', '/findings/finding-real')
-  await expect(page.getByText('review_case.created')).toBeVisible()
+  await expect(page.getByText('创建审查活动')).toBeVisible()
   await expect(page.getByText('整改项已逾期')).toBeVisible()
   await expect(page.locator('.compact-facts > div', { hasText: '整改项已逾期' }).locator('dd')).toHaveText('1')
   await expect(page.getByText('metadata')).toHaveCount(0)

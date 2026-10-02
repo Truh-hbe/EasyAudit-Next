@@ -106,7 +106,7 @@ test('real Case team searches all exact roles, adds, removes, and protects final
   expect((await memberDeleteResponsePromise).status()).toBe(200)
   expect((await activityDeleteReloadPromise).status()).toBe(200)
   await expect(team.getByText(CANDIDATE_DISPLAY_NAME)).toHaveCount(0)
-  await expect(page.getByText('review_case.member_removed')).toBeVisible()
+  await expect(page.getByText('移除审查成员')).toBeVisible()
 
   const finalManagerResponsePromise = page.waitForResponse(
     (response) =>

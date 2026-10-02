@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
+import { ActivityEventName } from './ActivityEventName'
 import { PageHeader } from './PageHeader'
 import { StatusTag, statusLabel } from './StatusTag'
 import type { StatusKind } from './StatusTag'
@@ -52,6 +53,16 @@ describe('StatusTag', () => {
       expect(html).toContain('未知状态')
       expect(html).toContain(`<span class="status-tag-raw">${value}</span>`)
     }
+  })
+})
+
+describe('ActivityEventName', () => {
+  it('已知事件只显示中文名，未知事件显示“未知操作”并保留原始值作次级信息', () => {
+    const known = renderToStaticMarkup(<ActivityEventName eventType="finding.approved" />)
+    expect(known).toBe('<strong>通过验证</strong>')
+    const unknown = renderToStaticMarkup(<ActivityEventName eventType="constructor" />)
+    expect(unknown).toContain('<strong>未知操作</strong>')
+    expect(unknown).toContain('<span class="status-tag-raw">constructor</span>')
   })
 })
 

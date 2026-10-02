@@ -373,6 +373,7 @@ test('real M3.5.2 manager journey uses Workbench projection, bounded collection,
   await expect(page.getByText('routine')).toBeVisible()
   await expect(page.getByText('Human Case Member')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Real Browser Finding' })).toBeVisible()
+  await expect(page.getByText('未知操作')).toBeVisible()
   await expect(page.getByText('review_case.real_browser_seeded')).toBeVisible()
   await expect(page.getByRole('heading', { name: '管理进度' })).toBeVisible()
   await expect(page.getByText('当前用户没有可用的管理进度摘要。')).toHaveCount(0)
