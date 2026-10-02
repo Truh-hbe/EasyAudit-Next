@@ -12,6 +12,8 @@ EasyAudit-Next 是面向跨部门协作的通用审查平台。它以 Review Cor
 
 尚未具备：OIDC/SSO、MFA、邮件或企业 IM 通知、数据保留策略。见 [路线](docs/roadmap.md)。
 
+本仓库指引面向开发与经维护者批准的受控私网试点，不代表 GA 或通用生产支持。部署拓扑、工具和 CI 演练存在，不等于目标机器已经通过运行资格验证；支持边界见 [SECURITY.md](SECURITY.md)。
+
 ## 快速开始
 
 要求 Python 3.12+、Node 22、Docker Compose。
@@ -24,7 +26,7 @@ alembic upgrade head
 uvicorn easyaudit_next.main:app --reload
 ```
 
-首次迁移后创建首个组织与系统管理员（密码只通过终端隐藏输入读取），并为组织发布场景：
+首次迁移后创建首个组织与系统管理员（交互式输入密码，不把密码放在命令行）。然后经 HTTPS 前端登录，用 `GET /api/v1/me` 响应的 `organization_id` 替换下面的 `<org-id>`，为该组织发布两个精确 v1 场景：
 
 ```bash
 easyaudit-next bootstrap-admin \
@@ -32,7 +34,10 @@ easyaudit-next bootstrap-admin \
   --admin-name "Platform Administrator" \
   --login-name admin
 easyaudit-next publish-scenario --organization-id <org-id> --key process_review --version 1
+easyaudit-next publish-scenario --organization-id <org-id> --key compliance_review --version 1
 ```
+
+重复发布同一版本会被拒绝，不是幂等成功。CLI 注册了场景代码不等于组织已经发布它。完整的组织识别、部门/用户、首次改密、catalog 与 Plan → Case 验收见 [首次部署到业务 Ready](deploy/README.md#首次部署到业务-ready)。本地开发的对象存储配置入口见 [配置参考](docs/operations/configuration.md)：默认不配置对象存储时，上传为 503、readiness 失败；本地前端也需要受信任的 HTTPS，才能使用 Secure Session Cookie。
 
 前端：
 
@@ -54,6 +59,8 @@ cd web && npm run typecheck && npm run lint && npm run test && npm run test:brow
 
 ```bash
 (
+  # DISPOSABLE TEST TARGET ONLY：先确认 localhost:5432/easyaudit_test 是可丢弃测试库。
+  # 下方 dropdb 删除该测试库全部数据；不得替换成 source deployment 或需保留的库。
   export PGPASSWORD=easyaudit DATABASE_URL=postgresql+psycopg://easyaudit:easyaudit@localhost:5432/easyaudit_test
   dropdb -h localhost -U easyaudit --if-exists easyaudit_test \
     && createdb -h localhost -U easyaudit easyaudit_test \
@@ -69,6 +76,9 @@ cd web && npm run typecheck && npm run lint && npm run test && npm run test:brow
 - [docs/design.md](docs/design.md)：前端 UI 规范
 - [docs/roadmap.md](docs/roadmap.md)：路线
 - [docs/adr/](docs/adr/)：架构决策记录
+- [deploy/README.md](deploy/README.md)：私网部署、升级/失败决策、备份、隔离恢复与初始化的主要操作入口
+- [docs/operations/configuration.md](docs/operations/configuration.md)：配置来源、生效与密钥维护边界
+- [SECURITY.md](SECURITY.md)：支持范围与安全报告
 - [AGENTS.md](AGENTS.md)：开发流程与 Agent 分工
 
 ## License

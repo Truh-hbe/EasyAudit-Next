@@ -202,10 +202,11 @@ src/easyaudit_next/
 
 工具在 `deploy/backup/`，操作见 [deploy/README.md](../deploy/README.md)。规则：
 
-- 备份先 `pg_dump`，再经 S3 协议镜像对象（不打包 Garage 内部卷）。对象必须由服务端生成 key、只写一次、不覆盖（Pilot-4 遵守）；因此 dump 之后拷贝的对象集合一定是 DB 引用集合的超集，多出来的是孤儿，由孤儿清理处理。备份时 DB 引用的对象缺失，或 size/sha256 不一致，备份照常保留并在 manifest 标记 `integrity: degraded`，脚本以退出码 3 结束（不产出就丢了当前 DB，RPO 失守）；`verify` 对 degraded 判失败，`restore` 允许但先打印问题清单。
-- 一个备份包 = `database.dump` + `objects/` + `manifest.json`，manifest 记录 release SHA（取自运行中镜像的 label）、alembic revision、各文件 sha256 和镜像 tag，保证同一 release、同一时间点。
+- 备份先 `pg_dump` 的 PostgreSQL 一致快照，再经 S3 协议镜像对象（不打包 Garage 内部卷）。已登记 Evidence 的对象由服务端生成 key、只写一次、不覆盖；正常且对象未丢失的情况下，后续镜像可包含 dump 之后新增的对象，形成 DB 引用集合的超集。它不是 DB + 对象的跨存储原子快照；缺失或 size/sha256 不一致会使 manifest 标记 `integrity: degraded`，产物仍保留，`backup.sh` 退出 3。完整目录表示产物已发布，不保证 integrity 为 ok。
+- 一个备份包 = `database.dump` + `objects/` + `manifest.json`。manifest 记录 release SHA（运行中自建镜像 label 一致且与检出对齐）、dump 的 alembic revision、各文件 sha256 与镜像信息；`backup_timestamp` 是 dump 开始时刻，不把后续对象镜像解释成同一原子时间点。
 - 保留策略：按天数清理，但最近一份 `integrity: ok` 的备份永远保留，degraded 备份不能把它挤出保留窗口。备份每 12 小时一次，`check-freshness.sh` 监控"最近一份 ok 备份不超过 24h"；调度本身不保证 RPO。
-- 恢复只写入空目标（DB 无表、bucket 为空），不提供覆盖开关；`database`、`objects`、`environment` 三个入口在写入之前都要求 manifest 的 release 等于检出的 HEAD 和 `EASYAUDIT_RELEASE`（以及已有 api 容器的镜像 label），整环境恢复在写入之前先确认 DB 和 bucket 都为空，且 `alembic current` 等于 manifest revision 和该 release 的 head。
+- 恢复工具只写入空目标（DB 无非系统 schema 表、bucket 列举为空），不提供覆盖开关。Human Guidance 要求独立、隔离、可丢弃且经操作者确认的目标；empty-target guard 不验证部署身份，不能代替人工核对，也不授权删除 source 数据。三个入口在写入前都要求 manifest release 等于检出的 HEAD、`EASYAUDIT_RELEASE` 和已有 api 容器的镜像 label；仅 `environment` 还检查 tracked checkout 无改动，并在任何数据写入前同时检查 DB 和 bucket 为空。
+- `database` 在 pg_restore 之后核对数据库 revision 与 manifest；`environment` 在 DB 和对象写入之后、应用启动之前，再核对 `alembic current = manifest revision = release head`。然后启动应用并运行 `verify.sh`；只有最终 verify 通过，才输出 `RESTORE OK`。degraded 包可以开始恢复且在写入前警告，但 environment 模式的最终 `verify --fail-degraded` 会失败，届时数据可能已写入且应用已启动。没有跨阶段自动回滚或失败后自动停应用的保证。
 - 备份/恢复工具是接入 `backend` 网络的一次性容器（非 root、`cap_drop: ALL`、不发布端口），不在长驻容器里写文件，也不给 postgres 发布端口。
 - secrets 和 TLS 证书不进备份包；和数据同盘的备份不算备份，异地拷贝由运维负责。
 - 恢复演练（`deploy/backup/drill.sh`，CI job `backup-restore-drill`）是备份恢复的验收；演练通过网关 API 上传真实文件（含一个超过 part 大小的多段上传）来生成 Evidence，并从 bucket 读回对象核对 sha256；恢复后通过 API 下载每个 Evidence，把字节的 sha256 与元数据、与上传前本地文件的 sha256 比对，再跑 `verify-evidence` 和 `cleanup-evidence-orphans --dry-run`；故意删掉一个对象后，下载必须是带 request_id 的 500、`verify-evidence` 必须点名它。
