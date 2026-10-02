@@ -16,6 +16,20 @@ export function scenarioVersionText(scenarioKey: string, scenarioVersion: number
   return `${scenarioKey}@${scenarioVersion}`
 }
 
+const CASE_ROLE_NAMES: Record<string, string> = {
+  lead: '审查组长',
+  auditor: '审查员',
+  reviewer: '复核员',
+  observer: '观察员',
+}
+
+// 审查活动成员的角色名；未知角色键不直接展示。
+export function caseRoleName(roleKey: string): string {
+  return Object.hasOwn(CASE_ROLE_NAMES, roleKey)
+    ? (CASE_ROLE_NAMES[roleKey] ?? '未知角色')
+    : '未知角色'
+}
+
 const PARTICIPANT_ROLE_NAMES: Record<string, string> = {
   owner: '整改负责人',
   collaborator: '协作者',

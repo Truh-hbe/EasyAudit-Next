@@ -4,6 +4,7 @@ import {
   ACTIVITY_EVENT_NAMES,
   activityEventName,
   assignmentRoleName,
+  caseRoleName,
   participantRoleName,
   scenarioName,
   submissionPurposeName,
@@ -15,6 +16,14 @@ describe('product terms', () => {
     expect(scenarioName('compliance_review')).toBe('合规审查')
     expect(scenarioName('toString')).toBe('未知场景')
     expect(scenarioName('future_review')).toBe('未知场景')
+  })
+
+  it('names Case roles and does not leak unknown keys', () => {
+    expect(caseRoleName('lead')).toBe('审查组长')
+    expect(caseRoleName('auditor')).toBe('审查员')
+    expect(caseRoleName('reviewer')).toBe('复核员')
+    expect(caseRoleName('observer')).toBe('观察员')
+    expect(caseRoleName('superuser')).toBe('未知角色')
   })
 
   it('names participant, assignment roles and submission purposes', () => {

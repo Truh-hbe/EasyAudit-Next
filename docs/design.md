@@ -127,7 +127,7 @@
 | 选择 | 选项 ≤ 4 用 `Radio.Group`，否则用 `Select`；候选人用 `Select showSearch` + 服务端授权的候选接口 | 原生 `<select>` |
 | 日期 | `DatePicker`（时区见[时间](#文案与术语)） | 原生 `datetime-local` |
 | 表格数据 | `Table`（`size="middle"`，`rowKey="id"`，分页来自服务端 envelope） | 手写 grid 列表 |
-| 简单条目 | `Listy`（antd 6.6+）或 `Table` | `List`（已弃用，下个主版本移除） |
+| 简单条目 | `ui/ItemList`（语义 `<ul>`/`<li>`，空状态用 `Empty`）；需要列、排序、分页的数据用 `Table` | `List`（已弃用）；`Listy`（输出无列表语义的 `div`，无法补 role）；用 `Table` 渲染无表头的条目（单页约 +88 kB gzip，见 ADR-0006 体积说明） |
 | 字段展示 | `Descriptions`（`column={{ xs: 1, md: 2 }}`） | 手写 `<dl>` |
 | 状态 | `StatusTag` | 自定义 pill、直接用 antd 预设状态色 |
 | 历史 / 操作记录 | `Timeline` | |
@@ -144,7 +144,7 @@
 | 纯图标按钮提示 | `Tooltip` | `title` 属性 |
 | 布局 | `Flex`、`Space`、`Row`/`Col` | 为一次性布局写新 CSS class |
 
-**共享组件**放在 `web/src/ui/`，只放跨页面复用的展示组件：`PageHeader`、`StatusTag`、`ButtonLink`，以及确有重复时再抽取的错误/空状态组件。`ui/` 不调用 API、不推导权限、不解释场景。
+**共享组件**放在 `web/src/ui/`，只放跨页面复用的展示组件：`PageHeader`、`StatusTag`、`ButtonLink`、`ItemList`，以及确有重复时再抽取的错误/空状态组件。`ui/` 不调用 API、不推导权限、不解释场景。
 
 **Scenario 适配器**（`web/src/scenarios/`）同样遵守本文。场景字段用 `Descriptions` 展示，场景表单字段用 `Form.Item`；场景相关的状态上下文文案由适配器提供，通用组件不按场景分支。
 

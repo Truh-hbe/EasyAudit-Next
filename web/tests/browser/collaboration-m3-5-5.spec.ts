@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import { notificationViewLabel, notificationViewRadio } from './notificationView.js'
 
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -232,6 +233,14 @@ async function expectNoDocumentOverflow(page: Page) {
   })).toBeLessThanOrEqual(1)
 }
 
+async function expectInsideViewport(page: Page, locator: Locator) {
+  const box = await locator.boundingBox()
+  const viewport = page.viewportSize()
+  expect(box).not.toBeNull()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width + 1)
+}
+
 async function visibleOutline(locator: Locator) {
   return locator.evaluate((element) => {
     const browser = globalThis as unknown as {
@@ -268,7 +277,7 @@ test('M3.5.5 narrow product route matrix keeps essential controls inside the doc
   await page.goto(`/action-items/${actionId}`)
   await expect(page.getByRole('button', { name: '完成' })).toBeVisible()
   await page.goto('/me/notifications')
-  await expect(page.getByRole('button', { name: /未读/ })).toBeVisible()
+  await expect(notificationViewLabel(page, /未读/)).toBeVisible()
   await page.goto('/management')
   await expect(page.getByLabel('截止情况')).toBeVisible()
 })
@@ -302,11 +311,41 @@ test('M3.5.5 keyboard focus is visible and primary navigation remains keyboard-o
   await expect(page).toHaveURL(/\/me\/notifications$/)
   await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
 
-  const unreadButton = page.getByRole('button', { name: /未读/ })
-  await unreadButton.focus()
-  await expect(unreadButton).toBeFocused()
-  expect((await visibleOutline(unreadButton)).style).not.toBe('none')
+  // 视图切换是 Radio.Group：聚焦后方向键切换，焦点环画在所属 label 上。
+  await page.getByRole('radio', { name: '全部' }).focus()
+  await expect(notificationViewRadio(page, '全部')).toBeChecked()
+  await page.keyboard.press('ArrowRight')
+  await expect(notificationViewRadio(page, /未读/)).toBeChecked()
+  await expect(notificationViewRadio(page, /未读/)).toBeFocused()
+  expect((await visibleOutline(notificationViewLabel(page, /未读/))).style).not.toBe('none')
 })
+
+for (const width of [375, 320]) {
+  test(`Workbench and notification center keep task entries and unread actions usable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 740 })
+    await stubProduct(page)
+
+    await page.goto('/me/workbench')
+    await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+    await expectNoDocumentOverflow(page)
+    const workLink = page.getByRole('link', { name: longTitle }).first()
+    await expect(workLink).toBeVisible()
+    await expectInsideViewport(page, workLink)
+
+    await page.goto('/me/notifications')
+    await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
+    await expectNoDocumentOverflow(page)
+    for (const control of [
+      notificationViewLabel(page, /未读/),
+      page.getByRole('link', { name: '打开当前目标' }),
+      page.getByRole('button', { name: '标记已读' }),
+      page.getByRole('button', { name: '下一页' }),
+    ]) {
+      await expect(control).toBeVisible()
+      await expectInsideViewport(page, control)
+    }
+  })
+}
 
 test('M3.5.5 management nudge success survives authoritative same-case refetch', async ({ page }) => {
   await stubProduct(page)

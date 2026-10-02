@@ -305,6 +305,8 @@ test('Workbench renders only server-projected categories and links to original r
   await expect(page.getByText('Server Verification V')).toBeVisible()
   await expect(page.getByText('Server Overdue Case')).toBeVisible()
   await expect(page.getByText('Server Due Soon Action')).toBeVisible()
+  await expect(page.getByText('关系 观察员')).toBeVisible()
+  await expect(page.getByText('observer')).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Server Case A' })).toHaveAttribute('href', '/review-cases/case-a')
   await expect(page.getByRole('link', { name: 'Server Finding A' })).toHaveAttribute('href', '/findings/finding-a')
   await expect(page.getByRole('link', { name: 'Server Action A' })).toHaveAttribute('href', '/action-items/action-a')
@@ -505,6 +507,54 @@ test('Workbench request failure surfaces safely without inventing fallback work'
   await expect(page.getByText('Server Case A')).toHaveCount(0)
 })
 
+test('Workbench refresh failure keeps old content for network errors but drops it on authorization loss', async ({ page }) => {
+  await stubReadySession(page)
+  let outcome: 200 | 403 | 'abort' = 200
+  await page.route('**/api/v1/me/workbench', (route) => {
+    if (outcome === 'abort') return route.abort('failed')
+    if (outcome === 403) return fulfillJson(route, 403, { detail: 'Forbidden' })
+    return fulfillJson(route, 200, {
+      ...emptyWorkbench,
+      case_responsibilities: [
+        { id: 'case-a', title: 'Server Case A', lifecycle: 'in_progress', role_keys: ['observer'], planned_end_at: null },
+      ],
+    })
+  })
+
+  await page.goto('/me/workbench')
+  await expect(page.getByText('Server Case A')).toBeVisible()
+  outcome = 'abort'
+  await page.getByRole('button', { name: '刷新' }).click()
+  await expect(page.getByRole('alert')).toContainText('刷新失败')
+  await expect(page.getByText('Server Case A')).toBeVisible()
+
+  outcome = 200
+  await page.getByRole('button', { name: '重新加载' }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByText('Server Case A')).toBeVisible()
+
+  outcome = 403
+  await page.getByRole('button', { name: '刷新' }).click()
+  await expect(page.getByRole('alert')).toContainText('Forbidden')
+  await expect(page.getByText('Server Case A')).toHaveCount(0)
+})
+
+test('Workbench first load exposes busy state and a status, and clears both when loaded', async ({ page }) => {
+  await stubReadySession(page)
+  const gate = createDeferred()
+  await page.route('**/api/v1/me/workbench', async (route) => {
+    await gate.promise
+    await fulfillJson(route, 200, emptyWorkbench)
+  })
+  await page.goto('/me/workbench')
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(1)
+  await expect(page.getByRole('status')).toHaveText('正在加载我的工作')
+  gate.resolve()
+  await expect(page.getByText('暂无我参与的审查。')).toBeVisible()
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
+  await expect(page.getByRole('status')).toHaveCount(0)
+})
+
 test.describe('device time zone differs from the display time zone', () => {
   test.use({ timezoneId: 'America/New_York' })
 
@@ -603,9 +653,12 @@ test.describe('device time zone differs from the display time zone', () => {
 
 test('legacy element styles stay inside legacy page containers and never cross the ui-modern boundary', async ({ page }) => {
   await stubReadySession(page)
-  await stubEmptyWorkbench(page)
-  await page.goto('/me/workbench')
-  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
+  // 选用仍为遗留容器（.surface-page）的页面；每迁移完一页，这里要换成下一个尚未迁移的页面。
+  await page.route('**/api/v1/review-cases**', (route) =>
+    fulfillJson(route, 200, { items: [], total: 0, limit: 20, offset: 0 }),
+  )
+  await page.goto('/review-cases')
+  await expect(page.getByRole('heading', { name: '审查活动' })).toBeVisible()
 
   const styles = await page.evaluate(() => {
     const browser = globalThis as unknown as {
