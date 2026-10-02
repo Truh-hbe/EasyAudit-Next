@@ -28,10 +28,30 @@ describe('display time zone is independent of the device time zone', () => {
     })
   }
 
-  it('rejects empty and malformed input', () => {
-    for (const value of ['', '   ', 'not-a-date', '2026-02-30T10:00', '2026-08-28T24:00', '2026-08-28']) {
-      expect(displayZoneInputToIso(value)).toBeNull()
+  it('rejects input instead of silently normalising it', () => {
+    for (const value of [
+      '',
+      '   ',
+      'not-a-date',
+      '2026-08-28',
+      '2026-02-30T10:00',
+      '2026-13-01T10:00',
+      '2026-08-28T24:00',
+      '2026-08-28T18:60',
+      '2026-08-28T18:00:60',
+      '0099-08-28T18:00',
+      '1969-12-31T23:59',
+      // Asia/Shanghai 1986-05-04 02:00 跳到 03:00（夏令时），这段墙上时间不存在。
+      '1986-05-04T02:30',
+    ]) {
+      expect(displayZoneInputToIso(value), value).toBeNull()
     }
+  })
+
+  it('accepts the boundaries of the supported year range', () => {
+    expect(displayZoneInputToIso('1970-01-01T08:00')).toBe('1970-01-01T00:00:00.000Z')
+    expect(displayZoneInputToIso('9999-12-31T23:59:59')).toBe('9999-12-31T15:59:59.000Z')
+    expect(displayZoneInputToIso('2024-02-29T12:00')).toBe('2024-02-29T04:00:00.000Z')
   })
 
   it('keeps null and unparseable display values', () => {

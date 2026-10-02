@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router'
 import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
 import { createReviewPlan, getReviewCatalog, newIdempotencyKey } from '../../api/product'
 import type { ReviewCatalogItemResponse, ReviewPlanResponse } from '../../api/product'
-import { displayZoneInputToIso } from '../../product/format'
+import { DISPLAY_TIME_ZONE_HINT, displayZoneInputToIso } from '../../product/format'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 
 type CatalogState =
@@ -139,11 +139,13 @@ export function ReviewPlanCreatePage() {
               autoComplete="off"
             />
           </label>
+          <p id="plan-time-zone-hint" className="field-help">{DISPLAY_TIME_ZONE_HINT}</p>
           <div className="form-grid">
             <label>
               计划开始时间（可选）
               <input
                 type="datetime-local"
+                aria-describedby="plan-time-zone-hint"
                 value={plannedStartAt}
                 onChange={(event) => setPlannedStartAt(event.target.value)}
                 disabled={submitting}
@@ -153,6 +155,7 @@ export function ReviewPlanCreatePage() {
               计划结束时间（可选）
               <input
                 type="datetime-local"
+                aria-describedby="plan-time-zone-hint"
                 value={plannedEndAt}
                 onChange={(event) => setPlannedEndAt(event.target.value)}
                 disabled={submitting}

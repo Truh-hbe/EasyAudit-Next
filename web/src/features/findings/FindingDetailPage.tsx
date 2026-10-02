@@ -27,7 +27,12 @@ import type {
   ReviewCaseResponse,
   SubmissionResponse,
 } from '../../api/product'
-import { displayZoneInputToIso, formatDateTime, lifecycleText } from '../../product/format'
+import {
+  DISPLAY_TIME_ZONE_HINT,
+  displayZoneInputToIso,
+  formatDateTime,
+  lifecycleText,
+} from '../../product/format'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 import type { ScenarioFindingCommandPorts } from '../../scenarios/registry'
 
@@ -658,6 +663,7 @@ export function FindingDetailPage() {
             }}
           >
             <h3>新建 Action Item</h3>
+            <p id="action-due-time-zone-hint" className="field-help">{DISPLAY_TIME_ZONE_HINT}</p>
             <div className="form-grid">
               <label>
                 标题
@@ -671,6 +677,7 @@ export function FindingDetailPage() {
                 到期时间
                 <input
                   type="datetime-local"
+                  aria-describedby="action-due-time-zone-hint"
                   value={actionDueAt}
                   onChange={(event) => setActionDueAt(event.target.value)}
                   disabled={commandBusy}

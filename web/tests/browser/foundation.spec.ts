@@ -455,6 +455,11 @@ test.describe('device time zone differs from the display time zone', () => {
     })
 
     await page.goto('/review-plans/new')
+    for (const label of ['计划开始时间（可选）', '计划结束时间（可选）']) {
+      await expect(page.getByLabel(label)).toHaveAccessibleDescription(
+        '以下时间均按上海时间（Asia/Shanghai）填写和显示。',
+      )
+    }
     await page.getByLabel('计划名称').fill('时区计划')
     await page.getByLabel('计划开始时间（可选）').fill('2026-08-28T18:00')
     await page.getByLabel('计划结束时间（可选）').fill('2026-09-01T09:30')
