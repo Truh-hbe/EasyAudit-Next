@@ -9,6 +9,7 @@ from easyaudit_next.collaboration.recipient_resolution import (
     RecipientResolver,
     RecipientSnapshot,
 )
+from easyaudit_next.notifications.copy import COPY
 from easyaudit_next.notifications.models import (
     ActionItemNotificationSubject,
     FindingNotificationSubject,
@@ -102,8 +103,8 @@ class ManualNudgeService:
             kind=NotificationKind.MANUAL_FINDING_NUDGE,
             origin_activity_id=activity.id,
             subject=FindingNotificationSubject(FindingId(finding.id)),
-            title="Finding nudge",
-            body="A Finding needs your attention.",
+            title=COPY[NotificationKind.MANUAL_FINDING_NUDGE].title,
+            body=COPY[NotificationKind.MANUAL_FINDING_NUDGE].body,
             created_at=now,
         )
         return NudgeResult(activity_id=activity.id, recipient_count=len(recipients))
@@ -162,8 +163,8 @@ class ManualNudgeService:
             kind=NotificationKind.MANUAL_ACTION_NUDGE,
             origin_activity_id=activity.id,
             subject=ActionItemNotificationSubject(typed_action_id),
-            title="ActionItem nudge",
-            body="An ActionItem needs your attention.",
+            title=COPY[NotificationKind.MANUAL_ACTION_NUDGE].title,
+            body=COPY[NotificationKind.MANUAL_ACTION_NUDGE].body,
             created_at=now,
         )
         return NudgeResult(activity_id=activity.id, recipient_count=len(recipients))

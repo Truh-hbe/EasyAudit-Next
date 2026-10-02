@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from easyaudit_next.notifications.copy import display_copy
 from easyaudit_next.notifications.models import (
     ActionItemNotificationSubject,
     ActivityNotificationOrigin,
@@ -167,6 +168,8 @@ class NotificationService:
 
     @staticmethod
     def _item(record: NotificationRecord) -> NotificationItem:
+        kind = NotificationKind(record.kind)
+        title, body = display_copy(kind, record.title, record.body)
         subject: NotificationSubject
         if record.review_case_id is not None:
             subject = ReviewCaseNotificationSubject(ReviewCaseId(record.review_case_id))
@@ -189,11 +192,11 @@ class NotificationService:
             id=NotificationId(record.id),
             organization_id=OrganizationId(record.organization_id),
             recipient_user_id=UserId(record.recipient_user_id),
-            kind=NotificationKind(record.kind),
+            kind=kind,
             origin=origin,
             subject=subject,
-            title=record.title,
-            body=record.body,
+            title=title,
+            body=body,
             created_at=record.created_at,
             read_at=record.read_at,
         )
