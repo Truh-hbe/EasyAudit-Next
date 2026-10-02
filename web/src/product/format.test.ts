@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { displayZoneInputToIso, formatDateTime, parseOptionalDisplayZoneInput } from './format'
+import {
+  displayZoneInputToIso,
+  displayZoneTextToIso,
+  formatDateTime,
+  parseOptionalDisplayZoneInput,
+  parseOptionalDisplayZoneText,
+} from './format'
 
 // 设备时区 → 旧写法 new Date('2026-08-28T18:00') 得到的 ISO，用来证明设备时区确实已切换。
 const deviceZones = {
@@ -70,4 +76,25 @@ describe('display time zone is independent of the device time zone', () => {
     expect(parseOptionalDisplayZoneInput('1986-05-04T02:30')).toEqual({ valid: false })
     expect(parseOptionalDisplayZoneInput('not-a-date')).toEqual({ valid: false })
   })
+})
+
+describe('DatePicker text input (YYYY/MM/DD HH:mm) follows the same Shanghai rules', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  for (const zone of Object.keys(deviceZones)) {
+    it(`device ${zone}: text means Shanghai wall time; non-existent or malformed text is rejected`, () => {
+      vi.stubEnv('TZ', zone)
+      expect(displayZoneTextToIso('2026/08/28 18:00')).toBe('2026-08-28T10:00:00.000Z')
+      // 美国夏令时空洞里的时刻在上海是存在的。
+      expect(displayZoneTextToIso('2026/03/08 02:30')).toBe('2026-03-07T18:30:00.000Z')
+      for (const text of ['', '2026-08-28T18:00', '2026/8/28 18:00', '2026/02/30 10:00', '2026/13/01 10:00', '2026/08/28 24:00', '1986/05/04 02:30']) {
+        expect(displayZoneTextToIso(text)).toBeNull()
+      }
+      expect(parseOptionalDisplayZoneText('  ')).toEqual({ valid: true, iso: null })
+      expect(parseOptionalDisplayZoneText('2026/02/30 10:00')).toEqual({ valid: false })
+      expect(parseOptionalDisplayZoneText('2026/08/28 18:00')).toEqual({ valid: true, iso: '2026-08-28T10:00:00.000Z' })
+    })
+  }
 })

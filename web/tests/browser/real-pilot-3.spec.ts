@@ -88,7 +88,7 @@ test('a retry after a lost Case response creates exactly one case', async ({ pag
   await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
 
   const keys = await loseFirstResponse(page, '/api/v1/review-cases')
-  await page.getByLabel('审查场景').selectOption('process_review@1')
+  await page.getByRole('radio', { name: /process_review@1/ }).check()
   await page.getByLabel('审查活动名称').fill('Pilot-3 Retried Case')
   await page.getByLabel('区域代码').fill('area-a')
   await page.getByLabel('审查类型').fill('standard')

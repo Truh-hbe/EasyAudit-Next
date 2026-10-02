@@ -1,5 +1,6 @@
 import { Alert, Button, Card, Flex, Form, Input, Steps, Typography } from 'antd'
 import { useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Link, useNavigate } from 'react-router'
 
 import { createReviewPlan, getReviewCatalog, newIdempotencyKey } from '../../api/product'
@@ -132,10 +133,13 @@ export function ReviewPlanCreatePage() {
       return
     }
     inFlight.current = false
-    setSubmitState(result.state)
-    if (result.state.status === 'rejected') {
-      const fieldErrors = result.state.fieldErrors ?? {}
+    const fieldErrors = result.state.status === 'rejected' ? (result.state.fieldErrors ?? {}) : {}
+    // 提交期间表单是禁用的：先同步渲染出可编辑状态，才能聚焦到出错的字段。
+    flushSync(() => {
+      setSubmitState(result.state)
       setServerErrors(fieldErrors)
+    })
+    if (result.state.status === 'rejected') {
       const first = PLAN_FIELDS.find((name) => fieldErrors[name] !== undefined)
       if (first !== undefined) form.scrollToField(first, { focus: true })
     }

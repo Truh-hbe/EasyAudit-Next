@@ -1,5 +1,6 @@
 import { Alert, Button, Card, Descriptions, Flex, Form, Input, Radio, Select, Steps, Typography } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router'
 
 import {
@@ -205,14 +206,17 @@ export function ReviewCaseCreatePage() {
       return
     }
     inFlight.current = false
-    setSubmitState(result.state)
+    const fieldErrors = result.state.status === 'rejected' ? (result.state.fieldErrors ?? {}) : {}
+    // 提交期间表单是禁用的：先同步渲染出可编辑状态，才能聚焦到出错的字段。
+    flushSync(() => {
+      setSubmitState(result.state)
+      setTitleError(fieldErrors.title)
+      setScenarioErrors(Object.fromEntries(scenarioFields.flatMap((name) => {
+        const text = fieldErrors[name]
+        return text === undefined ? [] : [[name, text]]
+      })))
+    })
     if (result.state.status !== 'rejected') return
-    const fieldErrors = result.state.fieldErrors ?? {}
-    setTitleError(fieldErrors.title)
-    setScenarioErrors(Object.fromEntries(scenarioFields.flatMap((name) => {
-      const text = fieldErrors[name]
-      return text === undefined ? [] : [[name, text]]
-    })))
     // 聚焦第一个有错误的字段：先标题，再场景字段（按适配器的字段顺序）。
     if (fieldErrors.title !== undefined) {
       form.scrollToField('title', { focus: true })
