@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { notificationViewLabel, notificationViewRadio } from './notificationView.js'
 
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -162,7 +163,8 @@ test('Notification 未读视图来自 server unread_only query and mark-read ref
   await expect(page.getByText('Current all-page read row', { exact: true })).toBeVisible()
   await expect(page.getByText('Server-only unread row', { exact: true })).toHaveCount(0)
 
-  await page.getByRole('button', { name: /未读/ }).click()
+  await notificationViewLabel(page, /未读/).click()
+  await expect(notificationViewRadio(page, /未读/)).toBeChecked()
   await expect(page.getByText('Server-only unread row', { exact: true })).toBeVisible()
   await expect(page.getByText('Current all-page read row', { exact: true })).toHaveCount(0)
   expect(requestedModes).toContain('true')
@@ -216,7 +218,7 @@ test('notification empty state tells an empty inbox from an empty unread filter'
   )
   await page.goto('/me/notifications')
   await expect(page.getByText('暂无通知。')).toBeVisible()
-  await page.getByRole('button', { name: /未读/ }).click()
+  await notificationViewLabel(page, /未读/).click()
   await expect(page.getByText('没有未读通知。')).toBeVisible()
   await page.getByRole('button', { name: '查看全部通知' }).click()
   await expect(page.getByText('暂无通知。')).toBeVisible()

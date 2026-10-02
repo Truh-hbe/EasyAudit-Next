@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import { notificationViewLabel, notificationViewRadio } from './notificationView.js'
 
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -276,7 +277,7 @@ test('M3.5.5 narrow product route matrix keeps essential controls inside the doc
   await page.goto(`/action-items/${actionId}`)
   await expect(page.getByRole('button', { name: '完成' })).toBeVisible()
   await page.goto('/me/notifications')
-  await expect(page.getByRole('button', { name: /未读/ })).toBeVisible()
+  await expect(notificationViewLabel(page, /未读/)).toBeVisible()
   await page.goto('/management')
   await expect(page.getByLabel('截止情况')).toBeVisible()
 })
@@ -310,10 +311,13 @@ test('M3.5.5 keyboard focus is visible and primary navigation remains keyboard-o
   await expect(page).toHaveURL(/\/me\/notifications$/)
   await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
 
-  const unreadButton = page.getByRole('button', { name: /未读/ })
-  await unreadButton.focus()
-  await expect(unreadButton).toBeFocused()
-  expect((await visibleOutline(unreadButton)).style).not.toBe('none')
+  // 视图切换是 Radio.Group：聚焦后方向键切换，焦点环画在所属 label 上。
+  await page.getByRole('radio', { name: '全部' }).focus()
+  await expect(notificationViewRadio(page, '全部')).toBeChecked()
+  await page.keyboard.press('ArrowRight')
+  await expect(notificationViewRadio(page, /未读/)).toBeChecked()
+  await expect(notificationViewRadio(page, /未读/)).toBeFocused()
+  expect((await visibleOutline(notificationViewLabel(page, /未读/))).style).not.toBe('none')
 })
 
 for (const width of [375, 320]) {
@@ -332,7 +336,7 @@ for (const width of [375, 320]) {
     await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
     await expectNoDocumentOverflow(page)
     for (const control of [
-      page.getByRole('button', { name: /未读/ }),
+      notificationViewLabel(page, /未读/),
       page.getByRole('link', { name: '打开当前目标' }),
       page.getByRole('button', { name: '标记已读' }),
       page.getByRole('button', { name: '下一页' }),

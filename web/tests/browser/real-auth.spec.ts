@@ -7,6 +7,8 @@ import {
   type Page,
 } from '@playwright/test'
 
+import { notificationViewLabel } from './notificationView.js'
+
 const COOKIE_NAME = '__Host-easyaudit_session'
 const BASE_URL = `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`
 
@@ -522,7 +524,7 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   await expect(page.getByRole('link', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
   await page.getByRole('navigation', { name: '主要导航' }).getByRole('link', { name: '通知' }).click()
   await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
-  await page.getByRole('button', { name: /未读/ }).click()
+  await notificationViewLabel(page, /未读/).click()
   await expect(page.getByText('Finding nudge', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: '打开当前目标' }).click()
   await expect(page.getByRole('heading', { name: JOURNEY_FINDING_TITLE })).toBeVisible()

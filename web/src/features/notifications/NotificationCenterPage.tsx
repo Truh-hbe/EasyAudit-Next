@@ -1,4 +1,4 @@
-import { Alert, App, Badge, Button, Card, Empty, Flex, Skeleton, Spin, Table, Typography } from 'antd'
+import { Alert, App, Badge, Button, Card, Flex, Radio, Skeleton, Spin, Typography } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../../api/client'
@@ -13,6 +13,7 @@ import type {
 } from '../../api/notifications'
 import { formatDateTime } from '../../product/format'
 import { ButtonLink } from '../../ui/ButtonLink'
+import { ItemList } from '../../ui/ItemList'
 import { PageHeader } from '../../ui/PageHeader'
 
 type InboxMode = 'all' | 'unread'
@@ -175,49 +176,44 @@ export function NotificationCenterPage() {
   const hasPrevious = offset > 0
   const hasPossibleNext = data !== null && data.items.length === data.limit
 
-  const columns = [
-    {
-      key: 'notification',
-      render: (_: unknown, item: NotificationResponse) => {
-        const targetPath = subjectPath(item.subject)
-        return (
-          <Flex vertical gap={8}>
-            <Flex vertical gap={4}>
-              <Typography.Text strong>{item.title}</Typography.Text>
-              <Typography.Text>{item.body}</Typography.Text>
-            </Flex>
-            <Flex align="center" wrap gap={8}>
-              {item.read_at === null ? (
-                <Badge color="blue" text="未读" />
-              ) : (
-                <Typography.Text type="secondary">已读 {formatDateTime(item.read_at)}</Typography.Text>
-              )}
-              <Typography.Text type="secondary">
-                {notificationKindText(item.kind)} · {formatDateTime(item.created_at)}
-              </Typography.Text>
-              <Typography.Text type="secondary">{subjectText(item.subject)}</Typography.Text>
-            </Flex>
-            <Flex align="center" wrap gap={8}>
-              {targetPath === null ? (
-                <Typography.Text type="secondary">目标类型不可用</Typography.Text>
-              ) : (
-                <ButtonLink to={targetPath}>打开当前目标</ButtonLink>
-              )}
-              {item.read_at === null ? (
-                <Button
-                  loading={markingId === item.id}
-                  disabled={markingId !== null && markingId !== item.id}
-                  onClick={() => void markRead(item.id)}
-                >
-                  标记已读
-                </Button>
-              ) : null}
-            </Flex>
-          </Flex>
-        )
-      },
-    },
-  ]
+  function renderItem(item: NotificationResponse) {
+    const targetPath = subjectPath(item.subject)
+    return (
+      <Flex vertical gap={8}>
+        <Flex vertical gap={4}>
+          <Typography.Text strong>{item.title}</Typography.Text>
+          <Typography.Text>{item.body}</Typography.Text>
+        </Flex>
+        <Flex align="center" wrap gap={8}>
+          {item.read_at === null ? (
+            <Badge color="blue" text="未读" />
+          ) : (
+            <Typography.Text type="secondary">已读 {formatDateTime(item.read_at)}</Typography.Text>
+          )}
+          <Typography.Text type="secondary">
+            {notificationKindText(item.kind)} · {formatDateTime(item.created_at)}
+          </Typography.Text>
+          <Typography.Text type="secondary">{subjectText(item.subject)}</Typography.Text>
+        </Flex>
+        <Flex align="center" wrap gap={8}>
+          {targetPath === null ? (
+            <Typography.Text type="secondary">目标类型不可用</Typography.Text>
+          ) : (
+            <ButtonLink to={targetPath}>打开当前目标</ButtonLink>
+          )}
+          {item.read_at === null ? (
+            <Button
+              loading={markingId === item.id}
+              disabled={markingId !== null && markingId !== item.id}
+              onClick={() => void markRead(item.id)}
+            >
+              标记已读
+            </Button>
+          ) : null}
+        </Flex>
+      </Flex>
+    )
+  }
 
   const emptyText =
     offset > 0
@@ -236,23 +232,16 @@ export function NotificationCenterPage() {
 
       <Card>
         <Flex vertical gap={12}>
-          <Flex role="group" aria-label="通知视图" align="center" wrap gap={8}>
-            <Button
-              type={mode === 'all' ? 'primary' : 'default'}
-              aria-pressed={mode === 'all'}
-              autoInsertSpace={false}
-              onClick={() => changeMode('all')}
-            >
-              全部
-            </Button>
-            <Button
-              type={mode === 'unread' ? 'primary' : 'default'}
-              aria-pressed={mode === 'unread'}
-              onClick={() => changeMode('unread')}
-            >
-              未读{data === null ? '' : ` (${data.unread_count})`}
-            </Button>
-          </Flex>
+          <Radio.Group
+            optionType="button"
+            aria-label="通知视图"
+            value={mode}
+            onChange={(event) => changeMode(event.target.value as InboxMode)}
+            options={[
+              { value: 'all', label: '全部' },
+              { value: 'unread', label: `未读${data === null ? '' : ` (${data.unread_count})`}` },
+            ]}
+          />
           <Typography.Text type="secondary">
             通知是历史投递记录，不代表当前责任或访问权限；打开目标后仍会重新校验权限。
           </Typography.Text>
@@ -279,21 +268,11 @@ export function NotificationCenterPage() {
         <Spin spinning={refreshing}>
           <Card>
             <Flex vertical gap={16}>
-              <Table<NotificationResponse>
-                size="middle"
-                showHeader={false}
-                pagination={false}
-                rowKey="id"
-                aria-label={mode === 'unread' ? '未读通知' : '全部通知'}
-                columns={columns}
-                dataSource={data.items}
-                locale={{
-                  emptyText: (
-                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText}>
-                      {mode === 'unread' ? <Button onClick={() => changeMode('all')}>查看全部通知</Button> : null}
-                    </Empty>
-                  ),
-                }}
+              <ItemList
+                label={mode === 'unread' ? '未读通知' : '全部通知'}
+                emptyText={emptyText}
+                emptyAction={mode === 'unread' ? <Button onClick={() => changeMode('all')}>查看全部通知</Button> : null}
+                items={data.items.map((item) => ({ key: item.id, content: renderItem(item) }))}
               />
               <Flex component="nav" aria-label="通知分页" align="center" wrap gap={8}>
                 <Button

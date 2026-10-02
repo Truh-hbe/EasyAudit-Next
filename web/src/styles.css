@@ -572,3 +572,25 @@ h3 {
 .app-root .field-error-text {
   color: var(--ant-red-7);
 }
+
+.item-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item-list > li {
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--ant-color-split);
+  overflow-wrap: anywhere;
+}
+
+.item-list > li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.item-list > li:last-child {
+  padding-bottom: 0;
+}

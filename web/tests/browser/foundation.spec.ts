@@ -505,6 +505,38 @@ test('Workbench request failure surfaces safely without inventing fallback work'
   await expect(page.getByText('Server Case A')).toHaveCount(0)
 })
 
+test('Workbench refresh failure keeps old content for network errors but drops it on authorization loss', async ({ page }) => {
+  await stubReadySession(page)
+  let outcome: 200 | 403 | 'abort' = 200
+  await page.route('**/api/v1/me/workbench', (route) => {
+    if (outcome === 'abort') return route.abort('failed')
+    if (outcome === 403) return fulfillJson(route, 403, { detail: 'Forbidden' })
+    return fulfillJson(route, 200, {
+      ...emptyWorkbench,
+      case_responsibilities: [
+        { id: 'case-a', title: 'Server Case A', lifecycle: 'in_progress', role_keys: ['observer'], planned_end_at: null },
+      ],
+    })
+  })
+
+  await page.goto('/me/workbench')
+  await expect(page.getByText('Server Case A')).toBeVisible()
+  outcome = 'abort'
+  await page.getByRole('button', { name: '刷新' }).click()
+  await expect(page.getByRole('alert')).toContainText('刷新失败')
+  await expect(page.getByText('Server Case A')).toBeVisible()
+
+  outcome = 200
+  await page.getByRole('button', { name: '重新加载' }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByText('Server Case A')).toBeVisible()
+
+  outcome = 403
+  await page.getByRole('button', { name: '刷新' }).click()
+  await expect(page.getByRole('alert')).toContainText('Forbidden')
+  await expect(page.getByText('Server Case A')).toHaveCount(0)
+})
+
 test.describe('device time zone differs from the display time zone', () => {
   test.use({ timezoneId: 'America/New_York' })
 

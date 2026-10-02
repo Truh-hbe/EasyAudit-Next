@@ -1,19 +1,26 @@
 import { ReloadOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Col, Empty, Flex, Row, Skeleton, Spin, Table, Typography } from 'antd'
+import { Alert, Button, Card, Col, Flex, Row, Skeleton, Spin, Typography } from 'antd'
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
+import { ApiError } from '../../api/client'
 import { getWorkbench } from '../../api/product'
 import type { WorkbenchResponse } from '../../api/product'
 import { formatDateTime } from '../../product/format'
+import { ItemList } from '../../ui/ItemList'
 import { PageHeader } from '../../ui/PageHeader'
 import { StatusTag } from '../../ui/StatusTag'
 
 type WorkbenchState =
   | { status: 'loading'; data: WorkbenchResponse | null }
-  | { status: 'error'; message: string }
+  // data 非 null：刷新失败但不是授权问题，保留旧内容并提示。
+  | { status: 'error'; message: string; data: WorkbenchResponse | null }
   | { status: 'ready'; data: WorkbenchResponse }
+
+function isAuthorizationLoss(error: unknown): boolean {
+  return error instanceof ApiError && [401, 403, 404].includes(error.status)
+}
 
 interface WorkRow {
   key: string
@@ -24,24 +31,17 @@ interface WorkRow {
 
 function WorkList({ rows, emptyText }: { rows: WorkRow[]; emptyText: string }) {
   return (
-    <Table<WorkRow>
-      size="middle"
-      showHeader={false}
-      pagination={false}
-      rowKey="key"
-      dataSource={rows}
-      locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} /> }}
-      columns={[
-        {
-          key: 'item',
-          render: (_, row) => (
-            <Flex vertical gap={4}>
-              <Link to={row.to}>{row.title}</Link>
-              <Flex align="center" wrap gap={8}>{row.meta}</Flex>
-            </Flex>
-          ),
-        },
-      ]}
+    <ItemList
+      emptyText={emptyText}
+      items={rows.map((row) => ({
+        key: row.key,
+        content: (
+          <Flex vertical gap={4}>
+            <Link to={row.to}>{row.title}</Link>
+            <Flex align="center" wrap gap={8}>{row.meta}</Flex>
+          </Flex>
+        ),
+      }))}
     />
   )
 }
@@ -154,23 +154,22 @@ export function WorkbenchPage() {
   useEffect(() => {
     const controller = new AbortController()
     // 刷新时保留旧内容；请求失败则移除，不用旧数据兜底。
-    setState((previous) => ({
-      status: 'loading',
-      data: previous.status === 'error' ? null : previous.data,
-    }))
+    setState((previous) => ({ status: 'loading', data: previous.data }))
     void getWorkbench(controller.signal)
       .then((data) => setState({ status: 'ready', data }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        setState({
+        // 401/403/404 立即移除受保护内容；网络中断、5xx 保留旧内容并提示。
+        setState((previous) => ({
           status: 'error',
           message: error instanceof Error ? error.message : '我的工作请求失败',
-        })
+          data: isAuthorizationLoss(error) ? null : previous.data,
+        }))
       })
     return () => controller.abort()
   }, [revision])
 
-  const data = state.status === 'error' ? null : state.data
+  const data = state.data
   const refreshing = state.status === 'loading' && state.data !== null
 
   return (
@@ -195,7 +194,7 @@ export function WorkbenchPage() {
           <Alert
             type="error"
             showIcon
-            title={state.message}
+            title={data === null ? state.message : `刷新失败，当前显示的是 ${formatDateTime(data.as_of)} 的数据：${state.message}`}
             action={
               <Button size="small" onClick={() => setRevision((value) => value + 1)}>
                 重新加载
