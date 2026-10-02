@@ -264,11 +264,12 @@ test.describe('plan step: dates are Asia/Shanghai wall time on any device', () =
   }
 })
 
-// 面板的时间列没有语义角色或标签可供定位，这里只能按列取单元格。
+// 面板的时间列是 list：分钟列含 59，小时列含 23 但不含 59。
 async function pickPanelTime(page: Page, hour: string, minute: string) {
-  const columns = page.locator('.ant-picker-time-panel-column')
-  await columns.nth(0).getByText(hour, { exact: true }).click()
-  await columns.nth(1).getByText(minute, { exact: true }).click()
+  const hours = page.getByRole('list').filter({ hasText: '23' }).filter({ hasNotText: '59' })
+  const minutes = page.getByRole('list').filter({ hasText: '59' })
+  await hours.getByText(hour, { exact: true }).click()
+  await minutes.getByText(minute, { exact: true }).click()
 }
 
 test.describe('plan step: calendar panel is Asia/Shanghai wall time on any device', () => {
@@ -359,6 +360,35 @@ test.describe('plan step: invalid date text is never cleared or rewritten', () =
     await expect.poll(() => requests.length).toBe(1)
     expect(requests[0].body).toMatchObject({ planned_end_at: '2026-08-28T01:00:00.000Z' })
   })
+
+  for (const timezoneId of ['America/New_York', 'Asia/Shanghai', 'Pacific/Auckland']) {
+    test.describe(timezoneId, () => {
+      test.use({ timezoneId })
+
+      test('valid value → invalid text → re-picking the same valid value from the panel recovers', async ({ page }) => {
+        await stubShell(page)
+        const requests = await stubCreate(page, 'review-plans', [], { id: 'plan-1', title: '向导计划' })
+        await page.goto('/review-plans/new')
+        await page.getByLabel('计划名称').fill('向导计划')
+        const start = page.getByLabel('计划开始时间（可选）')
+        const message = page.getByText('计划开始时间无效：请填写存在的上海时间（Asia/Shanghai）。')
+        await enterDateTime(page, '计划开始时间（可选）', '2026/08/28 18:00')
+        await start.fill('2026/02/30 10:00')
+        await start.press('Tab')
+        await expect(start).toHaveValue('2026/02/30 10:00')
+        await expect(message).toBeVisible()
+
+        await start.click()
+        await pickPanelTime(page, '18', '00')
+        await page.getByRole('button', { name: '确 定' }).click()
+        await expect(start).toHaveValue('2026/08/28 18:00')
+        await expect(message).toHaveCount(0)
+        await page.getByRole('button', { name: '保存计划并继续' }).click()
+        await expect.poll(() => requests.length).toBe(1)
+        expect(requests[0].body).toMatchObject({ planned_start_at: '2026-08-28T10:00:00.000Z' })
+      })
+    })
+  }
 
   test('the error keeps the time zone hint in the accessible description', async ({ page }) => {
     await stubShell(page)

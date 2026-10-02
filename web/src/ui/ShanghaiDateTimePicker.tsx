@@ -1,6 +1,6 @@
 import type { Dayjs } from 'dayjs'
 import type { FocusEvent, KeyboardEvent } from 'react'
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import { DISPLAY_DATE_TIME_TEXT_FORMAT as FORMAT } from '../product/format'
 import { WallTimePicker, wallTimeGenerateConfig } from './wallTimeGenerateConfig'
@@ -32,6 +32,8 @@ export function ShanghaiDateTimePicker({ value, onChange, id, 'aria-describedby'
   // 自上次同步以来键入的原始文本；null 表示没有待提交的键入。
   const describedBy = [injectedDescribedBy, hintId].filter((part) => part !== undefined && part !== '').join(' ') || undefined
   const typed = useRef<string | null>(null)
+  // 输入框的可见文本只在面板值变化时同步；无效文本状态下重新确认同一个值不会变，所以用 key 重建选择器来恢复。
+  const [syncKey, setSyncKey] = useState(0)
   // 面板的值：文本有效时跟随文本，无效时保持上一个有效值，清空时为空。
   const lastValid = useRef<Dayjs | undefined>(undefined)
   const pickerValue = useMemo(() => {
@@ -62,6 +64,7 @@ export function ShanghaiDateTimePicker({ value, onChange, id, 'aria-describedby'
       }}
     >
       <WallTimePicker
+        key={syncKey}
         id={id}
         aria-describedby={describedBy}
         value={pickerValue}
@@ -72,6 +75,12 @@ export function ShanghaiDateTimePicker({ value, onChange, id, 'aria-describedby'
           // 面板选择或清除：以选中的墙上时间为准，丢弃待提交的键入。
           typed.current = null
           onChange?.(picked === null ? '' : picked.format(FORMAT))
+        }}
+        // 无效文本时面板保持上一个有效值：重新确认同一个值不会触发 onChange，所以在显式确认时也同步。
+        onOk={(picked: Dayjs) => {
+          typed.current = null
+          if ((value ?? '') !== '' && toPickerValue(value) === undefined) setSyncKey((key) => key + 1)
+          onChange?.(picked.format(FORMAT))
         }}
       />
     </div>
