@@ -98,10 +98,12 @@ interface AddMemberDrawerProps {
   reviewCase: ReviewCaseResponse
   roleOptions: readonly ScenarioCaseRoleOption[]
   onClose: () => void
-  onAdded: () => void
-  onTeamChanged: () => void
+  // 添加请求的结果交给面板（按活动隔离）呈现；inSession 表示发起请求的编辑会话仍是当前会话。
+  onOutcome: (outcome: AddOutcome, commandCaseId: string, inSession: boolean) => void
   onAccessLost: () => void
 }
+
+type AddOutcome = { ok: true } | { ok: false; failure: TeamFailure }
 
 interface AddMemberFormValues {
   roleKey: string
@@ -113,15 +115,13 @@ function AddMemberDrawer({
   reviewCase,
   roleOptions,
   onClose,
-  onAdded,
-  onTeamChanged,
+  onOutcome,
   onAccessLost,
 }: AddMemberDrawerProps) {
   const screens = Grid.useBreakpoint()
   const [form] = Form.useForm<AddMemberFormValues>()
   const [candidates, setCandidates] = useState<CaseMemberCandidateResponse[]>([])
   const [searching, setSearching] = useState(false)
-  const { message } = App.useApp()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<TeamFailure | null>(null)
   // 写锁独立于 Drawer 的开关：关闭/重开不会释放未完成的写请求，只有该请求结束时才释放。
@@ -196,30 +196,23 @@ function AddMemberDrawer({
     const isCurrentSession = () => sessionRef.current === session
     setSubmitting(true)
     setError(null)
+    let outcome: AddOutcome
     try {
       await addReviewCaseMember(commandCaseId, values.member.value, values.roleKey)
-      void message.success('已添加成员')
-      if (isCurrentSession()) onAdded()
-      else if (caseIdRef.current === commandCaseId) onTeamChanged()
+      outcome = { ok: true }
     } catch (failure: unknown) {
-      const classified = classifyTeamFailure(failure, 'add')
-      if (classified.kind === 'gone') {
-        if (caseIdRef.current === commandCaseId) onAccessLost()
-        return
-      }
-      if (caseIdRef.current === commandCaseId) {
-        // 冲突或结果未知：写请求不自动重放，只重新读取团队供用户核对。
-        if (classified.kind === 'changed' || classified.kind === 'unknown-result') onTeamChanged()
-      }
-      if (isCurrentSession()) {
-        setCandidates([])
-        form.setFieldValue('member', undefined)
-        setError(classified)
-      }
+      outcome = { ok: false, failure: classifyTeamFailure(failure, 'add') }
     } finally {
       submittingRef.current = false
       setSubmitting(false)
     }
+    const inSession = isCurrentSession()
+    if (!outcome.ok && inSession && outcome.failure.kind !== 'gone') {
+      setCandidates([])
+      form.setFieldValue('member', undefined)
+      setError(outcome.failure)
+    }
+    onOutcome(outcome, commandCaseId, inSession)
   }
 
   return (
@@ -321,6 +314,26 @@ export function ReviewCaseTeamPanel({
     setNotice(null)
     destroyConfirm()
   }, [reviewCase.id])
+
+  // 添加结果按活动隔离、与 Drawer 的开关无关：Drawer 关闭或重开后，当前活动的写结果仍在面板上呈现。
+  function handleAddOutcome(outcome: AddOutcome, commandCaseId: string, inSession: boolean) {
+    if (!mountedRef.current || caseIdRef.current !== commandCaseId) return
+    if (outcome.ok) {
+      if (inSession) setDrawerOpen(false)
+      void message.success('已添加成员')
+      onTeamChanged()
+      return
+    }
+    const { failure } = outcome
+    if (failure.kind === 'gone') {
+      onAccessLost()
+      return
+    }
+    // 会话仍在 Drawer 内时，Drawer 自己显示这条失败；否则由面板显示，避免同一失败出现两次。
+    if (!inSession) setNotice(failure)
+    // 冲突或结果未知：写请求不自动重放，只重新读取团队供用户核对。
+    if (failure.kind === 'changed' || failure.kind === 'unknown-result') onTeamChanged()
+  }
 
   async function removeMember(member: CaseMemberViewResponse, commandCaseId: string) {
     // 当前面板必须仍属于打开确认框时的审查活动，否则不发请求。
@@ -440,12 +453,7 @@ export function ReviewCaseTeamPanel({
           reviewCase={reviewCase}
           roleOptions={roleOptions}
           onClose={() => setDrawerOpen(false)}
-          onAdded={() => {
-            setDrawerOpen(false)
-            void message.success('已添加成员')
-            onTeamChanged()
-          }}
-          onTeamChanged={onTeamChanged}
+          onOutcome={handleAddOutcome}
           onAccessLost={onAccessLost}
         />
       ) : null}

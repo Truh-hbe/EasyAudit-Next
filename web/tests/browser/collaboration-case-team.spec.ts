@@ -47,6 +47,7 @@ interface CaseMock {
   removeDetail: string
   addGate: Promise<void> | null
   postCount: number
+  addStatus: number | 'abort'
 }
 
 // 为一个审查活动挂上主授权、从属读取和团队写入的 mock；所有状态由测试直接修改。
@@ -61,6 +62,7 @@ async function mockCase(page: Page, caseId: string): Promise<CaseMock> {
     removeDetail: '',
     addGate: null,
     postCount: 0,
+    addStatus: 201,
   }
   await page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}`, (route) =>
     fulfillJson(route, 200, reviewCase(caseId)),
@@ -77,6 +79,8 @@ async function mockCase(page: Page, caseId: string): Promise<CaseMock> {
     if (route.request().method() === 'POST') {
       state.postCount += 1
       await state.addGate
+      if (state.addStatus === 'abort') return route.abort('failed')
+      if (state.addStatus !== 201) return fulfillJson(route, state.addStatus, { detail: 'add rejected' })
       const body = route.request().postDataJSON() as { user_id: string; role_key: string }
       state.adds.push(body)
       state.members.push(member(caseId, body.user_id, body.role_key, 'Added Candidate'))
@@ -128,6 +132,8 @@ test('团队面板：用 Drawer 按角色搜索候选人并添加，成功后刷
   await drawer.getByRole('button', { name: '添加成员' }).click()
   await expect(page.getByRole('dialog', { name: '添加成员' })).toHaveCount(0)
   expect(state.adds).toEqual([{ user_id: 'candidate-1', role_key: 'reviewer' }])
+  // 成功提示只有一个出口。
+  await expect(page.getByText('已添加成员', { exact: true })).toHaveCount(1)
   await expect(team.getByText('Added Candidate')).toBeVisible()
   await expect(team.getByText('复核员', { exact: true })).toBeVisible()
 })
@@ -403,3 +409,177 @@ test('移除自己的最后一个角色后重新确认主授权，403 时立即�
   await expect(page.getByText('整改项已逾期')).toHaveCount(0)
   await expect(page.getByText('Other Lead')).toHaveCount(0)
 })
+
+// 用可编程的主读取/成员读取结果覆盖 mockCase 的默认路由（后注册的路由优先）。
+// 开发模式下 StrictMode 会让首次加载重复读取，所以策略只在 arm() 之后生效，计数也从 arm() 起算。
+async function stubReadPolicy(
+  page: Page,
+  caseId: string,
+  policy: {
+    caseRead?: (n: number) => Promise<number> | number
+    membersRead?: (n: number) => Promise<number> | number
+  },
+) {
+  let armed = false
+  const counters = {
+    caseReads: 0,
+    membersReads: 0,
+    arm() {
+      armed = true
+      counters.caseReads = 0
+      counters.membersReads = 0
+    },
+  }
+  await page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}`, async (route) => {
+    if (armed) counters.caseReads += 1
+    const status = !armed || policy.caseRead === undefined ? 200 : await policy.caseRead(counters.caseReads)
+    return status === 200 ? fulfillJson(route, 200, reviewCase(caseId)) : fulfillJson(route, status, { detail: 'x' })
+  })
+  await page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}/members`, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    if (armed) counters.membersReads += 1
+    const status = !armed || policy.membersRead === undefined ? 200 : await policy.membersRead(counters.membersReads)
+    return status === 200 ? route.fallback() : fulfillJson(route, status, { detail: 'x' })
+  })
+  return counters
+}
+
+async function removeOtherMember(page: Page) {
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('listitem').filter({ hasText: 'Other Member' }).getByRole('button', { name: /移除/ }).click()
+  await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
+}
+
+async function caseWithOtherMember(page: Page, caseId: string) {
+  const state = await mockCase(page, caseId)
+  state.members.push(member(caseId, 'other-member', 'auditor', 'Other Member'))
+  return state
+}
+
+test('主授权重读：从属资源第一次就被拒绝（观察员看管理进度）不触发额外的主读取', async ({ page }) => {
+  await mockCase(page, 'case-edge')
+  await page.route((url) => url.pathname === '/api/v1/management/review-cases/case-edge/progress', (route) =>
+    fulfillJson(route, 403, { detail: 'forbidden' }),
+  )
+  const counters = await stubReadPolicy(page, 'case-edge', {})
+  counters.arm()
+  await page.goto('/review-cases/case-edge')
+  await expect(page.getByText('当前用户没有可用的管理进度摘要。')).toBeVisible()
+  await expect(page.getByRole('region', { name: '团队管理' }).getByText('Team Lead')).toBeVisible()
+  await page.waitForTimeout(500)
+  // 只有加载本身的主读取（开发模式 StrictMode 下为 2 次）；管理进度的首次 403 没有带来额外读取。
+  expect(counters.caseReads).toBe(2)
+})
+
+test('主授权重读：之前读取成功过的成员列表刷新后变成 403，会触发重读并移除内容', async ({ page }) => {
+  await caseWithOtherMember(page, 'case-seen')
+  const membersGate = deferred()
+  const counters = await stubReadPolicy(page, 'case-seen', {
+    // 写操作后的第一次重读通过；成员列表的刷新被扣住，等重读完成后才返回 403。
+    caseRead: (n) => (n === 1 ? 200 : 403),
+    membersRead: async () => {
+      await membersGate.promise
+      return 403
+    },
+  })
+  await page.goto('/review-cases/case-seen')
+  await expect(page.getByText('Other Member')).toBeVisible()
+  counters.arm()
+  await removeOtherMember(page)
+  await expect.poll(() => counters.caseReads).toBe(1)
+  await expect(page.getByText('Team Case case-seen')).toBeVisible()
+  membersGate.resolve()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByText('Team Case case-seen')).toHaveCount(0)
+  expect(counters.caseReads).toBe(2)
+})
+
+test('主授权重读：并发触发合并为一次读取，且明确的 403 不会被随后到达的 500 覆盖', async ({ page }) => {
+  await caseWithOtherMember(page, 'case-flight')
+  const caseGate = deferred()
+  const counters = await stubReadPolicy(page, 'case-flight', {
+    // 第 2 次（写操作后的重读）被扣住后返回 403；任何多余的读取都会返回 500。
+    caseRead: async (n) => {
+      if (n === 1) {
+        await caseGate.promise
+        return 403
+      }
+      return 500
+    },
+    // 成员列表刷新立即 403（之前读取成功过），与写操作后的重读同时触发。
+    membersRead: () => 403,
+  })
+  await page.goto('/review-cases/case-flight')
+  await expect(page.getByText('Other Member')).toBeVisible()
+  counters.arm()
+  await removeOtherMember(page)
+  await expect.poll(() => counters.membersReads).toBeGreaterThanOrEqual(1)
+  await page.waitForTimeout(400)
+  expect(counters.caseReads).toBe(1)
+  await expect(page.getByText('Team Case case-flight')).toBeVisible()
+
+  caseGate.resolve()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByText('Team Case case-flight')).toHaveCount(0)
+  await page.waitForTimeout(300)
+  expect(counters.caseReads).toBe(1)
+})
+
+test('主授权重读：一次重读失败（500）不移除内容，之后的重读确认 403 才移除', async ({ page }) => {
+  const state = await caseWithOtherMember(page, 'case-500')
+  state.members.push(member('case-500', 'third', 'observer', 'Third Member'))
+  const counters = await stubReadPolicy(page, 'case-500', { caseRead: (n) => (n === 1 ? 500 : 403) })
+  await page.goto('/review-cases/case-500')
+  await expect(page.getByText('Other Member')).toBeVisible()
+  counters.arm()
+  await removeOtherMember(page)
+  await expect.poll(() => counters.caseReads).toBe(1)
+  await expect(page.getByText('Team Case case-500')).toBeVisible()
+
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('listitem').filter({ hasText: 'Third Member' }).getByRole('button', { name: /移除/ }).click()
+  await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByText('Team Case case-500')).toHaveCount(0)
+})
+
+for (const [label, status, expected] of [
+  ['成功', 201, null],
+  ['明确拒绝（409）', 409, '该成员已在团队中，或团队已发生变化，正在获取最新状态。'],
+  ['明确拒绝（422）', 422, 'add rejected'],
+  ['结果未知（网络中断）', 'abort', '未确认是否已添加成员'],
+  ['结果未知（500）', 500, '未确认是否已添加成员'],
+] as const) {
+  test(`添加成员：请求在途时关闭 Drawer，${label}仍在面板上有反馈`, async ({ page }) => {
+    const state = await mockCase(page, 'case-outcome')
+    const gate = deferred()
+    state.addGate = gate.promise
+    state.addStatus = status
+    await page.goto('/review-cases/case-outcome')
+    const team = page.getByRole('region', { name: '团队管理' })
+    await expect(team.getByText('Team Lead')).toBeVisible()
+    await team.getByRole('button', { name: '添加成员' }).click()
+    const drawer = page.getByRole('dialog', { name: '添加成员' })
+    await pickCandidate(page, drawer, 'Cand', 'Candidate One')
+    await drawer.getByRole('button', { name: '添加成员' }).click()
+    await expect.poll(() => state.postCount).toBe(1)
+    await drawer.getByRole('button', { name: /Close|关闭/ }).first().click()
+    await expect(page.getByRole('dialog', { name: '添加成员' })).toHaveCount(0)
+    const readsBefore = state.memberReads
+
+    gate.resolve()
+    if (expected === null) {
+      await expect(page.getByText('已添加成员', { exact: true })).toHaveCount(1)
+      await expect(team.getByText('Added Candidate')).toBeVisible()
+    } else {
+      await expect(team.getByText(expected, { exact: false })).toBeVisible()
+      await expect(team.getByText('Added Candidate')).toHaveCount(0)
+      await expect(page.getByText('已添加成员', { exact: true })).toHaveCount(0)
+      if (status === 409 || status === 'abort' || status === 500) {
+        await expect.poll(() => state.memberReads).toBeGreaterThan(readsBefore)
+      }
+    }
+    await page.waitForTimeout(300)
+    expect(state.postCount).toBe(1)
+  })
+}

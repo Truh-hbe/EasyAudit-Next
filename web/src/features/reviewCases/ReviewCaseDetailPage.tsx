@@ -188,16 +188,23 @@ export function ReviewCaseDetailPage() {
   const [findings, setFindings] = useState<SectionState<FindingResponse[]>>(idleSection)
   const [activities, setActivities] = useState<SectionState<ReviewCaseActivityResponse[]>>(idleSection)
   const [management, setManagement] = useState<SectionState<ManagementCaseProgressResponse>>(idleSection)
-  const recheckSequence = useRef(0)
+  // generation 只用来丢弃过期的“成功”响应（切换活动/重新加载之后）；授权拒绝没有过期之说。
+  const generation = useRef(0)
+  const recheckInFlight = useRef<string | null>(null)
+  const seenSubordinates = useRef(new Set<string>())
 
-  // 静默重新确认主授权（不进入加载态，不卸载页面）：团队变更可能撤销当前用户自己的访问权，
-  // 从属接口被拒绝也说明授权可能已变。403/404 立即移除全部受保护内容；其他错误保持现状。
+  // 静默重新确认主授权（不进入加载态，不卸载页面）。团队写操作之后、或之前读取成功过的从属资源变成
+  // 403/404 时触发。规则：
+  // - 拒绝有粘性：任意一次主读取确认 403/404，立即移除全部受保护内容，之后的成功、失败或晚到响应都不能恢复，
+  //   只有切换活动或用户主动重新加载才会重置（此时 primary 状态本身被重置）；
+  // - single-flight：同一个活动同一时间只有一次重读，重读进行中的新触发合并到当前这次。
   const recheckAuthorization = useCallback((checkedCaseId: string) => {
-    recheckSequence.current += 1
-    const sequence = recheckSequence.current
+    if (recheckInFlight.current === checkedCaseId) return
+    recheckInFlight.current = checkedCaseId
+    const startedGeneration = generation.current
     void getReviewCase(checkedCaseId)
       .then((data) => {
-        if (recheckSequence.current !== sequence) return
+        if (generation.current !== startedGeneration) return
         setPrimary((current) =>
           current.status === 'ready' && current.caseId === checkedCaseId
             ? { status: 'ready', caseId: checkedCaseId, data }
@@ -205,15 +212,32 @@ export function ReviewCaseDetailPage() {
         )
       })
       .catch((error: unknown) => {
-        if (recheckSequence.current !== sequence || !unavailable(error)) return
+        if (!unavailable(error)) return
         setPrimary((current) =>
           current.caseId === checkedCaseId ? { status: 'unavailable', caseId: checkedCaseId } : current,
         )
       })
+      .finally(() => {
+        if (recheckInFlight.current === checkedCaseId) recheckInFlight.current = null
+      })
   }, [])
 
+  // 从属资源第一次就被拒绝只是权限边界（例如非管理者的管理进度），区块显示不可用即可；
+  // 只有之前成功读取过的资源后来被拒绝，才说明访问权可能变了。
+  const noteSubordinate = useCallback(
+    (caseIdOfResource: string, resource: string, denied: boolean) => {
+      const key = `${caseIdOfResource}:${resource}`
+      if (!denied) {
+        seenSubordinates.current.add(key)
+      } else if (seenSubordinates.current.has(key)) {
+        recheckAuthorization(caseIdOfResource)
+      }
+    },
+    [recheckAuthorization],
+  )
+
   useEffect(() => {
-    recheckSequence.current += 1
+    generation.current += 1
     setMembers(idleSection)
     setFindings(idleSection)
     setActivities(idleSection)
@@ -260,12 +284,13 @@ export function ReviewCaseDetailPage() {
     void getReviewCaseMembers(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
+          noteSubordinate(authorizedCaseId, 'members', false)
           setMembers({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
+        noteSubordinate(authorizedCaseId, 'members', unavailable(error))
         setMembers(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -280,12 +305,13 @@ export function ReviewCaseDetailPage() {
     void getReviewCaseActivities(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
+          noteSubordinate(authorizedCaseId, 'activities', false)
           setActivities({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
+        noteSubordinate(authorizedCaseId, 'activities', unavailable(error))
         setActivities(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -309,12 +335,13 @@ export function ReviewCaseDetailPage() {
     void getReviewCaseFindings(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
+          noteSubordinate(authorizedCaseId, 'findings', false)
           setFindings({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
+        noteSubordinate(authorizedCaseId, 'findings', unavailable(error))
         setFindings(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -329,12 +356,13 @@ export function ReviewCaseDetailPage() {
     void getManagementCaseProgress(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
+          noteSubordinate(authorizedCaseId, 'management', false)
           setManagement({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
+        noteSubordinate(authorizedCaseId, 'management', unavailable(error))
         setManagement(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
