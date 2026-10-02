@@ -4,6 +4,11 @@ import { Link, useNavigate } from 'react-router'
 import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
 import { createReviewPlan, getReviewCatalog, newIdempotencyKey } from '../../api/product'
 import type { ReviewCatalogItemResponse, ReviewPlanResponse } from '../../api/product'
+import {
+  DISPLAY_TIME_ZONE_HINT,
+  invalidDisplayZoneInputMessage,
+  parseOptionalDisplayZoneInput,
+} from '../../product/format'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 
 type CatalogState =
@@ -16,12 +21,6 @@ export type PlanSubmitState =
   | { status: 'submitting' }
   | { status: 'rejected'; message: string }
   | { status: 'unknown'; message: string }
-
-export function dateInputToApi(value: string): string | null {
-  if (value.trim() === '') return null
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? null : date.toISOString()
-}
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
@@ -96,11 +95,23 @@ export function ReviewPlanCreatePage() {
       return
     }
 
+    // 无效时间不能当作"未填写"提交；保留输入和幂等键，由用户修改后重试。
+    const startAt = parseOptionalDisplayZoneInput(plannedStartAt)
+    if (!startAt.valid) {
+      setSubmitState({ status: 'rejected', message: invalidDisplayZoneInputMessage('计划开始时间') })
+      return
+    }
+    const endAt = parseOptionalDisplayZoneInput(plannedEndAt)
+    if (!endAt.valid) {
+      setSubmitState({ status: 'rejected', message: invalidDisplayZoneInputMessage('计划结束时间') })
+      return
+    }
+
     setSubmitState({ status: 'submitting' })
     const result = await executePlanSubmission(() => createReviewPlan({
         title,
-        planned_start_at: dateInputToApi(plannedStartAt),
-        planned_end_at: dateInputToApi(plannedEndAt),
+        planned_start_at: startAt.iso,
+        planned_end_at: endAt.iso,
       }, idempotencyKey.current))
     if (result.plan !== undefined) {
       idempotencyKey.current = newIdempotencyKey()
@@ -140,11 +151,13 @@ export function ReviewPlanCreatePage() {
               autoComplete="off"
             />
           </label>
+          <p id="plan-time-zone-hint" className="field-help">{DISPLAY_TIME_ZONE_HINT}</p>
           <div className="form-grid">
             <label>
               计划开始时间（可选）
               <input
                 type="datetime-local"
+                aria-describedby="plan-time-zone-hint"
                 value={plannedStartAt}
                 onChange={(event) => setPlannedStartAt(event.target.value)}
                 disabled={submitting}
@@ -154,6 +167,7 @@ export function ReviewPlanCreatePage() {
               计划结束时间（可选）
               <input
                 type="datetime-local"
+                aria-describedby="plan-time-zone-hint"
                 value={plannedEndAt}
                 onChange={(event) => setPlannedEndAt(event.target.value)}
                 disabled={submitting}

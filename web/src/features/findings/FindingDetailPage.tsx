@@ -27,7 +27,13 @@ import type {
   ReviewCaseResponse,
   SubmissionResponse,
 } from '../../api/product'
-import { formatDateTime, lifecycleText } from '../../product/format'
+import {
+  DISPLAY_TIME_ZONE_HINT,
+  formatDateTime,
+  invalidDisplayZoneInputMessage,
+  lifecycleText,
+  parseOptionalDisplayZoneInput,
+} from '../../product/format'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
 import type { ScenarioFindingCommandPorts } from '../../scenarios/registry'
 
@@ -650,14 +656,18 @@ export function FindingDetailPage() {
             className="command-form subsurface"
             onSubmit={(event) => {
               event.preventDefault()
-              const dueAt =
-                actionDueAt.length === 0 ? null : new Date(actionDueAt).toISOString()
+              const dueAt = parseOptionalDisplayZoneInput(actionDueAt)
+              if (!dueAt.valid) {
+                setCommandMessage(invalidDisplayZoneInputMessage('到期时间'))
+                return
+              }
               void runCommand('创建 Action Item', () =>
-                createActionItem(finding.id, { title: actionTitle, due_at: dueAt }),
+                createActionItem(finding.id, { title: actionTitle, due_at: dueAt.iso }),
               )
             }}
           >
             <h3>新建 Action Item</h3>
+            <p id="action-due-time-zone-hint" className="field-help">{DISPLAY_TIME_ZONE_HINT}</p>
             <div className="form-grid">
               <label>
                 标题
@@ -671,6 +681,7 @@ export function FindingDetailPage() {
                 到期时间
                 <input
                   type="datetime-local"
+                  aria-describedby="action-due-time-zone-hint"
                   value={actionDueAt}
                   onChange={(event) => setActionDueAt(event.target.value)}
                   disabled={commandBusy}

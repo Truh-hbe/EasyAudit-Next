@@ -339,3 +339,68 @@ test('verification refusal, reject success, and reopen validation preserve autho
   await page.getByRole('button', { name: '重新打开' }).click()
   await expect(page.locator('.status-pill')).toHaveText('rectifying')
 })
+
+test.describe('device time zone differs from the display time zone', () => {
+  test.use({ timezoneId: 'America/New_York' })
+
+  test('a filled but non-existent Shanghai due time blocks Action creation; an empty due time still submits null', async ({ page }) => {
+    await stubReadySession(page)
+    const findingId = 'finding-action-invalid-due'
+    const caseId = 'case-action-invalid-due'
+    const createBodies: Record<string, unknown>[] = []
+
+    await stubFindingContext(page, findingId, caseId, () => 'rectifying', () => [], () => [])
+    await page.route(
+      (url) => url.pathname === `/api/v1/findings/${findingId}/actions`,
+      (route) => {
+        if (route.request().method() === 'GET') return fulfillJson(route, 200, [])
+        createBodies.push(route.request().postDataJSON() as Record<string, unknown>)
+        return fulfillJson(route, 422, { detail: 'stop after capturing the request' })
+      },
+    )
+
+    await page.goto(`/findings/${findingId}`)
+    const dueAt = page.getByLabel('到期时间')
+    await page.getByLabel('标题').fill('Invalid Due Action')
+    await dueAt.fill('1986-05-04T02:30')
+    await page.getByRole('button', { name: '创建', exact: true }).click()
+    await expect(page.getByRole('status')).toHaveText(
+      '到期时间无效：请填写存在的上海时间（Asia/Shanghai）。',
+    )
+    await expect(dueAt).toHaveValue('1986-05-04T02:30')
+    await expect(page.getByLabel('标题')).toHaveValue('Invalid Due Action')
+    expect(createBodies).toHaveLength(0)
+
+    await dueAt.fill('')
+    await page.getByRole('button', { name: '创建', exact: true }).click()
+    await expect.poll(() => createBodies.length).toBe(1)
+    expect(createBodies[0]).toMatchObject({ title: 'Invalid Due Action', due_at: null })
+  })
+
+  test('Action due time is entered as Asia/Shanghai wall time and the field says so', async ({ page }) => {
+    await stubReadySession(page)
+    const findingId = 'finding-action-due-zone'
+    const caseId = 'case-action-due-zone'
+    let createBody: Record<string, unknown> | null = null
+
+    await stubFindingContext(page, findingId, caseId, () => 'rectifying', () => [], () => [])
+    await page.route(
+      (url) => url.pathname === `/api/v1/findings/${findingId}/actions`,
+      (route) => {
+        if (route.request().method() === 'GET') return fulfillJson(route, 200, [])
+        createBody = route.request().postDataJSON() as Record<string, unknown>
+        return fulfillJson(route, 422, { detail: 'stop after capturing the request' })
+      },
+    )
+
+    await page.goto(`/findings/${findingId}`)
+    const dueAt = page.getByLabel('到期时间')
+    await expect(dueAt).toHaveAccessibleDescription('以下时间均按上海时间（Asia/Shanghai）填写和显示。')
+    await page.getByLabel('标题').fill('Zone Action')
+    await dueAt.fill('2026-08-28T18:00')
+    await page.getByRole('button', { name: '创建', exact: true }).click()
+
+    await expect.poll(() => createBody).not.toBeNull()
+    expect(createBody).toMatchObject({ title: 'Zone Action', due_at: '2026-08-28T10:00:00.000Z' })
+  })
+})

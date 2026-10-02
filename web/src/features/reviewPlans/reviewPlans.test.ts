@@ -11,19 +11,12 @@ import {
 } from './ReviewCaseCreatePage'
 import {
   canSubmitPlan,
-  dateInputToApi,
   executePlanSubmission,
   isDefinitivePlanRejection,
 } from './ReviewPlanCreatePage'
 import type { ReviewCaseResponse, ReviewPlanResponse } from '../../api/product'
 
 describe('M5.2 plan-first creation contracts', () => {
-  it('converts optional local date input to an aware API value', () => {
-    expect(dateInputToApi('')).toBeNull()
-    expect(dateInputToApi('2026-08-30T09:30')).toBe(new Date('2026-08-30T09:30').toISOString())
-    expect(dateInputToApi('not-a-date')).toBeNull()
-  })
-
   it('builds the exact Case payload without Plan date inheritance', () => {
     const item = {
       scenario_key: 'process_review',
