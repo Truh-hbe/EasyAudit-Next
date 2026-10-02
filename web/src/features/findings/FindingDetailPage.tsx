@@ -364,7 +364,6 @@ export function FindingDetailPage() {
   if (!primaryMatchesRoute || primary.status === 'loading') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.3</p>
         <h1>Finding</h1>
         <p>正在确认当前 Finding 授权…</p>
       </section>
@@ -374,7 +373,6 @@ export function FindingDetailPage() {
   if (primary.status === 'unavailable') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.3</p>
         <h1>Finding 不可用</h1>
         <p>当前服务器未提供此 Finding 的可见内容。</p>
       </section>
@@ -384,7 +382,6 @@ export function FindingDetailPage() {
   if (primary.status === 'error') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.3</p>
         <h1>Finding</h1>
         <div role="alert" className="surface-card">
           <p>{primary.message}</p>

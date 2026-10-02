@@ -4,6 +4,7 @@
 
 - [docs/architecture.md](docs/architecture.md)：必须遵守的架构规则（依赖方向、事务与锁顺序、授权、错误语义）
 - [docs/domain.md](docs/domain.md)：领域模型与两个场景的生命周期和权限
+- [docs/design.md](docs/design.md)：前端 UI 规范（组件库、主题、布局、图标、文案），改 `web/` 前必读
 - [docs/roadmap.md](docs/roadmap.md)：当前要做什么
 
 ## 常用命令

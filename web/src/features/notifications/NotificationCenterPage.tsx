@@ -146,7 +146,6 @@ export function NotificationCenterPage() {
     <section className="surface-page" aria-labelledby="notifications-title">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">M3.5.4 · persistent delivery history</p>
           <h1 id="notifications-title">通知</h1>
         </div>
         <p>未读总数 {data?.unread_count ?? '—'}</p>
@@ -245,7 +244,7 @@ export function NotificationCenterPage() {
             >下一页</button>
           </div>
           {mode === 'all' ? (
-            <p className="empty-note">M3.2 inbox 没有总条数；“下一页”只表示当前页已达到服务器 page limit。</p>
+            <p className="empty-note">通知列表不显示总条数；“下一页”仅表示当前页已满。</p>
           ) : null}
         </section>
       ) : null}

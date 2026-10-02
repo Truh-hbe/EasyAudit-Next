@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": [
+              "@mui/*",
+              "@mantine/*",
+              "@chakra-ui/*",
+              "@radix-ui/*",
+              "@headlessui/*",
+              "@arco-design/*",
+              "tdesign-react",
+              "react-bootstrap",
+              "semantic-ui-react",
+              "@ant-design/pro-*",
+              "react-icons",
+              "react-icons/*",
+              "lucide-react",
+              "@heroicons/*",
+              "@tabler/icons-react",
+              "@fortawesome/*"
+            ],
+            "message": "前端只使用 antd 与 @ant-design/icons，见 docs/design.md。"
+          },
+          {
+            "group": ["antd/es/*", "antd/lib/*"],
+            "message": "从 'antd' 根入口导入组件，不使用内部路径，见 docs/design.md。"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -258,17 +258,16 @@ export function ReviewCaseDetailPage() {
   }, [authorizedCaseId])
 
   if (!primaryMatchesRoute || primary.status === 'loading') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.2</p><h1>ReviewCase</h1><p>正在确认当前 ReviewCase 授权…</p></section>
+    return <section className="surface-page"><h1>ReviewCase</h1><p>正在确认当前 ReviewCase 授权…</p></section>
   }
 
   if (primary.status === 'unavailable') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.2</p><h1>ReviewCase 不可用</h1><p>当前服务器未提供此 ReviewCase 的可见内容。</p></section>
+    return <section className="surface-page"><h1>ReviewCase 不可用</h1><p>当前服务器未提供此 ReviewCase 的可见内容。</p></section>
   }
 
   if (primary.status === 'error') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.2</p>
         <h1>ReviewCase</h1>
         <div role="alert" className="surface-card">
           <p>{primary.message}</p>

@@ -115,7 +115,6 @@ export function ManagementPage() {
     <section className="surface-page" aria-labelledby="management-title">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">M3.5.4 · M3.3 server projection</p>
           <h1 id="management-title">管理视图</h1>
         </div>
         <p>投影时间 {formatDateTime(data?.as_of ?? null)}</p>
@@ -201,7 +200,7 @@ export function ManagementPage() {
           >{exporting === 'xlsx' ? '正在导出…' : '导出 XLSX'}</button>
         </div>
         {exportError !== null ? <p role="alert">{exportError}</p> : null}
-        <p className="empty-note">筛选、授权、deadline bucket、聚合、total 与分页都由 M3.3 服务器 read side 决定。</p>
+        <p className="empty-note">筛选、授权、截止分组、汇总与分页均以服务器结果为准。</p>
       </section>
 
       {currentState.status === 'loading' ? (

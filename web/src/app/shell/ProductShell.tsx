@@ -1,3 +1,13 @@
+import {
+  BarChartOutlined,
+  BellOutlined,
+  FileSearchOutlined,
+  HomeOutlined,
+  SettingOutlined,
+  UserOutlined,
+} from '@ant-design/icons'
+import { Avatar } from 'antd'
+import type { ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router'
 
 import { ActionItemDetailPage } from '../../features/actions/ActionItemDetailPage'
@@ -14,12 +24,18 @@ import { WorkbenchPage } from '../../features/workbench/WorkbenchPage'
 import { LogoutButton } from '../auth/LogoutButton'
 import { useSession } from '../auth/session'
 
-const primaryNavigation = [
-  { to: '/me/workbench', label: '我的工作' },
-  { to: '/review-cases', label: '审查活动' },
-  { to: '/me/notifications', label: '通知' },
-  { to: '/management', label: '管理视图' },
-] as const
+const primaryNavigation: readonly { to: string; label: string; icon: ReactNode }[] = [
+  { to: '/me/workbench', label: '我的工作', icon: <HomeOutlined aria-hidden /> },
+  { to: '/review-cases', label: '审查活动', icon: <FileSearchOutlined aria-hidden /> },
+  { to: '/me/notifications', label: '通知', icon: <BellOutlined aria-hidden /> },
+  { to: '/management', label: '管理视图', icon: <BarChartOutlined aria-hidden /> },
+]
+
+const adminNavigation = {
+  to: '/admin',
+  label: '管理设置',
+  icon: <SettingOutlined aria-hidden />,
+}
 
 export function ProductShell() {
   const { state } = useSession()
@@ -27,31 +43,36 @@ export function ProductShell() {
     return null
   }
 
+  const navigation =
+    state.user.platform_role === 'system_admin'
+      ? [...primaryNavigation, adminNavigation]
+      : primaryNavigation
+
   return (
-    <div className="product-shell">
-      <header className="product-header">
-        <div>
-          <p className="product-name">EasyAudit Next</p>
-          <p className="product-context">审查协作平台</p>
-        </div>
-        <div className="account-area">
-          <span>{state.user.display_name}</span>
-          <LogoutButton className="compact-button" />
-        </div>
+    <div className="app-shell">
+      <div className="app-brand">
+        <span className="app-brand-name">EasyAudit Next</span>
+        <span className="app-brand-context">审查协作平台</span>
+      </div>
+
+      <header className="app-header">
+        <span className="app-account">
+          <Avatar size="small" icon={<UserOutlined aria-hidden />} />
+          <span className="app-account-name">{state.user.display_name}</span>
+        </span>
+        <LogoutButton />
       </header>
 
-      <nav className="primary-nav" aria-label="主要导航">
-        {primaryNavigation.map((item) => (
+      <nav className="app-nav" aria-label="主要导航">
+        {navigation.map((item) => (
           <NavLink key={item.to} to={item.to}>
-            {item.label}
+            {item.icon}
+            <span>{item.label}</span>
           </NavLink>
         ))}
-        {state.user.platform_role === 'system_admin' ? (
-          <NavLink to="/admin">管理设置</NavLink>
-        ) : null}
       </nav>
 
-      <main className="product-content">
+      <main className="app-content">
         <Routes>
           <Route path="/me/workbench" element={<WorkbenchPage />} />
           <Route path="/review-cases" element={<ReviewCaseCollectionPage />} />

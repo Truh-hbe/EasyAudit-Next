@@ -1,9 +1,14 @@
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #172033;
-  background: #f5f7fb;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+/* antd 的 CSS 变量挂在 <App className="app-root"> 上，自定义样式只能在其内部使用 var(--ant-*)。 */
+.app-root {
+  min-height: 100vh;
+  font-family: var(--ant-font-family);
+  color: var(--ant-color-text);
+  background: var(--ant-color-bg-layout);
 }
 
 * {
@@ -62,18 +67,21 @@ button:disabled {
 
 h1 {
   margin: 0;
-  font-size: clamp(2rem, 6vw, 4rem);
-  line-height: 1;
+  font-size: var(--ant-font-size-heading-3);
+  font-weight: 600;
+  line-height: var(--ant-line-height-heading-3);
 }
 
 h2 {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: var(--ant-font-size-lg);
+  font-weight: 600;
 }
 
 h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--ant-font-size);
+  font-weight: 600;
 }
 
 .foundation > p:last-child,
@@ -100,9 +108,9 @@ select,
 textarea {
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid #c9d0dc;
+  border: 1px solid var(--ant-color-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--ant-color-bg-container);
   color: inherit;
 }
 
@@ -120,7 +128,7 @@ button {
 .secondary {
   margin-top: 18px;
   background: transparent;
-  border: 1px solid #c9d0dc;
+  border: 1px solid var(--ant-color-border);
 }
 
 .primary-button,
@@ -134,16 +142,16 @@ button {
 .primary-button {
   padding: 12px 16px;
   border-radius: 10px;
-  background: #172033;
-  color: #fff;
+  background: var(--ant-color-primary);
+  color: var(--ant-color-text-light-solid);
   font-weight: 700;
 }
 
 .secondary-button {
   padding: 11px 15px;
-  border: 1px solid #c9d0dc;
+  border: 1px solid var(--ant-color-border);
   border-radius: 10px;
-  color: #475269;
+  color: var(--ant-color-text-secondary);
   font-weight: 700;
 }
 
@@ -151,76 +159,140 @@ button {
   margin-top: 16px;
 }
 
-.product-shell {
+.app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-columns: 224px minmax(0, 1fr);
+  grid-template-rows: 56px 1fr;
+  grid-template-areas:
+    "brand header"
+    "nav content";
 }
 
-.product-header {
+.app-brand {
+  grid-area: brand;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 20px;
+  background: var(--ant-color-bg-container);
+  border-right: 1px solid var(--ant-color-border-secondary);
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+
+.app-brand-name {
+  font-weight: 700;
+  font-size: var(--ant-font-size-lg);
+}
+
+.app-brand-context {
+  color: var(--ant-color-text-tertiary);
+  font-size: var(--ant-font-size-sm);
+}
+
+.app-header {
+  grid-area: header;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 20px clamp(20px, 5vw, 64px);
-  background: #fff;
-  border-bottom: 1px solid #e2e6ee;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 0 24px;
+  background: var(--ant-color-bg-container);
+  border-bottom: 1px solid var(--ant-color-border-secondary);
 }
 
-.product-name,
-.product-context {
-  margin: 0;
-}
-
-.product-name {
-  font-weight: 800;
-  font-size: 1.1rem;
-}
-
-.product-context {
-  margin-top: 3px;
-  color: #697386;
-  font-size: 0.85rem;
-}
-
-.account-area {
-  display: flex;
+.app-account {
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-}
-
-.compact-button {
-  padding: 8px 12px;
-  background: #eef1f6;
-}
-
-.primary-nav {
-  display: flex;
   gap: 8px;
-  overflow-x: auto;
-  padding: 10px clamp(20px, 5vw, 64px);
-  background: #fff;
-  border-bottom: 1px solid #e2e6ee;
+  min-width: 0;
 }
 
-.primary-nav a {
-  flex: 0 0 auto;
-  padding: 9px 12px;
-  border-radius: 9px;
-  color: #475269;
+.app-account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-nav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: var(--ant-color-bg-container);
+  border-right: 1px solid var(--ant-color-border-secondary);
+}
+
+.app-nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--ant-border-radius);
+  color: var(--ant-color-text);
   text-decoration: none;
-  font-weight: 650;
 }
 
-.primary-nav a[aria-current="page"] {
-  background: #edf1f8;
-  color: #172033;
+.app-nav a:hover {
+  background: var(--ant-color-fill-tertiary);
 }
 
-.product-content {
-  width: min(1180px, 100%);
-  margin: 0 auto;
-  padding: 44px clamp(20px, 5vw, 64px) 72px;
+.app-nav a[aria-current="page"] {
+  background: var(--ant-color-primary-bg);
+  color: var(--ant-color-primary);
+  font-weight: 600;
+}
+
+.app-content {
+  grid-area: content;
+  width: min(1280px, 100%);
+  padding: 24px 24px 64px;
+}
+
+@media (max-width: 991px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas:
+      "brand header"
+      "nav nav"
+      "content content";
+  }
+
+  .app-brand {
+    padding: 8px 16px;
+    border-right: 0;
+  }
+
+  .app-header {
+    padding: 8px 16px;
+  }
+
+  .app-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 8px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ant-color-border-secondary);
+  }
+
+  .app-nav a {
+    flex: 0 0 auto;
+    height: 36px;
+  }
+
+  .app-content {
+    padding: 16px 16px 48px;
+  }
+}
+
+@media (max-width: 575px) {
+  .app-brand-context,
+  .app-account-name {
+    display: none;
+  }
 }
 
 .placeholder,
@@ -238,7 +310,7 @@ button {
 .case-list span,
 .activity-list span,
 .page-heading > p {
-  color: #697386;
+  color: var(--ant-color-text-secondary);
 }
 
 .surface-page {
@@ -274,7 +346,7 @@ button {
 
 .wizard-step,
 .field-help {
-  color: #697386;
+  color: var(--ant-color-text-secondary);
 }
 
 .field-help {
@@ -293,9 +365,9 @@ button {
 .surface-card {
   min-width: 0;
   padding: 22px;
-  border: 1px solid #e2e6ee;
+  border: 1px solid var(--ant-color-border-secondary);
   border-radius: 14px;
-  background: #fff;
+  background: var(--ant-color-bg-container);
 }
 
 .surface-card > h2,
@@ -317,7 +389,7 @@ button {
   display: grid;
   gap: 6px;
   padding: 13px 0;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--ant-color-split);
 }
 
 .surface-list li:first-child,
@@ -329,7 +401,7 @@ button {
 
 .surface-list a,
 .case-title-link {
-  color: #172033;
+  color: var(--ant-color-text);
   font-weight: 750;
 }
 
@@ -341,7 +413,7 @@ button {
 
 .case-list p {
   margin: 4px 0 0;
-  color: #697386;
+  color: var(--ant-color-text-secondary);
   font-size: 0.85rem;
 }
 
@@ -356,7 +428,7 @@ button {
   flex: 0 0 auto;
   padding: 8px 11px;
   border-radius: 999px;
-  background: #eef1f6;
+  background: var(--ant-color-fill-secondary);
   font-weight: 750;
 }
 
@@ -370,7 +442,7 @@ button {
 .fact-grid > div {
   min-width: 0;
   padding: 12px 0;
-  border-top: 1px solid #edf0f5;
+  border-top: 1px solid var(--ant-color-split);
 }
 
 .fact-grid .wide-fact {
@@ -378,7 +450,7 @@ button {
 }
 
 .fact-grid dt {
-  color: #697386;
+  color: var(--ant-color-text-secondary);
   font-size: 0.8rem;
   font-weight: 700;
 }
@@ -416,9 +488,9 @@ button {
 .subsurface {
   margin-top: 18px;
   padding: 18px;
-  border: 1px solid #edf0f5;
+  border: 1px solid var(--ant-color-split);
   border-radius: 12px;
-  background: #fafbfe;
+  background: var(--ant-color-fill-quaternary);
 }
 
 .subsurface > h3 {
@@ -454,21 +526,14 @@ button {
 }
 
 @media (max-width: 640px) {
-  .product-header,
   .page-heading,
   .case-header,
   .section-heading {
     align-items: flex-start;
   }
 
-  .product-header,
   .page-heading,
   .case-header {
-    flex-direction: column;
-  }
-
-  .account-area {
-    align-items: flex-end;
     flex-direction: column;
   }
 }

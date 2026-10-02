@@ -50,13 +50,12 @@ export function ReviewCaseCollectionPage() {
   }
 
   if (state.status === 'loading') {
-    return <section className="surface-page"><p className="eyebrow">M3.5.2</p><h1>审查活动</h1><p>正在读取服务器授权后的 ReviewCase 页面…</p></section>
+    return <section className="surface-page"><h1>审查活动</h1><p>正在读取服务器授权后的 ReviewCase 页面…</p></section>
   }
 
   if (state.status === 'error') {
     return (
       <section className="surface-page">
-        <p className="eyebrow">M3.5.2</p>
         <h1>审查活动</h1>
         <div role="alert" className="surface-card">
           <p>{state.message}</p>
@@ -72,7 +71,6 @@ export function ReviewCaseCollectionPage() {
     <section className="surface-page" aria-labelledby="review-case-list-title">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">authorization-safe collection</p>
           <h1 id="review-case-list-title">审查活动</h1>
         </div>
         <div className="heading-actions">

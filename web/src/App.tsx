@@ -13,7 +13,6 @@ function ResolvingPage() {
   const { resolutionError, refresh } = useSession()
   return (
     <main className="foundation" aria-labelledby="resolving-title">
-      <p className="eyebrow">M3.5.1</p>
       <h1 id="resolving-title">正在确认服务器会话</h1>
       <p>受保护界面会在服务器 Session 与凭据状态确认后再决定是否呈现。</p>
       {resolutionError === null ? null : (
