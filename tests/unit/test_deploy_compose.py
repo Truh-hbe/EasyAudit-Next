@@ -219,6 +219,75 @@ def test_restore_checks_emptiness_before_writing() -> None:
     assert max(checks) < environment.index("  restore_database\n")
 
 
+def _run_restore_guard(
+    guard: str, probe_result: str, target: Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+set -euo pipefail
+TOOL=restore
+source "$1"
+probe_result="$3"
+db_scalar() { printf '%s' "$probe_result"; }
+object_tool_net() { printf '%s' "$probe_result"; }
+"$2"
+printf 'restore write reached' > "$4"
+""",
+            "restore-guard-test",
+            str(ROOT / "deploy" / "backup" / "lib.sh"),
+            guard,
+            probe_result,
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("guard", "probe_result", "description"),
+    [
+        ("require_empty_database", "3", "database is not empty (3 tables)"),
+        ("require_empty_bucket", "evidence.pdf\n", "bucket easyaudit-evidence is not empty"),
+    ],
+)
+def test_nonempty_restore_target_rejected_with_safe_guidance(
+    tmp_path: Path, guard: str, probe_result: str, description: str
+) -> None:
+    target = tmp_path / "existing-data"
+    target.write_text("preserve existing data")
+    result = _run_restore_guard(guard, probe_result, target)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert target.read_text() == "preserve existing data"
+    assert description in result.stderr
+    for shortcut in ("down -v", "docker volume rm", "docker volume prune", "rm -rf"):
+        assert shortcut not in result.stderr
+    assert "Restore rejected" in result.stderr
+    assert "overwrite is not authorized" in result.stderr
+    assert "separate disposable isolated restore target" in result.stderr
+    assert "Manually confirm the project, volumes, and target identity" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("guard", "probe_result"),
+    [("require_empty_database", "0"), ("require_empty_bucket", "")],
+)
+def test_empty_restore_target_guard_allows_continuation(
+    tmp_path: Path, guard: str, probe_result: str
+) -> None:
+    target = tmp_path / "empty-target"
+    result = _run_restore_guard(guard, probe_result, target)
+
+    assert result.returncode == 0
+    assert result.stdout == result.stderr == ""
+    assert target.read_text() == "restore write reached"
+
+
 def test_every_restore_entry_point_checks_the_release_first() -> None:
     text = (ROOT / "deploy" / "backup" / "restore.sh").read_text()
     dispatch = text[text.index('case "$COMMAND" in') :]
