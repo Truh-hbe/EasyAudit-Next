@@ -289,9 +289,13 @@ button {
 }
 
 @media (max-width: 575px) {
-  .app-brand-context,
-  .app-account-name {
+  .app-brand-context {
     display: none;
+  }
+
+  /* 窄屏仍显示当前用户，过长时截断。 */
+  .app-account-name {
+    max-width: 28vw;
   }
 }
 
