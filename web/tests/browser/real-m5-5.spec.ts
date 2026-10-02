@@ -125,7 +125,7 @@ async function expectStepTwoReload(page: Page, planId: string) {
   await page.reload()
   expect((await planResponsePromise).status()).toBe(200)
   expect((await catalogResponsePromise).status()).toBe(200)
-  await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
 }
 
 async function createPlan(page: Page, title: string): Promise<string> {
@@ -139,7 +139,7 @@ async function createPlan(page: Page, title: string): Promise<string> {
   const response = await responsePromise
   expect(response.status()).toBe(201)
   const body = (await response.json()) as { id: string }
-  await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
   return body.id
 }
 
@@ -290,7 +290,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     const rejectedCasePromise = firstPage.waitForResponse(
       (response) => apiPath(response.url()) === '/api/v1/review-cases' && response.request().method() === 'POST',
     )
-    await firstPage.getByRole('button', { name: '创建案例' }).click()
+    await firstPage.getByRole('button', { name: '创建审查活动' }).click()
     expect((await rejectedCasePromise).status()).toBe(422)
     await expect(firstPage.getByRole('alert')).toContainText('review_type')
     expect(planPostCount).toBe(1)
@@ -302,7 +302,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
       (response) => isCaseDetailPath(apiPath(response.url())) && response.request().method() === 'GET',
     )
     await firstPage.getByLabel('审查类型').fill('standard')
-    await firstPage.getByRole('button', { name: '创建案例' }).click()
+    await firstPage.getByRole('button', { name: '创建审查活动' }).click()
     const processCaseResponse = await processCasePromise
     expect(processCaseResponse.status()).toBe(201)
     const processCase = (await processCaseResponse.json()) as {
@@ -361,7 +361,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     const complianceCasePromise = firstPage.waitForResponse(
       (response) => apiPath(response.url()) === '/api/v1/review-cases' && response.request().method() === 'POST',
     )
-    await firstPage.getByRole('button', { name: '创建案例' }).click()
+    await firstPage.getByRole('button', { name: '创建审查活动' }).click()
     const complianceCaseResponse = await complianceCasePromise
     expect(complianceCaseResponse.status()).toBe(201)
     const complianceCase = (await complianceCaseResponse.json()) as {
@@ -397,11 +397,11 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await firstPage.route('**/api/v1/review-cases', abortHandler)
     const beforeAmbiguousCasePosts = casePostCount
     try {
-      await firstPage.getByRole('button', { name: '创建案例' }).click()
+      await firstPage.getByRole('button', { name: '创建审查活动' }).click()
       await expect(firstPage.getByRole('alert')).toContainText('结果未知')
       expect(casePostCount).toBe(beforeAmbiguousCasePosts + 1)
       // Pilot-3: an unknown outcome is retried by hand (same Idempotency-Key), never automatically.
-      await expect(firstPage.getByRole('button', { name: '重试创建案例' })).toBeEnabled()
+      await expect(firstPage.getByRole('button', { name: '重试创建审查活动' })).toBeEnabled()
       expect(ambiguousPlanId).toMatch(/^[0-9a-f-]{36}$/)
     } finally {
       await firstPage.unroute('**/api/v1/review-cases', abortHandler)

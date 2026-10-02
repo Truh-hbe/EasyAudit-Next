@@ -144,6 +144,6 @@ test('real non-manager sees safe permission failure without candidate names', as
   )
   await team.getByRole('button', { name: '搜索候选人' }).click()
   expect((await forbiddenResponsePromise).status()).toBe(403)
-  await expect(team.getByRole('alert')).toContainText('当前用户没有管理 Case 团队的权限。')
+  await expect(team.getByRole('alert')).toContainText('当前用户没有管理审查团队的权限。')
   await expect(team.getByText(CANDIDATE_DISPLAY_NAME)).toHaveCount(0)
 })

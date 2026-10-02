@@ -69,7 +69,7 @@ test('a retry after a lost Plan response creates exactly one plan', async ({ pag
   expect(response.status()).toBe(201)
   expect(response.headers()['idempotent-replayed']).toBe('true')
   const plan = (await response.json()) as { id: string }
-  await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
   expect(new URL(page.url()).pathname).toBe(`/review-plans/${plan.id}/review-cases/new`)
 
   expect(keys).toHaveLength(2)
@@ -85,14 +85,14 @@ test('a retry after a lost Case response creates exactly one case', async ({ pag
   await login(page)
   await page.getByLabel('计划名称').fill('Pilot-3 Case Plan')
   await page.getByRole('button', { name: '保存计划并继续' }).click()
-  await expect(page.getByRole('heading', { name: '新建审查案例' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
 
   const keys = await loseFirstResponse(page, '/api/v1/review-cases')
   await page.getByLabel('审查场景').selectOption('process_review@1')
   await page.getByLabel('审查活动名称').fill('Pilot-3 Retried Case')
   await page.getByLabel('区域代码').fill('area-a')
   await page.getByLabel('审查类型').fill('standard')
-  await page.getByRole('button', { name: '创建案例' }).click()
+  await page.getByRole('button', { name: '创建审查活动' }).click()
   await expect(page.getByRole('alert').filter({ hasText: '结果未知' })).toBeVisible()
 
   const replay = page.waitForResponse(
@@ -100,7 +100,7 @@ test('a retry after a lost Case response creates exactly one case', async ({ pag
       apiPath(response.url()) === '/api/v1/review-cases' &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: '重试创建案例' }).click()
+  await page.getByRole('button', { name: '重试创建审查活动' }).click()
   const response = await replay
   expect(response.status()).toBe(201)
   expect(response.headers()['idempotent-replayed']).toBe('true')

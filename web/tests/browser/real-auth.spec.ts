@@ -533,7 +533,7 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
       apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/actions` &&
       response.request().method() === 'POST',
   )
-  await newActionForm.getByRole('button', { name: '创建' }).click()
+  await newActionForm.getByRole('button', { name: '新建整改项' }).click()
   const createActionResponse = await createActionResponsePromise
   expect(createActionResponse.status()).toBe(201)
   const createdAction = (await createActionResponse.json()) as { id: string; lifecycle: string }
