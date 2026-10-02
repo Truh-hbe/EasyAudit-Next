@@ -121,8 +121,15 @@ function AddMemberDrawer({
   const [form] = Form.useForm<AddMemberFormValues>()
   const [candidates, setCandidates] = useState<CaseMemberCandidateResponse[]>([])
   const [searching, setSearching] = useState(false)
+  const { message } = App.useApp()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<TeamFailure | null>(null)
+  // 写锁独立于 Drawer 的开关：关闭/重开不会释放未完成的写请求，只有该请求结束时才释放。
+  const submittingRef = useRef(false)
+  // 每次打开、关闭或切换审查活动都会换一个编辑会话；晚到的写结果只影响发起它的会话。
+  const sessionRef = useRef(0)
+  const caseIdRef = useRef(reviewCase.id)
+  caseIdRef.current = reviewCase.id
   const searchRef = useRef<{ controller: AbortController; timer: number | null } | null>(null)
 
   function cancelSearch() {
@@ -156,6 +163,8 @@ function AddMemberDrawer({
           setCandidates([])
           setSearching(false)
           const classified = classifyTeamFailure(failure, 'search')
+          // 授权失败后不保留已选候选人的姓名（labelInValue 把姓名存在表单里）。
+          form.setFieldValue('member', undefined)
           setError(classified)
           if (classified.kind === 'gone') onAccessLost()
         })
@@ -165,37 +174,50 @@ function AddMemberDrawer({
 
   useEffect(() => {
     if (!open) return undefined
+    sessionRef.current += 1
     setCandidates([])
     setError(null)
+    // 重开时表单整体重置（Form preserve={false}），搜索也用同一个默认角色。
     runSearch(roleOptions[0]?.roleKey ?? '', '', 0)
     return () => {
+      sessionRef.current += 1
       cancelSearch()
       setCandidates([])
       setSearching(false)
-      setSubmitting(false)
     }
     // runSearch 只依赖 reviewCase.id 与稳定的 setter；仅在打开/切换活动时重新取候选。
   }, [open, reviewCase.id, roleOptions])
 
   async function submit(values: AddMemberFormValues) {
-    if (values.member === undefined || submitting) return
+    if (values.member === undefined || submittingRef.current) return
+    submittingRef.current = true
+    const session = sessionRef.current
+    const commandCaseId = reviewCase.id
+    const isCurrentSession = () => sessionRef.current === session
     setSubmitting(true)
     setError(null)
     try {
-      await addReviewCaseMember(reviewCase.id, values.member.value, values.roleKey)
-      onAdded()
+      await addReviewCaseMember(commandCaseId, values.member.value, values.roleKey)
+      void message.success('已添加成员')
+      if (isCurrentSession()) onAdded()
+      else if (caseIdRef.current === commandCaseId) onTeamChanged()
     } catch (failure: unknown) {
       const classified = classifyTeamFailure(failure, 'add')
-      setCandidates([])
-      form.setFieldValue('member', undefined)
       if (classified.kind === 'gone') {
-        onAccessLost()
+        if (caseIdRef.current === commandCaseId) onAccessLost()
         return
       }
-      setError(classified)
-      // 冲突或结果未知：写请求不自动重放，只重新读取团队供用户核对。
-      if (classified.kind === 'changed' || classified.kind === 'unknown-result') onTeamChanged()
+      if (caseIdRef.current === commandCaseId) {
+        // 冲突或结果未知：写请求不自动重放，只重新读取团队供用户核对。
+        if (classified.kind === 'changed' || classified.kind === 'unknown-result') onTeamChanged()
+      }
+      if (isCurrentSession()) {
+        setCandidates([])
+        form.setFieldValue('member', undefined)
+        setError(classified)
+      }
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
@@ -212,6 +234,7 @@ function AddMemberDrawer({
         form={form}
         layout="vertical"
         requiredMark={false}
+        preserve={false}
         initialValues={{ roleKey: roleOptions[0]?.roleKey }}
         disabled={submitting}
         onFinish={(values) => void submit(values)}
@@ -273,24 +296,50 @@ export function ReviewCaseTeamPanel({
   const [removingKey, setRemovingKey] = useState<string | null>(null)
   const removingRef = useRef(false)
   const [notice, setNotice] = useState<TeamFailure | null>(null)
+  const mountedRef = useRef(true)
+  const caseIdRef = useRef(reviewCase.id)
+  caseIdRef.current = reviewCase.id
+  // modal.confirm 由全局 App 持有，不会随面板卸载；必须自己销毁，否则确认框会带着旧活动的闭包残留。
+  const confirmRef = useRef<{ destroy: () => void } | null>(null)
 
-  // 切换审查活动时丢弃上一个活动的弹层与提示。
+  function destroyConfirm() {
+    confirmRef.current?.destroy()
+    confirmRef.current = null
+  }
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      destroyConfirm()
+    }
+  }, [])
+
+  // 切换审查活动时丢弃上一个活动的弹层、确认框与提示。
   useEffect(() => {
     setDrawerOpen(false)
     setNotice(null)
+    destroyConfirm()
   }, [reviewCase.id])
 
-  async function removeMember(member: CaseMemberViewResponse) {
-    if (removingRef.current) return
+  async function removeMember(member: CaseMemberViewResponse, commandCaseId: string) {
+    // 当前面板必须仍属于打开确认框时的审查活动，否则不发请求。
+    const isCurrent = () => mountedRef.current && caseIdRef.current === commandCaseId
+    if (!isCurrent() || removingRef.current) return
     removingRef.current = true
     setRemovingKey(`${member.user_id}:${member.role_key}`)
     setNotice(null)
     try {
-      await removeReviewCaseMember(reviewCase.id, member.user_id, member.role_key)
+      await removeReviewCaseMember(commandCaseId, member.user_id, member.role_key)
+      if (!isCurrent()) return
       void message.success('已移除成员')
       onTeamChanged()
     } catch (error: unknown) {
+      if (!isCurrent()) return
       const failure = classifyTeamFailure(error, 'remove')
+      if (failure.kind === 'gone' || failure.kind === 'forbidden') {
+        destroyConfirm()
+      }
       if (failure.kind === 'gone') {
         onAccessLost()
       } else {
@@ -300,19 +349,21 @@ export function ReviewCaseTeamPanel({
       }
     } finally {
       removingRef.current = false
-      setRemovingKey(null)
+      if (mountedRef.current) setRemovingKey(null)
     }
   }
 
   function confirmRemove(member: CaseMemberViewResponse) {
-    modal.confirm({
+    const commandCaseId = reviewCase.id
+    destroyConfirm()
+    confirmRef.current = modal.confirm({
       title: '移除成员',
       content: `将 ${member.display_name}（${roleLabelForCaseMember(member.role_key, roleOptions)}）从审查团队中移除。`,
       okText: '确认移除',
       okButtonProps: { danger: true },
       cancelText: '取消',
       // 失败由面板内的提示呈现，这里总是正常结束以关闭确认框。
-      onOk: () => removeMember(member),
+      onOk: () => removeMember(member, commandCaseId),
     })
   }
 

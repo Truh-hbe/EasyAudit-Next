@@ -45,6 +45,8 @@ interface CaseMock {
   candidateQueries: string[]
   removeStatus: number | 'abort'
   removeDetail: string
+  addGate: Promise<void> | null
+  postCount: number
 }
 
 // 为一个审查活动挂上主授权、从属读取和团队写入的 mock；所有状态由测试直接修改。
@@ -57,6 +59,8 @@ async function mockCase(page: Page, caseId: string): Promise<CaseMock> {
     candidateQueries: [],
     removeStatus: 200,
     removeDetail: '',
+    addGate: null,
+    postCount: 0,
   }
   await page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}`, (route) =>
     fulfillJson(route, 200, reviewCase(caseId)),
@@ -69,8 +73,10 @@ async function mockCase(page: Page, caseId: string): Promise<CaseMock> {
   await page.route((url) => url.pathname === `/api/v1/management/review-cases/${caseId}/progress`, (route) =>
     fulfillJson(route, 404, { detail: 'Not found' }),
   )
-  await page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}/members`, (route) => {
+  await page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}/members`, async (route) => {
     if (route.request().method() === 'POST') {
+      state.postCount += 1
+      await state.addGate
       const body = route.request().postDataJSON() as { user_id: string; role_key: string }
       state.adds.push(body)
       state.members.push(member(caseId, body.user_id, body.role_key, 'Added Candidate'))
@@ -273,3 +279,127 @@ for (const width of [375, 320]) {
     expect(await overflow()).toBeLessThanOrEqual(1)
   })
 }
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+async function pickCandidate(page: Page, drawer: ReturnType<Page['locator']>, query: string, name: string) {
+  await drawer.getByLabel('成员').fill(query)
+  await page.getByTitle(name, { exact: true }).last().click()
+}
+
+test('移除确认框：切换到无权访问的活动后确认框被销毁，且不会向旧活动发 DELETE', async ({ page }) => {
+  const a = await mockCase(page, 'case-a')
+  a.members.push(member('case-a', 'member-2', 'auditor', 'Removable Auditor'))
+  await mockCase(page, 'case-b')
+  const gate = deferred()
+  await page.route((url) => url.pathname === '/api/v1/review-cases/case-b', async (route) => {
+    await gate.promise
+    return fulfillJson(route, 404, { detail: 'ReviewCase not found' })
+  })
+  await page.goto('/review-cases/case-a')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('listitem').filter({ hasText: 'Removable Auditor' }).getByRole('button', { name: /移除/ }).click()
+  await expect(page.getByRole('dialog', { name: '移除成员' })).toBeVisible()
+
+  await page.evaluate(`history.pushState({}, '', '/review-cases/case-b'); dispatchEvent(new PopStateEvent('popstate'))`)
+  await expect(page.getByRole('dialog', { name: '移除成员' })).toHaveCount(0)
+  gate.resolve()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByText('Removable Auditor')).toHaveCount(0)
+  await page.waitForTimeout(300)
+  expect(a.removes).toEqual([])
+})
+
+test('添加成员：请求未完成时关闭再重开 Drawer，表单完整重置，且不会产生第二个 POST', async ({ page }) => {
+  const state = await mockCase(page, 'case-lock')
+  const gate = deferred()
+  state.addGate = gate.promise
+  await page.goto('/review-cases/case-lock')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await expect(team.getByText('Team Lead')).toBeVisible()
+
+  await team.getByRole('button', { name: '添加成员' }).click()
+  let drawer = page.getByRole('dialog', { name: '添加成员' })
+  await drawer.getByLabel('团队角色').click()
+  await page.getByTitle('复核员', { exact: true }).last().click()
+  await pickCandidate(page, drawer, 'Cand', 'Candidate One')
+  await drawer.getByRole('button', { name: '添加成员' }).click()
+  await expect.poll(() => state.postCount).toBe(1)
+
+  await drawer.getByRole('button', { name: /Close|关闭/ }).first().click()
+  await expect(page.getByRole('dialog', { name: '添加成员' })).toHaveCount(0)
+  await team.getByRole('button', { name: '添加成员' }).click()
+  drawer = page.getByRole('dialog', { name: '添加成员' })
+  // 重开后角色回到默认值、成员为空；搜索使用的也是这个默认角色。
+  await expect(drawer.getByTitle('审查组长')).toBeVisible()
+  await expect(drawer.getByTitle('Candidate One')).toHaveCount(0)
+  await expect.poll(() => state.candidateQueries.at(-1)).toBe('lead:')
+
+  // 旧写请求仍在途：重开的会话里表单保持禁用，无法再提交同一个成员。
+  await expect(drawer.getByLabel('成员')).toBeDisabled()
+  await expect(drawer.getByRole('button', { name: '添加成员' })).toBeDisabled()
+  await page.waitForTimeout(300)
+  expect(state.postCount).toBe(1)
+
+  gate.resolve()
+  await expect(team.getByText('Added Candidate')).toBeVisible()
+  expect(state.postCount).toBe(1)
+  // 旧请求的结果不应关闭新开的会话。
+  await expect(page.getByRole('dialog', { name: '添加成员' })).toBeVisible()
+})
+
+test('添加成员：候选搜索返回 403 后，已选候选人姓名也被清空', async ({ page }) => {
+  await mockCase(page, 'case-clear')
+  await page.goto('/review-cases/case-clear')
+  await page.getByRole('button', { name: '添加成员' }).click()
+  const drawer = page.getByRole('dialog', { name: '添加成员' })
+  await pickCandidate(page, drawer, '', 'Candidate One')
+  await expect(drawer.getByTitle('Candidate One')).toBeVisible()
+
+  await page.route((url) => url.pathname === '/api/v1/review-cases/case-clear/member-candidates', (route) =>
+    fulfillJson(route, 403, { detail: 'forbidden' }),
+  )
+  await drawer.getByLabel('成员').fill('x')
+  await expect(drawer.getByRole('alert')).toContainText('当前用户没有管理审查团队的权限。')
+  await expect(page.getByText('Candidate One')).toHaveCount(0)
+  await expect(page.getByText('Candidate Two')).toHaveCount(0)
+})
+
+test('移除自己的最后一个角色后重新确认主授权，403 时立即移除全部受保护内容', async ({ page }) => {
+  const state = await mockCase(page, 'case-self')
+  state.members.push(member('case-self', 'other-lead', 'lead', 'Other Lead'))
+  await page.route((url) => url.pathname === '/api/v1/review-cases/case-self/findings', (route) =>
+    fulfillJson(route, 200, [{ id: 'f1', organization_id: user.organization_id, case_id: 'case-self', title: 'Visible Finding', description: null, severity: 'high', lifecycle: 'rectifying', scenario_data: {}, raised_by: user.id, raised_at: '2026-08-22T00:00:00Z' }]),
+  )
+  await page.route((url) => url.pathname === '/api/v1/management/review-cases/case-self/progress', (route) =>
+    fulfillJson(route, 200, { as_of: '2026-08-28T10:00:00Z', case: { id: 'case-self', review_plan_id: null, title: 'x', scenario_key: 'process_review', scenario_version: 1, lifecycle: 'in_progress', planned_start_at: null, planned_end_at: null, deadline_bucket: 'none', findings: { total: 1, open: 0, rectifying: 1, verifying: 0, closed: 0, voided: 0 }, actions: { total: 0, todo: 0, in_progress: 0, done: 0, cancelled: 0, overdue: 0, due_soon: 0 } }, findings: [], overdue_actions: [], due_soon_actions: [] }),
+  )
+  await page.goto('/review-cases/case-self')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await expect(page.getByText('Visible Finding')).toBeVisible()
+  await expect(page.getByText('整改项已逾期')).toBeVisible()
+
+  // 删除成功之后，服务端不再允许当前用户访问这个活动。
+  for (const suffix of ['', '/members', '/findings', '/activities']) {
+    await page.route((url) => url.pathname === `/api/v1/review-cases/case-self${suffix}`, (route) =>
+      route.request().method() === 'DELETE' ? route.fallback() : fulfillJson(route, 403, { detail: 'forbidden' }),
+    )
+  }
+  await page.route((url) => url.pathname === '/api/v1/management/review-cases/case-self/progress', (route) =>
+    fulfillJson(route, 403, { detail: 'forbidden' }),
+  )
+  await team.getByRole('listitem').filter({ hasText: 'Team Lead' }).getByRole('button', { name: /移除/ }).click()
+  await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
+
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByText('Team Case case-self')).toHaveCount(0)
+  await expect(page.getByText('Visible Finding')).toHaveCount(0)
+  await expect(page.getByText('整改项已逾期')).toHaveCount(0)
+  await expect(page.getByText('Other Lead')).toHaveCount(0)
+})

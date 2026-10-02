@@ -147,8 +147,8 @@ export function ReviewCaseCollectionPage() {
             scroll={{ x: 'max-content' }}
             locale={{ emptyText }}
             pagination={{
-              current: Math.floor(requestedOffset / requestedLimit) + 1,
-              pageSize: requestedLimit,
+              current: Math.floor(data.offset / data.limit) + 1,
+              pageSize: data.limit,
               total: data.total,
               showSizeChanger: false,
               hideOnSinglePage: true,

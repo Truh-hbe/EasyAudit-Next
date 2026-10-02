@@ -1,5 +1,5 @@
 import { Alert, Button, Card, Descriptions, Empty, Flex, Result, Timeline, Typography } from 'antd'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
@@ -188,8 +188,32 @@ export function ReviewCaseDetailPage() {
   const [findings, setFindings] = useState<SectionState<FindingResponse[]>>(idleSection)
   const [activities, setActivities] = useState<SectionState<ReviewCaseActivityResponse[]>>(idleSection)
   const [management, setManagement] = useState<SectionState<ManagementCaseProgressResponse>>(idleSection)
+  const recheckSequence = useRef(0)
+
+  // 静默重新确认主授权（不进入加载态，不卸载页面）：团队变更可能撤销当前用户自己的访问权，
+  // 从属接口被拒绝也说明授权可能已变。403/404 立即移除全部受保护内容；其他错误保持现状。
+  const recheckAuthorization = useCallback((checkedCaseId: string) => {
+    recheckSequence.current += 1
+    const sequence = recheckSequence.current
+    void getReviewCase(checkedCaseId)
+      .then((data) => {
+        if (recheckSequence.current !== sequence) return
+        setPrimary((current) =>
+          current.status === 'ready' && current.caseId === checkedCaseId
+            ? { status: 'ready', caseId: checkedCaseId, data }
+            : current,
+        )
+      })
+      .catch((error: unknown) => {
+        if (recheckSequence.current !== sequence || !unavailable(error)) return
+        setPrimary((current) =>
+          current.caseId === checkedCaseId ? { status: 'unavailable', caseId: checkedCaseId } : current,
+        )
+      })
+  }, [])
 
   useEffect(() => {
+    recheckSequence.current += 1
     setMembers(idleSection)
     setFindings(idleSection)
     setActivities(idleSection)
@@ -241,6 +265,7 @@ export function ReviewCaseDetailPage() {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
+        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
         setMembers(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -260,6 +285,7 @@ export function ReviewCaseDetailPage() {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
+        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
         setActivities(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -288,6 +314,7 @@ export function ReviewCaseDetailPage() {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
+        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
         setFindings(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -307,6 +334,7 @@ export function ReviewCaseDetailPage() {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
+        if (unavailable(error)) recheckAuthorization(authorizedCaseId)
         setManagement(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -437,7 +465,10 @@ export function ReviewCaseDetailPage() {
         membersLoading={memberState.status === 'loading' || memberState.status === 'idle'}
         membersUnavailable={memberState.status === 'unavailable'}
         membersError={memberState.status === 'error' ? memberState.message : null}
-        onTeamChanged={() => setTeamRevision((value) => value + 1)}
+        onTeamChanged={() => {
+          setTeamRevision((value) => value + 1)
+          recheckAuthorization(reviewCase.id)
+        }}
         onAccessLost={() => setRevision((value) => value + 1)}
       />
       <ActivitySection state={activityState} members={memberData} />
