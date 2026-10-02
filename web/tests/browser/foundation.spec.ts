@@ -333,7 +333,7 @@ test('ReviewCase collection uses the server envelope for pagination and never re
   })
 
   await page.goto('/review-cases?limit=2&offset=0')
-  await expect(page.getByText('正在读取审查活动…')).toBeVisible()
+  await expect(page.getByText('正在读取审查活动')).toBeVisible()
   firstPageGate.resolve()
   await expect(page.getByText('Visible A')).toBeVisible()
   await expect(page.getByText('Visible B')).toBeVisible()
@@ -389,9 +389,9 @@ test('ReviewCase primary authorization failure prevents all subordinate reads an
   })
 
   await page.goto('/review-cases/blocked')
-  await expect(page.getByText('正在确认访问权限…')).toBeVisible()
+  await expect(page.getByText('正在确认访问权限')).toBeVisible()
   caseGate.resolve()
-  await expect(page.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   await expect(page.getByText('Foundation Case')).toHaveCount(0)
   expect(subordinateRequests).toBe(0)
 })
@@ -444,11 +444,11 @@ test('ReviewCase route change binds rendered and subordinate state to the newly 
   `)
 
   await expect(page).toHaveURL(/\/review-cases\/case-b$/)
-  await expect(page.getByText('正在确认访问权限…')).toBeVisible()
+  await expect(page.getByText('正在确认访问权限')).toBeVisible()
   await expect(page.getByText('Authorized Case A')).toHaveCount(0)
   await expect(page.getByText('Case A Member')).toHaveCount(0)
   caseBGate.resolve()
-  await expect(page.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   expect(blockedSubordinateRequests).toBe(0)
 })
 
@@ -500,7 +500,7 @@ test('visible process_review@1 Case renders Case-scoped identity, Findings, serv
   await expect(page.getByRole('link', { name: 'Visible Finding' })).toHaveAttribute('href', '/findings/finding-real')
   await expect(page.getByText('创建审查活动')).toBeVisible()
   await expect(page.getByText('整改项已逾期')).toBeVisible()
-  await expect(page.locator('.compact-facts > div', { hasText: '整改项已逾期' }).locator('dd')).toHaveText('1')
+  await expect(page.getByText('整改项已逾期', { exact: true }).locator('..')).toHaveText(/整改项已逾期\s*[:：]?\s*1$/)
   await expect(page.getByText('metadata')).toHaveCount(0)
 })
 
@@ -658,11 +658,11 @@ test.describe('device time zone differs from the display time zone', () => {
 test('legacy element styles stay inside legacy page containers and never cross the ui-modern boundary', async ({ page }) => {
   await stubReadySession(page)
   // 选用仍为遗留容器（.surface-page）的页面；每迁移完一页，这里要换成下一个尚未迁移的页面。
-  await page.route('**/api/v1/review-cases**', (route) =>
-    fulfillJson(route, 200, { items: [], total: 0, limit: 20, offset: 0 }),
+  await page.route('**/api/v1/management/review-cases/legacy-sample/progress', (route) =>
+    fulfillJson(route, 404, { detail: 'Not found' }),
   )
-  await page.goto('/review-cases')
-  await expect(page.getByRole('heading', { name: '审查活动' })).toBeVisible()
+  await page.goto('/management/review-cases/legacy-sample')
+  await expect(page.getByRole('heading', { name: '管理进度不可用' })).toBeVisible()
 
   const styles = await page.evaluate(() => {
     const browser = globalThis as unknown as {
