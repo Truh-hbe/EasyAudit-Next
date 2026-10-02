@@ -1,4 +1,4 @@
-import { App as AntApp, ConfigProvider, Descriptions, Form, Typography } from 'antd'
+import { App as AntApp, ConfigProvider, Descriptions, Form, Input, Typography } from 'antd'
 import { createRoot } from 'react-dom/client'
 
 import { appTheme } from '../../../src/app/theme'
@@ -7,13 +7,13 @@ import { appTheme } from '../../../src/app/theme'
 function Sample({ prefix }: { prefix: 'white' | 'layout' }) {
   return (
     <div
-      data-contrast-probe
+      data-contrast-probe={prefix}
       style={{ background: prefix === 'white' ? '#ffffff' : '#f5f7fb', padding: 16 }}
     >
       <Typography.Text type="secondary">{`${prefix}-secondary`}</Typography.Text>
       <Form layout="vertical">
         <Form.Item label="字段" extra={`${prefix}-extra`}>
-          <input />
+          <Input.Password />
         </Form.Item>
       </Form>
       <Descriptions items={[{ key: 'k', label: `${prefix}-label`, children: '值' }]} bordered />

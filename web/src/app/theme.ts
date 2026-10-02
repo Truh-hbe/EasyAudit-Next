@@ -15,6 +15,10 @@ export const appTheme: ThemeConfig = {
     // colorTextDescription，默认等于 tertiary（45% 不透明度，白底 2.8:1）。
     // 对齐 secondary（65%）：白底 5.1:1，#f5f7fb 上 5.0:1。
     colorTextDescription: 'rgba(23, 32, 51, 0.65)',
+    // antd 内置交互图标（Input.Password 切换、各类关闭/清除按钮、Select 箭头）读 colorIcon，
+    // 默认等于 tertiary（白底 2.8:1），低于 WCAG 1.4.11 的 3:1。55%：白底 3.7:1，#f5f7fb 上 3.7:1。
+    // colorIconHover 沿用默认（colorText，更深），不需要覆盖。
+    colorIcon: 'rgba(23, 32, 51, 0.55)',
     borderRadius: 8,
     fontFamily:
       '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif',

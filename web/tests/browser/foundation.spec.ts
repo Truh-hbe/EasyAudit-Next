@@ -754,7 +754,7 @@ test('auth page text, placeholder, alert and link colors meet WCAG AA contrast',
   console.log('auth contrast', JSON.stringify(ratios))
 })
 
-test('antd description text meets WCAG AA contrast on white and layout backgrounds', async ({ page }) => {
+test('antd description text and built-in icons meet WCAG contrast on white and layout backgrounds', async ({ page }) => {
   await stubAnonymous(page)
   await page.goto('/login')
   await page.evaluate(async () => {
@@ -774,6 +774,21 @@ test('antd description text meets WCAG AA contrast on white and layout backgroun
   for (const [name, ratio] of Object.entries(ratios)) {
     expect(ratio, name).toBeGreaterThanOrEqual(4.5)
   }
+  // antd 内置交互图标（此处以 Input.Password 的显示/隐藏按钮为代表）按 WCAG 1.4.11 需 ≥ 3:1，hover 不能更淡。
+  const iconTargets = (suffix: string) => ({
+    [`icon on white${suffix}`]: { selector: '[data-contrast-probe="white"] .ant-input-password-icon' },
+    [`icon on layout${suffix}`]: { selector: '[data-contrast-probe="layout"] .ant-input-password-icon' },
+  })
+  const icons = await page.evaluate(measureContrast, iconTargets(''))
+  await page.locator('[data-contrast-probe="white"] .ant-input-password-icon').hover()
+  const iconsHover = await page.evaluate(measureContrast, {
+    'icon hover on white': iconTargets('')['icon on white'],
+  })
+  expect(iconsHover['icon hover on white'], 'icon hover on white').toBeGreaterThanOrEqual(icons['icon on white'])
+  for (const [name, ratio] of Object.entries({ ...icons, ...iconsHover })) {
+    expect(ratio, name).toBeGreaterThanOrEqual(3)
+  }
+  console.log('icon contrast', JSON.stringify({ ...icons, ...iconsHover }))
   console.log('description contrast', JSON.stringify(ratios))
 })
 
