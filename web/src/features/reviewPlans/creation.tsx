@@ -58,7 +58,7 @@ export function unknownOutcomeMessage(subject: string, retryLabel: string, error
   const wait = error instanceof ApiError ? waitHint(error) : ''
   return [
     `${subject}创建结果未知：未确认是否成功。`,
-    `可以点“${retryLabel}”：重新提交会沿用这次创建请求，不会重复创建；也可以先返回审查活动列表核对。系统不会自动再次提交。`,
+    `可以点“${retryLabel}”：重新提交会沿用这次创建请求，不会重复创建；也可以在新标签页中打开审查活动列表核对，本页的内容和这次创建请求会保留。系统不会自动再次提交。`,
     wait,
   ].filter((part) => part !== '').join('')
 }

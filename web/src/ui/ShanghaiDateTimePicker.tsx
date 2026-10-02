@@ -1,24 +1,13 @@
-import { DatePicker } from 'antd'
-import dayjs from 'dayjs'
 import type { Dayjs } from 'dayjs'
-import utc from 'dayjs/plugin/utc'
 import type { FocusEvent, KeyboardEvent } from 'react'
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
 
 import { DISPLAY_DATE_TIME_TEXT_FORMAT as FORMAT } from '../product/format'
+import { WallTimePicker, wallTimeGenerateConfig } from './wallTimeGenerateConfig'
 
-dayjs.extend(utc)
-
-const WALL_TEXT = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/
-
-// 文本 → 选择器的值。用 UTC 模式的 dayjs 承载墙上时间：UTC 没有夏令时空洞，设备时区不会改动它。
-// 不是真实存在的日期（如 02/30）返回 undefined，由表单校验报错。
+// 文本 → 面板的值（UTC 承载的墙上时间）。严格解析：越界或不存在的日期（02/30、12:99）返回 undefined。
 function toPickerValue(text: string | undefined): Dayjs | undefined {
-  const match = WALL_TEXT.exec(text ?? '')
-  if (match === null) return undefined
-  const [year, month, day, hour, minute] = match.slice(1).map(Number) as [number, number, number, number, number]
-  const value = dayjs.utc(Date.UTC(year, month - 1, day, hour, minute))
-  return value.year() === year && value.month() === month - 1 && value.date() === day ? value : undefined
+  return wallTimeGenerateConfig.locale.parse('zh_CN', text ?? '', [FORMAT]) ?? undefined
 }
 
 export interface ShanghaiDateTimePickerProps {
@@ -26,16 +15,30 @@ export interface ShanghaiDateTimePickerProps {
   value?: string
   onChange?: (text: string) => void
   id?: string
+  // Form.Item 会用自己的错误 id 覆盖元素上的 aria-describedby，所以说明文字的 id 走单独的 prop，与注入的 id 合并。
   'aria-describedby'?: string
+  hintId?: string
 }
 
 // 按上海时间输入的日期时间选择器。
-// 直接使用 DatePicker 有两个问题：键入的文本由设备时区的 dayjs 解析——无效日期，以及设备夏令时空洞里的时刻，
-// 会被静默丢弃并回退为旧值；日期框里按 Enter 还会提交整个表单。所以把键入的原始文本作为事实来源：
-// 提交（Enter、失焦）时把文本原样交给表单校验，选择器只负责展示和面板选择。
-export function ShanghaiDateTimePicker({ value, onChange, id, 'aria-describedby': describedBy }: ShanghaiDateTimePickerProps) {
+// 直接使用 DatePicker 有三个问题：面板和键入的文本都由设备时区的 dayjs 处理——设备夏令时空洞里的时刻会被改成别的值，
+// “此刻”是设备的当地时间；无效文本会被清空或归一化成另一个时刻；日期框里按 Enter 还会提交整个表单。所以：
+// - 面板用 UTC 承载墙上时间的 generateConfig（见 wallTimeGenerateConfig），“此刻”取上海当前的墙上时间；
+// - 键入的原始文本是事实来源：Enter、失焦时原样交给表单校验，无效时输入框保留原文（preserveInvalidOnBlur），
+//   面板保持上一个有效值；
+// - 日期框里的 Enter 只确认日期，不提交表单。
+// 时区解释只发生在提交时：format.ts 按 Asia/Shanghai 转换，不存在的时刻照样拒绝。
+export function ShanghaiDateTimePicker({ value, onChange, id, 'aria-describedby': injectedDescribedBy, hintId }: ShanghaiDateTimePickerProps) {
   // 自上次同步以来键入的原始文本；null 表示没有待提交的键入。
+  const describedBy = [injectedDescribedBy, hintId].filter((part) => part !== undefined && part !== '').join(' ') || undefined
   const typed = useRef<string | null>(null)
+  // 面板的值：文本有效时跟随文本，无效时保持上一个有效值，清空时为空。
+  const lastValid = useRef<Dayjs | undefined>(undefined)
+  const pickerValue = useMemo(() => {
+    if ((value ?? '') === '') lastValid.current = undefined
+    else lastValid.current = toPickerValue(value) ?? lastValid.current
+    return lastValid.current
+  }, [value])
 
   function commitTyped() {
     if (typed.current === null) return
@@ -58,12 +61,13 @@ export function ShanghaiDateTimePicker({ value, onChange, id, 'aria-describedby'
         if (event.target instanceof HTMLInputElement) commitTyped()
       }}
     >
-      <DatePicker
+      <WallTimePicker
         id={id}
         aria-describedby={describedBy}
-        value={toPickerValue(value)}
+        value={pickerValue}
         showTime={{ format: 'HH:mm' }}
         format={FORMAT}
+        preserveInvalidOnBlur
         onChange={(picked: Dayjs | null) => {
           // 面板选择或清除：以选中的墙上时间为准，丢弃待提交的键入。
           typed.current = null

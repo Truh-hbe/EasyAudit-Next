@@ -18,14 +18,22 @@ export function caseCreateFieldId(name: string): string {
 
 export function CaseCreateTextField({ name, label, value, onChange, disabled, error }: CaseCreateTextFieldProps) {
   const id = caseCreateFieldId(name)
+  const errorId = `${id}-error`
   return (
     <Form.Item
       label={label}
       htmlFor={id}
       validateStatus={error === undefined ? undefined : 'error'}
-      help={error === undefined ? undefined : <FieldError>{error}</FieldError>}
+      help={error === undefined ? undefined : <FieldError id={errorId}>{error}</FieldError>}
     >
-      <Input id={id} value={value} onChange={(event) => onChange(name, event.target.value)} disabled={disabled} />
+      <Input
+        id={id}
+        aria-invalid={error === undefined ? undefined : true}
+        aria-describedby={error === undefined ? undefined : errorId}
+        value={value}
+        onChange={(event) => onChange(name, event.target.value)}
+        disabled={disabled}
+      />
     </Form.Item>
   )
 }

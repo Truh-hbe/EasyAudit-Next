@@ -359,7 +359,7 @@ export function ReviewCaseCreatePage() {
                 type="warning"
                 showIcon
                 title={submitState.message}
-                action={<Link to="/review-cases">返回审查活动，查看是否已创建</Link>}
+                action={<Link to="/review-cases" target="_blank" rel="noopener noreferrer">在新标签页核对是否已创建</Link>}
                 className="wizard-alert"
               />
             ) : null}

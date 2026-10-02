@@ -47,6 +47,11 @@ function wallTimeAsUtc([year, month, day, hour, minute, second]: WallTime): numb
   return Date.UTC(year, month - 1, day, hour, minute, second)
 }
 
+// 此刻在展示时区的墙上时间（年、月、日、时、分、秒）；日期选择器的“此刻”用它，而不是设备的当地时间。
+export function displayZoneNowWallTime(): WallTime {
+  return displayZoneWallTime(Date.now())
+}
+
 // 某一 UTC 时刻在展示时区的偏移（毫秒），由 Intl 计算，不写死 +08:00。
 function displayZoneOffset(utcMs: number): number {
   return wallTimeAsUtc(displayZoneWallTime(utcMs)) - (utcMs - (utcMs % 1000))

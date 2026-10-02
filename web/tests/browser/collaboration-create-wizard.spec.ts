@@ -128,7 +128,7 @@ test.describe('plan step: idempotent creation', () => {
   })
 
   for (const outcome of ['abort', 'server-error'] as const) {
-    test(`unknown outcome (${outcome}): says it is unconfirmed, keeps draft and key, never replays by itself`, async ({ page }) => {
+    test(`unknown outcome (${outcome}): says it is unconfirmed, keeps draft and key, checks in a new tab, never replays by itself`, async ({ page }) => {
       await stubShell(page)
       const requests = await stubCreate(page, 'review-plans', [outcome], { id: 'plan-1', title: '向导计划' })
       await fillPlan(page)
@@ -140,9 +140,18 @@ test.describe('plan step: idempotent creation', () => {
       await page.waitForTimeout(1500)
       expect(requests).toHaveLength(1)
 
-      // 打开再关闭日期面板（展示组件的挂载与卸载）不影响草稿和键。
-      await page.getByLabel('计划开始时间（可选）').click()
-      await page.keyboard.press('Escape')
+      // 核对入口在新标签页打开，本页保持挂载：草稿和键都还在。
+      const check = page.getByRole('link', { name: '在新标签页核对审查活动' })
+      await expect(check).toHaveAttribute('target', '_blank')
+      await expect(check).toHaveAttribute('rel', /noopener/)
+      const opened = page.context().waitForEvent('page')
+      await check.click()
+      const checkPage = await opened
+      await checkPage.waitForURL(/\/review-cases$/)
+      await checkPage.close()
+      await expect(page.getByLabel('计划名称')).toHaveValue('向导计划')
+      await expect(page.getByLabel('计划开始时间（可选）')).toHaveValue('2026/08/28 18:00')
+      expect(requests).toHaveLength(1)
       await page.getByRole('button', { name: '重试保存计划' }).click()
       await expect(page).toHaveURL(/\/review-plans\/plan-1\/review-cases\/new$/)
       expect(requests).toHaveLength(2)
@@ -253,24 +262,114 @@ test.describe('plan step: dates are Asia/Shanghai wall time on any device', () =
       })
     })
   }
+})
 
-  test.describe('panel selection', () => {
-    test.use({ timezoneId: 'America/New_York' })
+// 面板的时间列没有语义角色或标签可供定位，这里只能按列取单元格。
+async function pickPanelTime(page: Page, hour: string, minute: string) {
+  const columns = page.locator('.ant-picker-time-panel-column')
+  await columns.nth(0).getByText(hour, { exact: true }).click()
+  await columns.nth(1).getByText(minute, { exact: true }).click()
+}
 
-    test('"此刻" in the panel is read as the wall time shown, not as a device-zone instant', async ({ page }) => {
-      await page.clock.setFixedTime(new Date('2026-08-28T10:30:00+08:00'))
-      await stubShell(page)
-      const requests = await stubCreate(page, 'review-plans', [], { id: 'plan-1', title: '面板计划' })
-      await page.goto('/review-plans/new')
-      await page.getByLabel('计划名称').fill('面板计划')
-      await page.getByLabel('计划开始时间（可选）').click()
-      await page.getByText('此刻').click()
-      // 设备时区（纽约）此刻是 08/27 22:30；面板给出的墙上时间按上海时间解释。
-      await expect(page.getByLabel('计划开始时间（可选）')).toHaveValue('2026/08/27 22:30')
-      await page.getByRole('button', { name: '保存计划并继续' }).click()
-      await expect.poll(() => requests.length).toBe(1)
-      expect(requests[0].body).toMatchObject({ planned_start_at: '2026-08-27T14:30:00.000Z' })
+test.describe('plan step: calendar panel is Asia/Shanghai wall time on any device', () => {
+  for (const timezoneId of ['America/New_York', 'Asia/Shanghai', 'Pacific/Auckland']) {
+    test.describe(timezoneId, () => {
+      test.use({ timezoneId })
+
+      test('"此刻" is the current Shanghai wall time, whatever the device zone', async ({ page }) => {
+        // 同一个真实时刻：上海 2026-08-28 10:30（UTC 02:30）。
+        await page.clock.setFixedTime(new Date('2026-08-28T10:30:00+08:00'))
+        await stubShell(page)
+        const requests = await stubCreate(page, 'review-plans', [], { id: 'plan-1', title: '面板计划' })
+        await page.goto('/review-plans/new')
+        await page.getByLabel('计划名称').fill('面板计划')
+        await page.getByLabel('计划开始时间（可选）').click()
+        await page.getByText('此刻').click()
+        await expect(page.getByLabel('计划开始时间（可选）')).toHaveValue('2026/08/28 10:30')
+        await page.getByRole('button', { name: '保存计划并继续' }).click()
+        await expect.poll(() => requests.length).toBe(1)
+        expect(requests[0].body).toMatchObject({ planned_start_at: '2026-08-28T02:30:00.000Z' })
+      })
+
+      test('picking from the panel on an empty field, including a device DST gap time', async ({ page }) => {
+        await page.clock.setFixedTime(new Date('2026-03-05T12:00:00+08:00'))
+        await stubShell(page)
+        const requests = await stubCreate(page, 'review-plans', [], { id: 'plan-1', title: '面板计划' })
+        await page.goto('/review-plans/new')
+        await page.getByLabel('计划名称').fill('面板计划')
+        await page.getByLabel('计划开始时间（可选）').click()
+        // 2026-03-08 02:30 落在美国夏令时空洞里；面板不能把它改成 03:30。
+        await page.getByTitle('2026-03-08').click()
+        await pickPanelTime(page, '02', '30')
+        await page.getByRole('button', { name: '确 定' }).click()
+        await expect(page.getByLabel('计划开始时间（可选）')).toHaveValue('2026/03/08 02:30')
+        await page.getByRole('button', { name: '保存计划并继续' }).click()
+        await expect.poll(() => requests.length).toBe(1)
+        expect(requests[0].body).toMatchObject({ planned_start_at: '2026-03-07T18:30:00.000Z' })
+      })
+
+      test('picking from the panel on a field that already has a value', async ({ page }) => {
+        await stubShell(page)
+        const requests = await stubCreate(page, 'review-plans', [], { id: 'plan-1', title: '面板计划' })
+        await page.goto('/review-plans/new')
+        await page.getByLabel('计划名称').fill('面板计划')
+        await enterDateTime(page, '计划开始时间（可选）', '2026/03/08 18:00')
+        await page.getByLabel('计划开始时间（可选）').click()
+        await pickPanelTime(page, '02', '30')
+        await page.getByRole('button', { name: '确 定' }).click()
+        await expect(page.getByLabel('计划开始时间（可选）')).toHaveValue('2026/03/08 02:30')
+        await page.getByRole('button', { name: '保存计划并继续' }).click()
+        await expect.poll(() => requests.length).toBe(1)
+        expect(requests[0].body).toMatchObject({ planned_start_at: '2026-03-07T18:30:00.000Z' })
+      })
     })
+  }
+})
+
+test.describe('plan step: invalid date text is never cleared or rewritten', () => {
+  test('the typed text stays through blur, refocus and submit; fixing it clears the error and syncs the panel', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-plans', [], { id: 'plan-1', title: '向导计划' })
+    await page.goto('/review-plans/new')
+    await page.getByLabel('计划名称').fill('向导计划')
+    const end = page.getByLabel('计划结束时间（可选）')
+    const message = page.getByText('计划结束时间无效：请填写存在的上海时间（Asia/Shanghai）。')
+    for (const text of ['2026/02/30 10:00', '2026/08/28 12:99']) {
+      await end.fill(text)
+      await end.press('Tab')
+      await expect(end).toHaveValue(text)
+      await expect(message).toBeVisible()
+      await end.focus()
+      await expect(end).toHaveValue(text)
+      await page.getByRole('button', { name: '保存计划并继续' }).click()
+      await expect(end).toHaveValue(text)
+      await expect(message).toBeVisible()
+      await expect(end).toBeFocused()
+      expect(requests).toHaveLength(0)
+    }
+
+    await enterDateTime(page, '计划结束时间（可选）', '2026/08/28 18:00')
+    await expect(message).toHaveCount(0)
+    // 面板已同步到新的有效值：只改小时，日期和分钟沿用。
+    await end.click()
+    await pickPanelTime(page, '09', '00')
+    await page.getByRole('button', { name: '确 定' }).click()
+    await expect(end).toHaveValue('2026/08/28 09:00')
+    await page.getByRole('button', { name: '保存计划并继续' }).click()
+    await expect.poll(() => requests.length).toBe(1)
+    expect(requests[0].body).toMatchObject({ planned_end_at: '2026-08-28T01:00:00.000Z' })
+  })
+
+  test('the error keeps the time zone hint in the accessible description', async ({ page }) => {
+    await stubShell(page)
+    await page.goto('/review-plans/new')
+    await page.getByLabel('计划名称').fill('向导计划')
+    const start = page.getByLabel('计划开始时间（可选）')
+    await expect(start).toHaveAccessibleDescription('以下时间均按上海时间（Asia/Shanghai）填写和显示。')
+    await enterDateTime(page, '计划开始时间（可选）', '1986/05/04 02:30')
+    await page.getByRole('button', { name: '保存计划并继续' }).click()
+    await expect(start).toHaveAccessibleDescription(/无效/)
+    await expect(start).toHaveAccessibleDescription(/以下时间均按上海时间/)
   })
 })
 
@@ -316,6 +415,18 @@ test.describe('case step', () => {
     await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
     await expect(page.getByLabel('区域代码')).toHaveValue('area-a')
 
+    // 核对入口在新标签页打开，本页保持挂载：草稿和键都还在。
+    const check = page.getByRole('link', { name: '在新标签页核对是否已创建' })
+    await expect(check).toHaveAttribute('target', '_blank')
+    await expect(check).toHaveAttribute('rel', /noopener/)
+    const opened = page.context().waitForEvent('page')
+    await check.click()
+    const checkPage = await opened
+    await checkPage.waitForURL(/\/review-cases$/)
+    await checkPage.close()
+    await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
+    expect(requests).toHaveLength(1)
+
     await page.getByRole('button', { name: '重试创建审查活动' }).click()
     await expect(page).toHaveURL(/\/review-cases\/case-1$/)
     expect(requests).toHaveLength(2)
@@ -356,11 +467,18 @@ test.describe('case step', () => {
     await expect(page.getByText('area_code must not contain surrounding whitespace')).toBeVisible()
     // 按适配器的字段顺序，第一个有错的字段是区域代码。
     await expect(page.getByLabel('区域代码')).toBeFocused()
+    // 错误文案关联到输入框，读屏能读到。
+    const area = page.getByLabel('区域代码')
+    await expect(area).toHaveAttribute('aria-invalid', 'true')
+    await expect(area).toHaveAccessibleDescription('area_code must not contain surrounding whitespace')
+    await expect(page.getByLabel('审查类型')).toHaveAttribute('aria-invalid', 'true')
+    await expect(page.getByLabel('审查类型')).toHaveAccessibleDescription('review_type must be a non-blank string')
     await expect(page.getByRole('alert')).toHaveCount(0)
     await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
 
     await page.getByLabel('区域代码').fill('area-b')
     await expect(page.getByText('area_code must not contain surrounding whitespace')).toHaveCount(0)
+    await expect(area).not.toHaveAttribute('aria-invalid', 'true')
     await page.getByRole('button', { name: '创建审查活动' }).click()
     await expect.poll(() => requests.length).toBe(2)
     expect(requests[1].key).toBe(requests[0].key)

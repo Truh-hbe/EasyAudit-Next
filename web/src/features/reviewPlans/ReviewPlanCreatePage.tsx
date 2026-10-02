@@ -190,10 +190,10 @@ export function ReviewPlanCreatePage() {
             </Form.Item>
             <Typography.Paragraph id={TIME_ZONE_HINT_ID} type="secondary">{DISPLAY_TIME_ZONE_HINT}</Typography.Paragraph>
               <Form.Item label="计划开始时间（可选）" name="planned_start_at" {...serverError(serverErrors, 'planned_start_at')} rules={timeRules('计划开始时间')}>
-                <ShanghaiDateTimePicker aria-describedby={TIME_ZONE_HINT_ID} />
+                <ShanghaiDateTimePicker hintId={TIME_ZONE_HINT_ID} />
               </Form.Item>
               <Form.Item label="计划结束时间（可选）" name="planned_end_at" {...serverError(serverErrors, 'planned_end_at')} rules={timeRules('计划结束时间')}>
-                <ShanghaiDateTimePicker aria-describedby={TIME_ZONE_HINT_ID} />
+                <ShanghaiDateTimePicker hintId={TIME_ZONE_HINT_ID} />
               </Form.Item>
             {submitState.status === 'rejected' && submitState.message !== '' ? (
               <Alert type="error" showIcon title={submitState.message} className="wizard-alert" />
@@ -203,7 +203,7 @@ export function ReviewPlanCreatePage() {
                 type="warning"
                 showIcon
                 title={submitState.message}
-                action={<Link to="/review-cases">返回审查活动，查看服务器结果</Link>}
+                action={<Link to="/review-cases" target="_blank" rel="noopener noreferrer">在新标签页核对审查活动</Link>}
                 className="wizard-alert"
               />
             ) : null}
