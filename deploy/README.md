@@ -253,11 +253,24 @@ $DC run --rm --no-deps -T api easyaudit-next verify-evidence [--organization-id 
 ```
 
 - `cleanup-evidence-orphans` 输出 `scanned`、`orphans`（含还太年轻的）、`deleted`、`kept_young`、`multipart_stale`、`multipart_aborted`、`skipped_referenced`、`failed`、`max_delete`、`deleted_but_registered`、`refused`；`failed`、`refused`、`deleted_but_registered` 任一非零时退出码为 1。`deploy/easyaudit-cleanup-evidence-orphans.service/.timer` 是每天一次的 systemd 示例（安装方式同备份）。从备份恢复后，bucket 比数据库引用的多出一些对象（见"备份"的一致性说明），它们在 min-age 之后被这个命令清理。
-- **三条整体拒绝保护**（非 dry-run；先完整列举、算出完整候选集，再决定是否开始删除，任何一条触发就一个对象都不删、也不中止 multipart，退出码 1，JSON `refused` 写原因）：
-  1. `no_evidence_rows`：数据库 `evidences` 是 0 行而桶里有 evidence 对象——几乎肯定连错了库，或恢复没有完成。先确认 `DATABASE_URL` 指向正确的库、恢复已完成，再重跑。
-  2. `revision_mismatch`：数据库的 alembic revision 不等于当前代码的 head——先 `$DC run --rm migrate`（或确认镜像与数据库是同一个 release）。
-  3. `too_many_deletions`：要删的对象数超过 `--max-delete`（默认 100）。正常孤儿很少，一次很多说明出问题；先用 `--dry-run` 看清是什么，确认确实该删之后用 `--max-delete N` 调大上限重跑。
-- **保护是启发式的，不绑定部署身份**：部署需确保 CLI 使用的数据库与对象存储配置属于同一环境；错桶 + 同 revision + 候选数不超限时，这三项保护拦不住。`revision_mismatch` 要求 `alembic_version` 的全部行恰好是当前 head。命令先列举完对象和 multipart，才开始任何删除或中止。
+- **三条整体拒绝保护**（非 dry-run；任何一条触发保证**零删除、零中止**，退出码 1，JSON `refused` 写明原因，但执行时机不同）：
+  - **revision 前置检查（在列举之前执行）**：
+    - `revision_mismatch`：数据库的 alembic revision 不等于当前代码的 head（读出 `alembic_version` 的全部行，要求集合严格等于 `{head}`）。**在列举对象和未完成 multipart 之前执行**；不匹配立即拒绝返回。**注意**：前置检查拒绝时，输出中的 `scanned=0`、`orphans=0`、`multipart_stale=0` 等各项计数均为初始值 0，**不能用来判断桶里有什么**。
+      处置：先核对数据库 revision、运行中镜像的 release、CLI 的 release 是否一致：
+      ```bash
+      cid="$($DC ps -q api)"
+      image_id="$(docker inspect --format '{{.Image}}' "$cid")"
+      docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image_id"
+      git rev-parse HEAD
+      $DC run --rm --no-deps -T migrate alembic current
+      $DC run --rm --no-deps -T migrate alembic heads
+      ```
+      若版本不对齐，换回与数据库一致的镜像与检出；若确实需要迁移升级，**转到本页的[完整升级流程](#升级)**（停写、停 timer、备份并验证、`--no-deps migrate`、复验），绝不能直接运行迁移绕过安全流程。
+  - **完整列举后的两项保护（在完整列举之后、第一次删除/中止之前检查）**：
+    通过前置检查后，命令在第一次写操作之前完整列举对象和未完成 multipart，算出完整候选集，随后进行两项检查：
+    1. `no_evidence_rows`：数据库 `evidences` 是 0 行而桶里有 evidence 对象（`scanned > 0`）——几乎肯定连错了库，或恢复没有完成。先确认 `DATABASE_URL` 指向正确的库、恢复已完成，再重跑。
+    2. `too_many_deletions`：要删的对象数超过 `--max-delete`（默认 100）。正常孤儿很少，一次很多说明出问题；先用 `--dry-run` 看清是什么，确认确实该删之后用 `--max-delete N` 调大上限重跑。
+- **保护是启发式的，不绑定部署身份**：部署需确保 CLI 使用的数据库与对象存储配置属于同一环境；错桶 + 同 revision + 候选数不超限时，这三项保护拦不住。对象和未完成 multipart 都在第一次写操作之前列举完整，任一列举失败或保护拒绝均保证零删除、零中止。
 - **已知窗口**：一条登记若在逐 key 复查之后、删除之前提交（需要登记被延迟超过 24 小时，只有 DB 黑洞类故障才可能），对象会被删而元数据保留。每次删除后命令会再查一次：命中则当场写 ERROR 日志 `evidence_object_deleted_while_registered`（`storage_key`、`evidence_id`），JSON 里 `deleted_but_registered > 0`，退出码非零（timer 显示 failed）；`DeleteObject` 报错时同样复查。命令中途异常失败时 JSON 仍输出已累计的计数，并带 `error`（异常类型）。处理：从最近一份备份把该 key 的对象拷回 bucket，再用 `verify-evidence` 确认。
 - **时钟与耗时**：min-age 依赖 Garage 与运行命令的主机时钟一致，部署时保持时钟同步；multipart 的年龄不代表它不活跃，所以单次上传的耗时必须远小于 min-age。
 - **`verify-evidence` 与 `deploy/backup/verify.sh` 的区别**：`verify.sh BACKUP_DIR` 以**某一份备份包的 manifest** 为基准——先校验备份包本身，再（不加 `--bundle-only`）把线上 bucket 与 DB 对照这份 manifest，用于"这个环境是否还原成了这份备份"；`verify-evidence` 不需要备份包，枚举数据库 Evidence 引用并读回对应对象，核对存在、大小、sha256，走应用自己的 S3 客户端、可按组织/数量限制，用于恢复后的验证和平时的故障诊断。它不要求整个 bucket 与旧 manifest 的 key 集合相同，也不是只发 HEAD 的轻量探针；Evidence 丢失还会在下载时以 500 + `evidence_object_missing` 日志暴露。
@@ -336,7 +349,7 @@ systemctl list-timers easyaudit-backup.timer easyaudit-backup-freshness.timer
 | Object storage | target Garage 的 object_meta/object_data；内部 endpoint http://object-storage:3900、bucket easyaudit-evidence、region garage；凭证属于该 target |
 | Release / backup | 选定完整备份目录/manifest、release_sha、alembic_revision、backup_timestamp、integrity；目标 HEAD 和 EASYAUDIT_RELEASE 必须等于 manifest release |
 
-**empty-target guard 只能防止 restore 写入已经非空的目标，不能代替操作者确认目标身份。** 非系统 schema 有表或 bucket 列举非空就拒绝，没有 --force；拒绝时保持 source 和失败 target 的证据，选择另一个确认过的独立空目标，不用删除当前 project 数据来消除错误。若使用 DOC-HF1 之前的历史 release，其旧错误建议也不授权销毁 source。
+**empty-target guard 只能防止 restore 写入已经非空的目标，不能代替操作者确认目标身份。** 非系统 schema 有表或 bucket 列举非空就拒绝，没有 --force；拒绝时保持 source 和失败 target 的证据，选择另一个确认过的独立空目标，不用删除当前 project 数据来消除错误。历史版本脚本或文档中的清空、删除建议不适用于 source；恢复始终使用独立的空目标。
 
 ### 在独立目标执行
 
