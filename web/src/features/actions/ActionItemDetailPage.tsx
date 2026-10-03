@@ -1,598 +1,470 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { CheckOutlined, NotificationOutlined, PlayCircleOutlined, PlusOutlined, RollbackOutlined, StopOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Card, Descriptions, Empty, Flex, Result, Spin, Timeline, Typography } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { ApiError } from '../../api/client'
 import { nudgeActionItem } from '../../api/collaboration'
 import {
   addActionAssignee,
   getActionAssigneeViews,
-  evidenceDownloadUrl,
   getActionEvidences,
   getActionItem,
   getActionItemActivities,
   getFinding,
-  precheckEvidenceFile,
   getReviewCase,
   searchActionAssigneeCandidates,
   transitionActionItem,
-  uploadActionEvidence,
 } from '../../api/product'
-import type {
-  ActionAssigneeViewResponse,
-  ActionItemActivityResponse,
-  ActionItemResponse,
-  AssignmentCandidateResponse,
-  EvidenceResponse,
-  FindingResponse,
-  ReviewCaseResponse,
-} from '../../api/product'
+import {
+  BUSY_FAILURE,
+  NOT_AVAILABLE_TEXT,
+  classifyCommandFailure,
+  failureAlertType,
+  failureNeedsRefresh,
+} from '../../product/commandFailure'
+import type { CommandFailure, CommandResult } from '../../product/commandFailure'
 import { formatDateTime } from '../../product/format'
 import { assignmentRoleName } from '../../product/terms'
-import { ActivityEventName } from '../../ui/ActivityEventName'
-import { StatusTag } from '../../ui/StatusTag'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
+import { ActivityEventName } from '../../ui/ActivityEventName'
+import { ButtonLink } from '../../ui/ButtonLink'
+import { CommandTextDialog } from '../../ui/CommandTextDialog'
+import { InitialLoading } from '../../ui/InitialLoading'
+import { ItemList } from '../../ui/ItemList'
+import { PageHeader } from '../../ui/PageHeader'
+import { StatusTag } from '../../ui/StatusTag'
+import { ActorAssignDrawer } from '../ActorAssignDrawer'
+import type { AssignRoleOption } from '../ActorAssignDrawer'
+import { actorText } from '../actorNames'
+import { SectionNotice } from '../SectionNotice'
+import { useScopedResource } from '../useScopedResource'
+import { EvidenceSection } from './EvidenceSection'
 
-type PrimaryState =
-  | { status: 'loading'; actionItemId: string | undefined }
-  | { status: 'unavailable'; actionItemId: string | undefined }
-  | { status: 'error'; actionItemId: string | undefined; message: string }
-  | { status: 'ready'; actionItemId: string; data: ActionItemResponse }
+type NudgeNotice =
+  | { actionItemId: string; type: 'success'; text: string }
+  | { actionItemId: string; type: 'failure'; failure: CommandFailure }
 
-type ChildState<T> =
-  | { status: 'idle' }
-  | { status: 'loading'; actionItemId: string }
-  | { status: 'unavailable'; actionItemId: string }
-  | { status: 'error'; actionItemId: string; message: string }
-  | { status: 'ready'; actionItemId: string; data: T }
-
-type CandidateState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: AssignmentCandidateResponse[] }
-
-const idleChild = { status: 'idle' } as const
-
-function unavailable(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 403 || error.status === 404)
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
-}
-
-function stateForAction<T>(state: ChildState<T>, actionItemId: string): ChildState<T> {
-  return state.status !== 'idle' && state.actionItemId === actionItemId ? state : idleChild
-}
-
-function actorKindText(actorKind: 'user' | 'department'): string {
-  return actorKind === 'user' ? '用户' : '部门'
-}
-
-const TOO_LARGE_TEXT = '文件超过大小上限，未上传。'
-const TYPE_NOT_ALLOWED_TEXT =
-  '文件类型不被允许，或扩展名与类型不一致。允许：PDF、PNG、JPEG、DOCX、XLSX、PPTX、TXT、CSV。'
-
-function uploadErrorText(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 413) return TOO_LARGE_TEXT
-    if (error.status === 415) return TYPE_NOT_ALLOWED_TEXT
-    if (error.status === 409) return '数据已过期，已刷新。未上传成功，请确认后重新选择文件上传。'
-    if (error.status === 422) return `无法登记证据：${error.detail}`
-    if (error.status === 503) return '证据存储暂不可用，未上传。请稍后手动重试。'
-    return errorMessage(error, '证据上传失败')
-  }
-  // fetch itself failed: the connection dropped. A refused oversized body can look like this.
-  return '上传中断，服务器未确认。文件可能超过大小上限，或网络中断；请确认后手动重试。'
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+// 完成要求只陈述领域规则（domain.md），不由本页推导新的逾期或完成规则。
+function completionRequirement(lifecycle: string, completedAt: string | null): string {
+  if (lifecycle === 'done') return `已于 ${formatDateTime(completedAt)} 完成。`
+  if (lifecycle === 'cancelled') return '整改项已取消，无需完成。'
+  return '完成整改并可上传证据；发现项提交验证前，所有未取消的整改项都必须已完成。'
 }
 
 export function ActionItemDetailPage() {
   const { actionItemId } = useParams()
+  const { message } = App.useApp()
   const currentActionItemIdRef = useRef(actionItemId)
   currentActionItemIdRef.current = actionItemId
-  const candidateSearchSequenceRef = useRef(0)
+  const busyRef = useRef(false)
+  const nudgeBusyRef = useRef(false)
   const [revision, setRevision] = useState(0)
-  const [primary, setPrimary] = useState<PrimaryState>({ status: 'loading', actionItemId: undefined })
-  const [finding, setFinding] = useState<ChildState<FindingResponse>>(idleChild)
-  const [reviewCase, setReviewCase] = useState<ChildState<ReviewCaseResponse>>(idleChild)
-  const [assignees, setAssignees] = useState<ChildState<ActionAssigneeViewResponse[]>>(idleChild)
-  const [evidences, setEvidences] = useState<ChildState<EvidenceResponse[]>>(idleChild)
-  const [activities, setActivities] = useState<ChildState<ActionItemActivityResponse[]>>(idleChild)
-  const [candidateState, setCandidateState] = useState<CandidateState>({ status: 'idle' })
-  const [candidateQuery, setCandidateQuery] = useState('')
-  const [assigneeRole, setAssigneeRole] = useState('')
-  const [transitionReason, setTransitionReason] = useState('')
   const [commandBusy, setCommandBusy] = useState(false)
-  const [commandMessage, setCommandMessage] = useState<string | null>(null)
+  const [notice, setNotice] = useState<CommandFailure | null>(null)
   const [nudgeBusy, setNudgeBusy] = useState(false)
-  const [nudgeMessage, setNudgeMessage] = useState<string | null>(null)
-  const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [uploadDescription, setUploadDescription] = useState('')
-  const [uploadBusy, setUploadBusy] = useState(false)
-  const [uploadMessage, setUploadMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [nudgeNotice, setNudgeNotice] = useState<NudgeNotice | null>(null)
+  const [assignDrawerOpen, setAssignDrawerOpen] = useState(false)
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const refresh = () => setRevision((value) => value + 1)
 
+  // 切换整改项时丢弃上一个整改项的弹层、提示与进行中状态。
   useEffect(() => {
-    candidateSearchSequenceRef.current += 1
-    setCandidateState({ status: 'idle' })
-    setCandidateQuery('')
-    setAssigneeRole('')
-    setTransitionReason('')
+    busyRef.current = false
+    nudgeBusyRef.current = false
     setCommandBusy(false)
-    setCommandMessage(null)
+    setNotice(null)
     setNudgeBusy(false)
-    setNudgeMessage(null)
-    setUploadFile(null)
-    setUploadDescription('')
-    setUploadBusy(false)
-    setUploadMessage(null)
-    if (fileInputRef.current) fileInputRef.current.value = ''
+    setNudgeNotice(null)
+    setAssignDrawerOpen(false)
+    setCancelOpen(false)
   }, [actionItemId])
 
-  useEffect(() => {
-    setFinding(idleChild)
-    setReviewCase(idleChild)
-    setAssignees(idleChild)
-    setEvidences(idleChild)
-    setActivities(idleChild)
-    setCandidateState({ status: 'idle' })
+  const primary = useScopedResource(
+    actionItemId ?? null,
+    revision,
+    (signal) => getActionItem(actionItemId ?? '', signal),
+    '整改项请求失败',
+  )
+  const action = primary.status === 'ready' ? primary.data : null
+  // 主资源授权通过之后才读取从属资源。
+  const scope = action?.id ?? null
+  const findingId = action?.finding_id ?? ''
+  const findingState = useScopedResource(scope, revision, (signal) => getFinding(findingId, signal), '发现项请求失败')
+  const findingData = findingState.status === 'ready' ? findingState.data : null
+  const caseId = findingData?.case_id ?? null
+  const caseState = useScopedResource(
+    caseId === null ? null : scope,
+    revision,
+    (signal) => getReviewCase(caseId ?? '', signal),
+    '审查活动请求失败',
+  )
+  const assignees = useScopedResource(scope, revision, (signal) => getActionAssigneeViews(scope ?? '', signal), '执行人请求失败')
+  const evidences = useScopedResource(scope, revision, (signal) => getActionEvidences(scope ?? '', signal), '证据请求失败')
+  const activities = useScopedResource(
+    scope,
+    revision,
+    (signal) => getActionItemActivities(scope ?? '', signal),
+    '操作记录请求失败',
+  )
 
-    if (actionItemId === undefined) {
-      setPrimary({ status: 'unavailable', actionItemId })
-      return
+  const assigneeData = assignees.status === 'ready' ? assignees.data : null
+  const names = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const assignee of assigneeData ?? []) {
+      if (assignee.actor_kind === 'user') map.set(assignee.actor_id, assignee.display_name)
     }
+    return map
+  }, [assigneeData])
 
-    const requestedId = actionItemId
-    const controller = new AbortController()
-    setPrimary({ status: 'loading', actionItemId: requestedId })
-    void getActionItem(requestedId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setPrimary({ status: 'ready', actionItemId: requestedId, data })
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setPrimary(
-          unavailable(error)
-            ? { status: 'unavailable', actionItemId: requestedId }
-            : { status: 'error', actionItemId: requestedId, message: errorMessage(error, '整改项请求失败') },
-        )
-      })
-    return () => controller.abort()
-  }, [actionItemId, revision])
-
-  const primaryMatchesRoute = primary.actionItemId === actionItemId
-  const authorizedActionId =
-    primaryMatchesRoute && primary.status === 'ready' ? primary.data.id : null
-
-  useEffect(() => {
-    if (authorizedActionId === null || primary.status !== 'ready') return
-    const action = primary.data
-    const controller = new AbortController()
-    setFinding({ status: 'loading', actionItemId: authorizedActionId })
-    setReviewCase({ status: 'loading', actionItemId: authorizedActionId })
-    setAssignees({ status: 'loading', actionItemId: authorizedActionId })
-    setEvidences({ status: 'loading', actionItemId: authorizedActionId })
-    setActivities({ status: 'loading', actionItemId: authorizedActionId })
-
-    void getFinding(action.finding_id, controller.signal)
-      .then(async (findingData) => {
-        if (controller.signal.aborted) return
-        setFinding({ status: 'ready', actionItemId: authorizedActionId, data: findingData })
-        try {
-          const caseData = await getReviewCase(findingData.case_id, controller.signal)
-          if (!controller.signal.aborted) setReviewCase({ status: 'ready', actionItemId: authorizedActionId, data: caseData })
-        } catch (error) {
-          if (controller.signal.aborted) return
-          setReviewCase(
-            unavailable(error)
-              ? { status: 'unavailable', actionItemId: authorizedActionId }
-              : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '审查活动请求失败') },
-          )
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setFinding(
-          unavailable(error)
-            ? { status: 'unavailable', actionItemId: authorizedActionId }
-            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '发现项请求失败') },
-        )
-        setReviewCase({ status: 'unavailable', actionItemId: authorizedActionId })
-      })
-
-    void getActionAssigneeViews(authorizedActionId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setAssignees({ status: 'ready', actionItemId: authorizedActionId, data })
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setAssignees(
-          unavailable(error)
-            ? { status: 'unavailable', actionItemId: authorizedActionId }
-            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '执行人请求失败') },
-        )
-      })
-
-    void getActionEvidences(authorizedActionId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setEvidences({ status: 'ready', actionItemId: authorizedActionId, data })
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setEvidences(
-          unavailable(error)
-            ? { status: 'unavailable', actionItemId: authorizedActionId }
-            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '证据请求失败') },
-        )
-      })
-
-    void getActionItemActivities(authorizedActionId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setActivities({ status: 'ready', actionItemId: authorizedActionId, data })
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setActivities(
-          unavailable(error)
-            ? { status: 'unavailable', actionItemId: authorizedActionId }
-            : { status: 'error', actionItemId: authorizedActionId, message: errorMessage(error, '操作记录请求失败') },
-        )
-      })
-
-    return () => controller.abort()
-  }, [authorizedActionId, primary])
-
-  async function runCommand(label: string, command: () => Promise<unknown>) {
+  async function runCommand(
+    label: string,
+    command: () => Promise<unknown>,
+    options: { fields?: readonly string[]; notify?: boolean } = {},
+  ): Promise<CommandResult> {
+    if (busyRef.current) return { ok: false, failure: BUSY_FAILURE }
     const commandActionItemId = actionItemId
+    busyRef.current = true
     setCommandBusy(true)
-    setCommandMessage(null)
+    setNotice(null)
+    let result: CommandResult
     try {
       await command()
-      if (currentActionItemIdRef.current !== commandActionItemId) return
-      setCommandMessage(`${label}已由服务器确认。`)
-      setCandidateState({ status: 'idle' })
-      setRevision((value) => value + 1)
+      result = { ok: true }
     } catch (error) {
-      if (currentActionItemIdRef.current !== commandActionItemId) return
-      setCommandMessage(errorMessage(error, `${label}失败`))
-      if (error instanceof ApiError && [403, 409, 422].includes(error.status)) {
-        setRevision((value) => value + 1)
-      }
-    } finally {
-      if (currentActionItemIdRef.current === commandActionItemId) {
-        setCommandBusy(false)
-      }
+      result = { ok: false, failure: classifyCommandFailure(error, { label, fields: options.fields }) }
     }
+    if (currentActionItemIdRef.current !== commandActionItemId) return result
+    busyRef.current = false
+    setCommandBusy(false)
+    if (result.ok) {
+      void message.success(`已完成：${label}`)
+      refresh()
+    } else {
+      if (options.notify !== false && result.failure.message !== '') setNotice(result.failure)
+      // 不自动重放；冲突、权限变化或结果未知时只重新读取，由用户核对后再决定。
+      if (failureNeedsRefresh(result.failure)) refresh()
+    }
+    return result
   }
 
   async function runNudge(currentActionId: string) {
+    if (nudgeBusyRef.current) return
     const commandActionItemId = actionItemId
+    nudgeBusyRef.current = true
     setNudgeBusy(true)
-    setNudgeMessage(null)
+    setNudgeNotice(null)
     try {
       const result = await nudgeActionItem(currentActionId)
       if (currentActionItemIdRef.current !== commandActionItemId) return
-      setNudgeMessage(
-        `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
-      )
-      setRevision((value) => value + 1)
+      setNudgeNotice({
+        actionItemId: currentActionId,
+        type: 'success',
+        text: `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
+      })
+      refresh()
     } catch (error) {
       if (currentActionItemIdRef.current !== commandActionItemId) return
-      setNudgeMessage(errorMessage(error, '整改项催办失败'))
-      if (error instanceof ApiError && error.status === 404) {
-        setRevision((value) => value + 1)
-      }
+      const failure = classifyCommandFailure(error, { label: '催办' })
+      setNudgeNotice({ actionItemId: currentActionId, type: 'failure', failure })
+      if (failureNeedsRefresh(failure)) refresh()
     } finally {
       if (currentActionItemIdRef.current === commandActionItemId) {
+        nudgeBusyRef.current = false
         setNudgeBusy(false)
       }
     }
   }
 
-  async function submitEvidence(event: FormEvent<HTMLFormElement>, currentActionId: string) {
-    event.preventDefault()
-    if (uploadFile === null || uploadBusy) return
-    const precheck = precheckEvidenceFile(uploadFile)
-    if (precheck !== null) {
-      setUploadMessage({ kind: 'error', text: precheck === 'too_large' ? TOO_LARGE_TEXT : TYPE_NOT_ALLOWED_TEXT })
-      return
-    }
-    const uploadActionItemId = actionItemId
-    setUploadBusy(true)
-    setUploadMessage(null)
-    try {
-      // Exactly one attempt: a failed or interrupted upload is never replayed automatically.
-      const evidence = await uploadActionEvidence(currentActionId, uploadFile, uploadDescription)
-      if (currentActionItemIdRef.current !== uploadActionItemId) return
-      setUploadMessage({
-        kind: 'ok',
-        text: `服务器已确认上传：${evidence.original_name} · ${formatBytes(evidence.size_bytes)} · SHA-256 ${evidence.sha256.slice(0, 12)}…`,
-      })
-      setUploadFile(null)
-      setUploadDescription('')
-      if (fileInputRef.current) fileInputRef.current.value = ''
-      setRevision((value) => value + 1)
-    } catch (error) {
-      if (currentActionItemIdRef.current !== uploadActionItemId) return
-      setUploadMessage({ kind: 'error', text: uploadErrorText(error) })
-      if (error instanceof ApiError && [403, 404, 409, 422].includes(error.status)) {
-        setRevision((value) => value + 1)
-      }
-    } finally {
-      if (currentActionItemIdRef.current === uploadActionItemId) {
-        setUploadBusy(false)
-      }
-    }
+  if (actionItemId === undefined || primary.status === 'unavailable') {
+    return (
+      <Flex vertical gap={16}>
+        <PageHeader title="整改项" />
+        <Card>
+          <Result status="404" title={NOT_AVAILABLE_TEXT} extra={<ButtonLink to="/review-cases">返回审查活动列表</ButtonLink>} />
+        </Card>
+      </Flex>
+    )
   }
 
-  if (!primaryMatchesRoute || primary.status === 'loading') {
-    return <section className="surface-page"><h1>整改项</h1><p>正在确认访问权限…</p></section>
-  }
-
-  if (primary.status === 'unavailable') {
-    return <section className="surface-page"><h1>整改项不可用</h1><p>当前没有可见的整改项内容。</p></section>
+  if (primary.status === 'loading') {
+    return (
+      <Flex vertical gap={16} aria-busy="true">
+        <PageHeader title="整改项" />
+        <Card>
+          <InitialLoading label="正在确认访问权限" rows={6} />
+        </Card>
+      </Flex>
+    )
   }
 
   if (primary.status === 'error') {
     return (
-      <section className="surface-page">
-        <h1>整改项</h1>
-        <div role="alert" className="surface-card"><p>{primary.message}</p><button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button></div>
-      </section>
+      <Flex vertical gap={16}>
+        <PageHeader title="整改项" />
+        <Alert
+          type="error"
+          showIcon
+          title={primary.message}
+          action={
+            <Button size="small" onClick={refresh}>
+              重新加载
+            </Button>
+          }
+        />
+      </Flex>
     )
   }
 
-  const action = primary.data
-  const findingState = stateForAction(finding, action.id)
-  const caseState = stateForAction(reviewCase, action.id)
-  const assigneeState = stateForAction(assignees, action.id)
-  const evidenceState = stateForAction(evidences, action.id)
-  const activityState = stateForAction(activities, action.id)
-  const caseContext = caseState.status === 'ready' ? caseState.data : null
-  const scenarioAdapter = caseContext === null ? undefined : resolveFindingScenarioAdapter(caseContext.scenario_key, caseContext.scenario_version)
-  const assigneeOption =
-    scenarioAdapter?.assigneeOptions.find((option) => option.role === assigneeRole) ??
-    scenarioAdapter?.assigneeOptions[0]
+  if (primary.status !== 'ready' || action === null) return null
 
-  async function searchAssignees() {
-    if (assigneeOption === undefined) return
-    if (candidateQuery.trim().length < 2) {
-      setCandidateState({ status: 'error', message: '候选搜索至少输入 2 个字符。' })
-      return
-    }
-    const searchSequence = candidateSearchSequenceRef.current + 1
-    candidateSearchSequenceRef.current = searchSequence
-    const searchActionItemId = actionItemId
-    setCandidateState({ status: 'loading' })
-    try {
-      const data = await searchActionAssigneeCandidates(
-        action.id,
-        assigneeOption.role,
-        assigneeOption.actorKind,
-        candidateQuery,
-      )
-      if (
-        currentActionItemIdRef.current !== searchActionItemId ||
-        candidateSearchSequenceRef.current !== searchSequence
-      ) return
-      setCandidateState({ status: 'ready', data })
-    } catch (error) {
-      if (
-        currentActionItemIdRef.current !== searchActionItemId ||
-        candidateSearchSequenceRef.current !== searchSequence
-      ) return
-      setCandidateState({ status: 'error', message: errorMessage(error, '候选搜索失败') })
-    }
-  }
+  const caseContext = caseState.status === 'ready' ? caseState.data : null
+  const scenarioAdapter =
+    caseContext === null
+      ? undefined
+      : resolveFindingScenarioAdapter(caseContext.scenario_key, caseContext.scenario_version)
+  const assigneeRoles: AssignRoleOption[] = (scenarioAdapter?.assigneeOptions ?? []).map((option) => ({
+    value: option.role,
+    label: option.label,
+    actorKind: option.actorKind,
+  }))
+  const cancelled = action.lifecycle === 'cancelled'
 
   return (
-    <article className="surface-page" aria-labelledby="action-title">
-      <header className="case-header surface-card">
-        <div>
-          <p className="eyebrow">整改项</p>
-          <h1 id="action-title">{action.title}</h1>
-          <p><Link to={`/findings/${action.finding_id}`}>返回发现项</Link></p>
-        </div>
-        <StatusTag kind="actionItem" value={action.lifecycle} />
-      </header>
+    <Flex component="article" vertical gap={16} aria-labelledby="action-title">
+      <PageHeader
+        title={action.title}
+        titleId="action-title"
+        meta={<StatusTag kind="actionItem" value={action.lifecycle} />}
+        extra={<ButtonLink to={`/findings/${action.finding_id}`}>返回发现项</ButtonLink>}
+      />
 
-      <section className="surface-card" aria-labelledby="action-overview-title">
-        <h2 id="action-overview-title">整改事项</h2>
-        <dl className="fact-grid">
-          <div><dt>整改项 ID</dt><dd>{action.id}</dd></div>
-          <div><dt>发现项</dt><dd>{action.finding_id}</dd></div>
-          <div><dt>到期时间</dt><dd>{formatDateTime(action.due_at)}</dd></div>
-          <div><dt>完成时间</dt><dd>{formatDateTime(action.completed_at)}</dd></div>
-        </dl>
-        <p className="empty-note">到期时间以服务器记录为准；本页不计算新的逾期规则。</p>
-      </section>
-
-      <section className="surface-card" aria-labelledby="action-parent-title">
-        <h2 id="action-parent-title">所属发现项</h2>
-        {findingState.status === 'idle' || findingState.status === 'loading' ? <p>正在读取发现项…</p> : null}
-        {findingState.status === 'unavailable' ? <p className="empty-note">发现项信息不可用。</p> : null}
-        {findingState.status === 'error' ? <p role="alert">{findingState.message}</p> : null}
-        {findingState.status === 'ready' ? <p><Link to={`/findings/${findingState.data.id}`}>{findingState.data.title}</Link> · <StatusTag kind="finding" value={findingState.data.lifecycle} /></p> : null}
-      </section>
-
-      <section className="surface-card" aria-labelledby="assignees-title">
-        <h2 id="assignees-title">执行关系</h2>
-        {assigneeState.status === 'idle' || assigneeState.status === 'loading' ? <p>正在读取执行关系…</p> : null}
-        {assigneeState.status === 'unavailable' ? <p className="empty-note">执行关系不可用。</p> : null}
-        {assigneeState.status === 'error' ? <p role="alert">{assigneeState.message}</p> : null}
-        {assigneeState.status === 'ready' && assigneeState.data.length === 0 ? <p className="empty-note">暂无执行人。</p> : null}
-        {assigneeState.status === 'ready' && assigneeState.data.length > 0 ? (
-          <ul className="surface-list">
-            {assigneeState.data.map((assignee) => (
-              <li key={`${assignee.actor_kind}-${assignee.actor_id}-${assignee.role}`}>
-                <strong>{assignee.display_name}</strong>
-                <span>{assignmentRoleName(assignee.role)} · {actorKindText(assignee.actor_kind)}</span>
-                <span>加入于 {formatDateTime(assignee.assigned_at)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        {scenarioAdapter !== undefined && action.lifecycle !== 'cancelled' ? (
-          <div className="subsurface">
-            <h3>添加执行人</h3>
-            <div className="form-grid">
-              <label>
-                执行角色
-                <select
-                  value={assigneeOption?.role ?? ''}
-                  onChange={(event) => {
-                    setAssigneeRole(event.target.value)
-                    candidateSearchSequenceRef.current += 1
-                    setCandidateState({ status: 'idle' })
-                  }}
-                  disabled={commandBusy}
-                >
-                  {scenarioAdapter.assigneeOptions.map((option) => <option key={option.role} value={option.role}>{option.label} · {actorKindText(option.actorKind)}</option>)}
-                </select>
-              </label>
-              <label>搜索<input value={candidateQuery} onChange={(event) => setCandidateQuery(event.target.value)} disabled={commandBusy} placeholder="至少 2 个字符" /></label>
-            </div>
-            <button type="button" className="secondary" onClick={() => void searchAssignees()} disabled={commandBusy}>搜索候选</button>
-            {candidateState.status === 'loading' ? <p>正在查询可选人员…</p> : null}
-            {candidateState.status === 'error' ? <p role="alert">{candidateState.message}</p> : null}
-            {candidateState.status === 'ready' && candidateState.data.length === 0 ? <p className="empty-note">没有匹配候选。</p> : null}
-            {candidateState.status === 'ready' && candidateState.data.length > 0 ? (
-              <ul className="surface-list candidate-list">
-                {candidateState.data.map((candidate) => (
-                  <li key={`${candidate.actor_kind}-${candidate.actor_id}`}>
-                    <strong>{candidate.display_name}</strong>
-                    <span>{actorKindText(candidate.actor_kind)}</span>
-                    <button type="button" onClick={() => void runCommand('添加执行人', () => addActionAssignee(action.id, candidate.actor_kind, candidate.actor_id, assigneeOption?.role ?? 'primary'))} disabled={commandBusy || assigneeOption === undefined}>添加</button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
-
-      {scenarioAdapter === undefined ? (
-        <section className="surface-card"><h2>业务操作</h2><p className="empty-note">当前审查场景的界面不可用，整改项操作已关闭。</p></section>
-      ) : (
-        <section className="surface-card" aria-labelledby="action-command-title">
-          <h2 id="action-command-title">业务操作</h2>
-          <p className="empty-note">这里只隐藏明显无关的操作；最终授权与并发校验以服务器为准。</p>
-          {action.lifecycle === 'todo' ? (
-            <div className="command-stack">
-              <button type="button" onClick={() => void runCommand('开始整改项', () => transitionActionItem(action.id, 'start'))} disabled={commandBusy}>开始整改项</button>
-              <label>取消原因<input value={transitionReason} onChange={(event) => setTransitionReason(event.target.value)} disabled={commandBusy} /></label>
-              <button type="button" className="secondary" onClick={() => void runCommand('取消整改项', () => transitionActionItem(action.id, 'cancel', transitionReason))} disabled={commandBusy}>取消整改项</button>
-            </div>
-          ) : null}
-          {action.lifecycle === 'in_progress' ? (
-            <div className="command-stack">
-              <button type="button" onClick={() => void runCommand('完成整改项', () => transitionActionItem(action.id, 'complete'))} disabled={commandBusy}>完成整改项</button>
-              <label>取消原因<input value={transitionReason} onChange={(event) => setTransitionReason(event.target.value)} disabled={commandBusy} /></label>
-              <button type="button" className="secondary" onClick={() => void runCommand('取消整改项', () => transitionActionItem(action.id, 'cancel', transitionReason))} disabled={commandBusy}>取消整改项</button>
-            </div>
-          ) : null}
-          {action.lifecycle === 'done' ? <button type="button" onClick={() => void runCommand('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))} disabled={commandBusy}>重新打开整改项</button> : null}
-          {action.lifecycle === 'cancelled' ? <p className="empty-note">当前整改项已取消，没有可执行的操作。</p> : null}
-          {commandMessage === null ? null : <p role="status">{commandMessage}</p>}
-        </section>
+      {notice === null || notice.kind === 'session' ? null : (
+        <Alert
+          type={failureAlertType(notice)}
+          showIcon
+          title={notice.message}
+          closable={{ onClose: () => setNotice(null) }}
+        />
+      )}
+      {primary.refreshError === null ? null : (
+        <Alert type="warning" showIcon title={`重新读取失败，当前显示的可能不是最新内容：${primary.refreshError}`} />
       )}
 
-      <section className="surface-card" aria-labelledby="action-nudge-title">
-        <h2 id="action-nudge-title">协作提醒</h2>
-        <p className="empty-note">按钮不代表有催办权限，也不选择被催办的人；服务器会按当前审查场景和相关人员重新授权并确定对象。</p>
-        <button
-          type="button"
-          className="secondary"
-          disabled={nudgeBusy}
-          onClick={() => void runNudge(action.id)}
-        >
-          {nudgeBusy ? '正在催办…' : '催办'}
-        </button>
-        {nudgeMessage === null ? null : <p role="status">{nudgeMessage}</p>}
-      </section>
+      <Spin spinning={primary.refreshing}>
+        <Flex vertical gap={16}>
+          <section aria-labelledby="action-overview-title">
+            <Card
+              title={<h2 id="action-overview-title">整改事项</h2>}
+              extra={
+                scenarioAdapter !== undefined && !cancelled ? (
+                  <Button icon={<PlusOutlined aria-hidden />} onClick={() => setAssignDrawerOpen(true)}>
+                    添加执行人
+                  </Button>
+                ) : null
+              }
+            >
+              <Descriptions
+                column={{ xs: 1, md: 2 }}
+                items={[
+                  { key: 'title', label: '任务', children: action.title },
+                  {
+                    key: 'assignees',
+                    label: '执行人',
+                    children:
+                      assignees.status === 'ready' ? (
+                        <ItemList
+                          label="执行人"
+                          emptyText="暂无执行人。"
+                          items={assignees.data.map((assignee) => ({
+                            key: `${assignee.actor_kind}-${assignee.actor_id}-${assignee.role}`,
+                            content: (
+                              <>
+                                <Typography.Text strong>{assignee.display_name}</Typography.Text>
+                                <Typography.Text type="secondary">
+                                  {' '}
+                                  · {assignmentRoleName(assignee.role)} · 加入于 {formatDateTime(assignee.assigned_at)}
+                                </Typography.Text>
+                              </>
+                            ),
+                          }))}
+                        />
+                      ) : (
+                        <SectionNotice state={assignees} loadingLabel="正在读取执行人" unavailableText="执行关系不可用。" />
+                      ),
+                  },
+                  { key: 'due', label: '截止时间', children: formatDateTime(action.due_at) },
+                  { key: 'requirement', label: '完成要求', children: completionRequirement(action.lifecycle, action.completed_at) },
+                  { key: 'completed', label: '完成时间', children: formatDateTime(action.completed_at) },
+                  {
+                    key: 'finding',
+                    label: '所属发现项',
+                    children:
+                      findingState.status === 'ready' ? (
+                        <Flex align="center" wrap gap={8}>
+                          <Link to={`/findings/${findingState.data.id}`}>{findingState.data.title}</Link>
+                          <StatusTag kind="finding" value={findingState.data.lifecycle} />
+                        </Flex>
+                      ) : (
+                        <SectionNotice state={findingState} loadingLabel="正在读取发现项" unavailableText="发现项信息不可用。" />
+                      ),
+                  },
+                  { key: 'id', label: '整改项 ID', children: action.id },
+                ]}
+              />
+              <Typography.Text type="secondary">截止时间以服务器记录为准；本页不计算新的逾期规则。</Typography.Text>
+            </Card>
+          </section>
 
-      <section className="surface-card" aria-labelledby="evidence-title">
-        <h2 id="evidence-title">证据</h2>
-        {evidenceState.status === 'idle' || evidenceState.status === 'loading' ? <p>正在读取证据…</p> : null}
-        {evidenceState.status === 'unavailable' ? <p className="empty-note">证据不可用。</p> : null}
-        {evidenceState.status === 'error' ? <p role="alert">{evidenceState.message}</p> : null}
-        {evidenceState.status === 'ready' && evidenceState.data.length === 0 ? <p className="empty-note">暂无证据。</p> : null}
-        {evidenceState.status === 'ready' && evidenceState.data.length > 0 ? (
-          <ul className="surface-list">
-            {evidenceState.data.map((evidence) => (
-              <li key={evidence.id}>
-                <strong>{evidence.original_name}</strong>
-                <a href={evidenceDownloadUrl(evidence.id)} aria-label={`下载 ${evidence.original_name}`}>下载</a>
-                <span>{evidence.content_type ?? '未知类型'} · {formatBytes(evidence.size_bytes)}</span>
-                <span>{evidence.description ?? '无说明'}</span>
-                <span>上传人 {evidence.uploaded_by} · {formatDateTime(evidence.created_at)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {action.lifecycle === 'cancelled' ? (
-          <p className="empty-note">当前整改项已取消，不能上传证据。</p>
-        ) : (
-          <form onSubmit={(event) => void submitEvidence(event, action.id)} aria-label="上传证据">
-            <div className="form-grid">
-              <label>
-                证据文件
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx,.txt,.csv"
-                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
-                  disabled={uploadBusy}
-                />
-              </label>
-              <label>
-                说明（可选）
-                <input
-                  value={uploadDescription}
-                  maxLength={1000}
-                  onChange={(event) => setUploadDescription(event.target.value)}
-                  disabled={uploadBusy}
-                />
-              </label>
-            </div>
-            <button type="submit" disabled={uploadFile === null || uploadBusy}>
-              {uploadBusy ? '正在上传…' : '上传证据'}
-            </button>
-            <p className="empty-note">
-              文件大小、SHA-256 和存储位置由服务器计算与分配；上传失败不会自动重试。本阶段不提供下载。
-            </p>
-            {uploadMessage === null ? null : (
-              <p role={uploadMessage.kind === 'error' ? 'alert' : 'status'}>{uploadMessage.text}</p>
-            )}
-          </form>
-        )}
-      </section>
+          <section aria-labelledby="action-command-title">
+            <Card title={<h2 id="action-command-title">执行操作</h2>}>
+              <Flex vertical gap={12}>
+                {scenarioAdapter === undefined ? (
+                  <Typography.Text type="secondary">
+                    {caseState.status === 'loading' ? '正在确认审查场景…' : '当前审查场景的界面不可用，整改项操作已关闭。'}
+                  </Typography.Text>
+                ) : (
+                  <>
+                    <Typography.Text type="secondary">
+                      这里只隐藏明显无关的操作；最终授权与并发校验以服务器为准。
+                    </Typography.Text>
+                    <Flex wrap gap={8}>
+                      {action.lifecycle === 'todo' ? (
+                        <Button
+                          type="primary"
+                          icon={<PlayCircleOutlined aria-hidden />}
+                          disabled={commandBusy}
+                          onClick={() => void runCommand('开始整改项', () => transitionActionItem(action.id, 'start'))}
+                        >
+                          开始整改项
+                        </Button>
+                      ) : null}
+                      {action.lifecycle === 'in_progress' ? (
+                        <Button
+                          type="primary"
+                          icon={<CheckOutlined aria-hidden />}
+                          disabled={commandBusy}
+                          onClick={() => void runCommand('完成整改项', () => transitionActionItem(action.id, 'complete'))}
+                        >
+                          完成整改项
+                        </Button>
+                      ) : null}
+                      {action.lifecycle === 'done' ? (
+                        <Button
+                          icon={<RollbackOutlined aria-hidden />}
+                          disabled={commandBusy}
+                          onClick={() => void runCommand('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))}
+                        >
+                          重新打开整改项
+                        </Button>
+                      ) : null}
+                      {action.lifecycle === 'todo' || action.lifecycle === 'in_progress' ? (
+                        <Button danger icon={<StopOutlined aria-hidden />} disabled={commandBusy} onClick={() => setCancelOpen(true)}>
+                          取消整改项
+                        </Button>
+                      ) : null}
+                    </Flex>
+                    {cancelled ? <Typography.Text type="secondary">当前整改项已取消，没有可执行的操作。</Typography.Text> : null}
+                  </>
+                )}
+              </Flex>
+            </Card>
+          </section>
 
-      <section className="surface-card" aria-labelledby="action-activity-title">
-        <h2 id="action-activity-title">操作记录</h2>
-        {activityState.status === 'idle' || activityState.status === 'loading' ? <p>正在读取操作记录…</p> : null}
-        {activityState.status === 'unavailable' ? <p className="empty-note">操作记录不可用。</p> : null}
-        {activityState.status === 'error' ? <p role="alert">{activityState.message}</p> : null}
-        {activityState.status === 'ready' && activityState.data.length === 0 ? <p className="empty-note">暂无操作记录。</p> : null}
-        {activityState.status === 'ready' && activityState.data.length > 0 ? (
-          <ol className="activity-list">
-            {activityState.data.map((activity) => (
-              <li key={activity.id}>
-                <ActivityEventName eventType={activity.event_type} />
-                <span>{formatDateTime(activity.occurred_at)}</span>
-                <span>操作人 {activity.actor_id ?? '系统'}</span>
-              </li>
-            ))}
-          </ol>
-        ) : null}
-      </section>
-    </article>
+          <EvidenceSection
+            key={action.id}
+            actionId={action.id}
+            cancelled={cancelled}
+            state={evidences}
+            names={names}
+            onRefresh={refresh}
+          />
+
+          <section aria-labelledby="action-nudge-title">
+            <Card title={<h2 id="action-nudge-title">协作提醒</h2>}>
+              <Flex vertical gap={12} align="flex-start">
+                <Typography.Text type="secondary">
+                  按钮不代表有催办权限，也不选择被催办的人；服务器会按当前审查场景和相关人员重新授权并确定对象。
+                </Typography.Text>
+                <Button icon={<NotificationOutlined aria-hidden />} loading={nudgeBusy} onClick={() => void runNudge(action.id)}>
+                  催办
+                </Button>
+                {nudgeNotice === null || nudgeNotice.actionItemId !== action.id ? null : nudgeNotice.type === 'success' ? (
+                  <Alert type="success" showIcon title={nudgeNotice.text} />
+                ) : nudgeNotice.failure.message === '' ? null : (
+                  <Alert type={failureAlertType(nudgeNotice.failure)} showIcon title={nudgeNotice.failure.message} />
+                )}
+              </Flex>
+            </Card>
+          </section>
+
+          <section aria-labelledby="action-activity-title">
+            <Card title={<h2 id="action-activity-title">操作记录</h2>}>
+              <SectionNotice state={activities} loadingLabel="正在读取操作记录" unavailableText="操作记录不可用。" />
+              {activities.status === 'ready' && activities.data.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无操作记录。" />
+              ) : null}
+              {activities.status === 'ready' && activities.data.length > 0 ? (
+                <Timeline
+                  items={activities.data.map((activity) => ({
+                    key: activity.id,
+                    content: (
+                      <Flex vertical gap={4}>
+                        <ActivityEventName eventType={activity.event_type} />
+                        <Typography.Text type="secondary">
+                          {formatDateTime(activity.occurred_at)} · 操作人 {actorText(activity.actor_id, names)}
+                        </Typography.Text>
+                      </Flex>
+                    ),
+                  }))}
+                />
+              ) : null}
+            </Card>
+          </section>
+        </Flex>
+      </Spin>
+
+      {scenarioAdapter === undefined ? null : (
+        <>
+          <ActorAssignDrawer
+            open={assignDrawerOpen}
+            onClose={() => setAssignDrawerOpen(false)}
+            scopeKey={action.id}
+            title="添加执行人"
+            roleFieldLabel="执行角色"
+            actorFieldLabel="执行人"
+            okText="添加执行人"
+            roles={assigneeRoles}
+            search={(role, query, signal) =>
+              searchActionAssigneeCandidates(action.id, role.value as 'primary' | 'collaborator', role.actorKind, query, signal)
+            }
+            add={(role, candidate) =>
+              runCommand(
+                '添加执行人',
+                () => addActionAssignee(action.id, candidate.actor_kind, candidate.actor_id, role.value as 'primary' | 'collaborator'),
+                { notify: false },
+              )
+            }
+            onAccessLost={refresh}
+          />
+          <CommandTextDialog
+            container="modal"
+            open={cancelOpen}
+            onClose={() => setCancelOpen(false)}
+            title="取消整改项"
+            description="取消后整改项不能恢复，请说明取消原因。"
+            fieldName="reason"
+            fieldLabel="取消原因"
+            okText="确认取消"
+            danger
+            run={(reason) =>
+              runCommand('取消整改项', () => transitionActionItem(action.id, 'cancel', reason), {
+                fields: ['reason'],
+                notify: false,
+              })
+            }
+          />
+        </>
+      )}
+    </Flex>
   )
 }
