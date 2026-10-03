@@ -47,6 +47,11 @@ function wallTimeAsUtc([year, month, day, hour, minute, second]: WallTime): numb
   return Date.UTC(year, month - 1, day, hour, minute, second)
 }
 
+// 此刻在展示时区的墙上时间（年、月、日、时、分、秒）；日期选择器的“此刻”用它，而不是设备的当地时间。
+export function displayZoneNowWallTime(): WallTime {
+  return displayZoneWallTime(Date.now())
+}
+
 // 某一 UTC 时刻在展示时区的偏移（毫秒），由 Intl 计算，不写死 +08:00。
 function displayZoneOffset(utcMs: number): number {
   return wallTimeAsUtc(displayZoneWallTime(utcMs)) - (utcMs - (utcMs % 1000))
@@ -91,5 +96,23 @@ export type OptionalDisplayZoneInput = { valid: true; iso: string | null } | { v
 export function parseOptionalDisplayZoneInput(value: string): OptionalDisplayZoneInput {
   if (value.trim() === '') return { valid: true, iso: null }
   const iso = displayZoneInputToIso(value)
+  return iso === null ? { valid: false } : { valid: true, iso }
+}
+
+// DatePicker 的输入文本格式（与展示格式一致）。文本本身就是上海墙上时间，解析不经过设备时区。
+export const DISPLAY_DATE_TIME_TEXT_FORMAT = 'YYYY/MM/DD HH:mm'
+const DATE_TIME_TEXT = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/
+
+// 把 `YYYY/MM/DD HH:mm` 文本（上海墙上时间）转为 ISO 时间；规则同 displayZoneInputToIso，不做静默修正。
+export function displayZoneTextToIso(text: string): string | null {
+  const match = DATE_TIME_TEXT.exec(text.trim())
+  if (match === null) return null
+  const [, year, month, day, hour, minute] = match
+  return displayZoneInputToIso(`${year}-${month}-${day}T${hour}:${minute}`)
+}
+
+export function parseOptionalDisplayZoneText(text: string): OptionalDisplayZoneInput {
+  if (text.trim() === '') return { valid: true, iso: null }
+  const iso = displayZoneTextToIso(text)
   return iso === null ? { valid: false } : { valid: true, iso }
 }

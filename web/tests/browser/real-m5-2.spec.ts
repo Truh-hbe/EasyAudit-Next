@@ -90,7 +90,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   expect(planPostCount).toBe(1)
 
   await expectStepTwoReload(page, firstPlan.id)
-  await page.getByLabel('审查场景').selectOption('process_review@1')
+  await page.getByRole('radio', { name: /process_review@1/ }).check()
   await expect(page.getByLabel('区域代码')).toBeVisible()
   await page.getByLabel('审查活动名称').fill('M5.2 Process Case')
   await page.getByLabel('区域代码').fill('area-a')
@@ -103,7 +103,8 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   )
   await page.getByRole('button', { name: '创建审查活动' }).click()
   expect((await rejectedCasePromise).status()).toBe(422)
-  await expect(page.getByRole('alert')).toContainText('review_type')
+  await expect(page.getByText(/review_type/)).toBeVisible()
+  await expect(page.getByLabel('审查类型')).toBeFocused()
   expect(planPostCount).toBe(1)
 
   const firstCasePromise = page.waitForResponse(
@@ -155,7 +156,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   expect(secondPlanResponse.status()).toBe(201)
   const secondPlan = (await secondPlanResponse.json()) as { id: string }
   await expect(page.getByRole('heading', { name: '新建审查活动' })).toBeVisible()
-  await page.getByLabel('审查场景').selectOption('compliance_review@1')
+  await page.getByRole('radio', { name: /compliance_review@1/ }).check()
   await expect(page.getByLabel('标准 / 依据')).toBeVisible()
   await page.getByLabel('审查活动名称').fill('M5.2 Compliance Case')
   await page.getByLabel('标准 / 依据').fill('standard-a')

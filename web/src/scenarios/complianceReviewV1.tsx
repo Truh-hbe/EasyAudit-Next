@@ -8,6 +8,7 @@ import type {
   ScenarioFormValues,
   ScenarioUiAdapter,
 } from './registry'
+import { CaseCreateTextField } from './CaseCreateTextField'
 
 function scenarioText(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : '—'
@@ -49,26 +50,27 @@ export function ComplianceReviewV1CaseCreateFields({
   values,
   onChange,
   disabled,
+  fieldErrors,
 }: ScenarioFormFieldsProps) {
   return (
-    <div className="form-grid">
-      <label>
-        标准 / 依据
-        <input
-          value={formValue(values, 'standard_reference')}
-          onChange={(event) => onChange('standard_reference', event.target.value)}
-          disabled={disabled}
-        />
-      </label>
-      <label>
-        范围摘要
-        <input
-          value={formValue(values, 'scope_summary')}
-          onChange={(event) => onChange('scope_summary', event.target.value)}
-          disabled={disabled}
-        />
-      </label>
-    </div>
+    <>
+      <CaseCreateTextField
+        name="standard_reference"
+        label="标准 / 依据"
+        value={formValue(values, 'standard_reference')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.standard_reference}
+      />
+      <CaseCreateTextField
+        name="scope_summary"
+        label="范围摘要"
+        value={formValue(values, 'scope_summary')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.scope_summary}
+      />
+    </>
   )
 }
 

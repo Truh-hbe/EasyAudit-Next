@@ -21,6 +21,8 @@ export interface ScenarioFormFieldsProps {
   values: ScenarioFormValues
   onChange: (name: string, value: string) => void
   disabled?: boolean
+  // 服务端 422 能对应到字段的提示，按字段名索引；只有已迁移到 antd 的表单会传入。
+  fieldErrors?: Record<string, string>
 }
 
 export interface ScenarioCaseAdapter {
