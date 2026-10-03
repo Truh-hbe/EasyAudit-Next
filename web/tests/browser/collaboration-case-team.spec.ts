@@ -471,61 +471,92 @@ test('主授权重读：从属资源第一次就被拒绝（观察员看管理�
   expect(counters.caseReads).toBe(2)
 })
 
-test('主授权重读：之前读取成功过的成员列表刷新后变成 403，会触发重读并移除内容', async ({ page }) => {
-  await caseWithOtherMember(page, 'case-seen')
-  const membersGate = deferred()
-  const counters = await stubReadPolicy(page, 'case-seen', {
-    // 写操作后的第一次重读通过；成员列表的刷新被扣住，等重读完成后才返回 403。
-    caseRead: (n) => (n === 1 ? 200 : 403),
-    membersRead: async () => {
-      await membersGate.promise
+test('主授权重读：重读在途时又移除了自己，旧重读返回 200 后补读一次，补读 403 即移除内容', async ({ page }) => {
+  const state = await caseWithOtherMember(page, 'case-dirty')
+  state.members.push(member('case-dirty', 'second-lead', 'lead', 'Second Lead'))
+  const caseGate = deferred()
+  const counters = await stubReadPolicy(page, 'case-dirty', {
+    // 第 1 次重读被扣住并返回 200（发出时当前用户还有角色）；之后的补读返回 403。
+    caseRead: async (n) => {
+      if (n === 1) {
+        await caseGate.promise
+        return 200
+      }
       return 403
     },
   })
-  await page.goto('/review-cases/case-seen')
+  await page.goto('/review-cases/case-dirty')
   await expect(page.getByText('Other Member')).toBeVisible()
   counters.arm()
   await removeOtherMember(page)
   await expect.poll(() => counters.caseReads).toBe(1)
-  await expect(page.getByText('Team Case case-seen')).toBeVisible()
-  membersGate.resolve()
-  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
-  await expect(page.getByText('Team Case case-seen')).toHaveCount(0)
-  expect(counters.caseReads).toBe(2)
-})
 
-test('主授权重读：并发触发合并为一次读取，且明确的 403 不会被随后到达的 500 覆盖', async ({ page }) => {
-  await caseWithOtherMember(page, 'case-flight')
-  const caseGate = deferred()
-  const counters = await stubReadPolicy(page, 'case-flight', {
-    // 第 2 次（写操作后的重读）被扣住后返回 403；任何多余的读取都会返回 500。
-    caseRead: async (n) => {
-      if (n === 1) {
-        await caseGate.promise
-        return 403
-      }
-      return 500
-    },
-    // 成员列表刷新立即 403（之前读取成功过），与写操作后的重读同时触发。
-    membersRead: () => 403,
-  })
-  await page.goto('/review-cases/case-flight')
-  await expect(page.getByText('Other Member')).toBeVisible()
-  counters.arm()
-  await removeOtherMember(page)
-  await expect.poll(() => counters.membersReads).toBeGreaterThanOrEqual(1)
-  await page.waitForTimeout(400)
+  // 重读还在途，又移除了自己的最后一个角色：第二次触发只标记 dirty，不另发请求。
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('listitem').filter({ hasText: 'Team Lead' }).getByRole('button', { name: /移除/ }).click()
+  await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
+  await expect.poll(() => state.removes.length).toBe(2)
+  await page.waitForTimeout(300)
   expect(counters.caseReads).toBe(1)
-  await expect(page.getByText('Team Case case-flight')).toBeVisible()
+  await expect(page.getByText('Team Case case-dirty')).toBeVisible()
 
   caseGate.resolve()
   await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
-  await expect(page.getByText('Team Case case-flight')).toHaveCount(0)
-  await page.waitForTimeout(300)
-  expect(counters.caseReads).toBe(1)
+  await expect(page.getByText('Team Case case-dirty')).toHaveCount(0)
+  expect(counters.caseReads).toBe(2)
 })
 
-test('主授权重读：一次重读失败（500）不移除内容，之后的重读确认 403 才移除', async ({ page }) => {
+test('主授权重读：首次加载时成员接口就返回 403，也会重新确认主授权并移除内容', async ({ page }) => {
+  await mockCase(page, 'case-first')
+  let denied = false
+  await page.route((url) => url.pathname === '/api/v1/review-cases/case-first', (route) =>
+    denied ? fulfillJson(route, 403, { detail: 'forbidden' }) : route.fallback(),
+  )
+  await page.route((url) => url.pathname === '/api/v1/review-cases/case-first/members', (route) => {
+    denied = true
+    return fulfillJson(route, 403, { detail: 'forbidden' })
+  })
+  await page.goto('/review-cases/case-first')
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByText('Team Case case-first')).toHaveCount(0)
+})
+
+test('主授权重读：页面内重新加载成功后，旧代次迟到的 403 不会污染新加载', async ({ page }) => {
+  const state = await caseWithOtherMember(page, 'case-ctx')
+  state.members.push(member('case-ctx', 'third-member', 'observer', 'Third Member'))
+  const gate = deferred()
+  const counters = await stubReadPolicy(page, 'case-ctx', {
+    // 第 1 次（写操作后的静默重读）被扣住并最终返回 403；之后的读取（含重新加载）都返回 200。
+    caseRead: async (n) => {
+      if (n === 1) {
+        await gate.promise
+        return 403
+      }
+      return 200
+    },
+  })
+  await page.goto('/review-cases/case-ctx')
+  await expect(page.getByText('Other Member')).toBeVisible()
+  counters.arm()
+  await removeOtherMember(page)
+  await expect.poll(() => counters.caseReads).toBe(1)
+
+  // 重读在途时，另一次写操作返回 404：页面在同一实例内重新加载（新代次），重新加载读取返回 200。
+  state.removeStatus = 404
+  state.removeDetail = 'ReviewCase not found'
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('listitem').filter({ hasText: 'Third Member' }).getByRole('button', { name: /移除/ }).click()
+  await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
+  await expect.poll(() => counters.caseReads).toBe(2)
+  await expect(page.getByRole('heading', { name: 'Team Case case-ctx' })).toBeVisible()
+
+  gate.resolve()
+  await page.waitForTimeout(500)
+  await expect(page.getByRole('heading', { name: 'Team Case case-ctx' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toHaveCount(0)
+})
+
+test('主授权重读：重读返回 500 时保留内容（真正走到 500 分支），之后的触发仍可重读，确认 403 才移除', async ({ page }) => {
   const state = await caseWithOtherMember(page, 'case-500')
   state.members.push(member('case-500', 'third', 'observer', 'Third Member'))
   const counters = await stubReadPolicy(page, 'case-500', { caseRead: (n) => (n === 1 ? 500 : 403) })

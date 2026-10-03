@@ -1,5 +1,5 @@
 import { Alert, Button, Card, Descriptions, Empty, Flex, Result, Timeline, Typography } from 'antd'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
@@ -28,6 +28,8 @@ import { PageHeader } from '../../ui/PageHeader'
 import { isDeadlineStatus, StatusTag } from '../../ui/StatusTag'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import { FindingCreatePanel } from '../findings/FindingCreatePanel'
+import { initialCaseAuthorization, reduceCaseAuthorization } from './caseAuthorization'
+import type { CaseAuthorizationEvent, CaseAuthorizationState } from './caseAuthorization'
 import { ReviewCaseTeamPanel } from './ReviewCaseTeamPanel'
 
 type PrimaryState =
@@ -178,6 +180,57 @@ function roleLabel(roleKey: string, options: readonly { roleKey: string; label: 
   return options?.find((option) => option.roleKey === roleKey)?.label ?? caseRoleName(roleKey)
 }
 
+type SetPrimary = (update: (current: PrimaryState) => PrimaryState) => void
+
+// 主授权状态机（./caseAuthorization.ts）的执行器：持有当前状态，执行 reducer 返回的指令。
+function createAuthorizationController(setPrimary: SetPrimary) {
+  let state: CaseAuthorizationState = initialCaseAuthorization
+
+  function dispatch(event: CaseAuthorizationEvent, caseId: string): void {
+    const result = reduceCaseAuthorization(state, event)
+    state = result.state
+    for (const effect of result.effects) {
+      if (effect === 'remove-protected') {
+        setPrimary((current) => (current.caseId === caseId ? { status: 'unavailable', caseId } : current))
+      } else {
+        recheck(caseId, state.generation)
+      }
+    }
+  }
+
+  // 静默主读取：不进入加载态，不卸载页面；失败（500/网络）保持现有内容。
+  function recheck(caseId: string, generation: number): void {
+    void getReviewCase(caseId).then(
+      (data) => {
+        if (state.generation !== generation) return
+        dispatch({ type: 'response', generation, result: 'ok' }, caseId)
+        if (state.status === 'authorized') {
+          setPrimary((current) =>
+            current.status === 'ready' && current.caseId === caseId ? { status: 'ready', caseId, data } : current,
+          )
+        }
+      },
+      (error: unknown) => {
+        dispatch({ type: 'response', generation, result: unavailable(error) ? 'denied' : 'error' }, caseId)
+      },
+    )
+  }
+
+  return {
+    load: (): number => {
+      state = reduceCaseAuthorization(state, { type: 'load' }).state
+      return state.generation
+    },
+    generation: (): number => state.generation,
+    isCurrent: (generation: number): boolean => state.generation === generation,
+    status: () => state.status,
+    respond: (generation: number, caseId: string, result: 'ok' | 'denied' | 'error'): void =>
+      dispatch({ type: 'response', generation, result }, caseId),
+    trigger: (generation: number, caseId: string): void =>
+      dispatch({ type: 'trigger', generation }, caseId),
+  }
+}
+
 export function ReviewCaseDetailPage() {
   const { caseId } = useParams()
   const { state: sessionState } = useSession()
@@ -188,56 +241,10 @@ export function ReviewCaseDetailPage() {
   const [findings, setFindings] = useState<SectionState<FindingResponse[]>>(idleSection)
   const [activities, setActivities] = useState<SectionState<ReviewCaseActivityResponse[]>>(idleSection)
   const [management, setManagement] = useState<SectionState<ManagementCaseProgressResponse>>(idleSection)
-  // generation 只用来丢弃过期的“成功”响应（切换活动/重新加载之后）；授权拒绝没有过期之说。
-  const generation = useRef(0)
-  const recheckInFlight = useRef<string | null>(null)
-  const seenSubordinates = useRef(new Set<string>())
-
-  // 静默重新确认主授权（不进入加载态，不卸载页面）。团队写操作之后、或之前读取成功过的从属资源变成
-  // 403/404 时触发。规则：
-  // - 拒绝有粘性：任意一次主读取确认 403/404，立即移除全部受保护内容，之后的成功、失败或晚到响应都不能恢复，
-  //   只有切换活动或用户主动重新加载才会重置（此时 primary 状态本身被重置）；
-  // - single-flight：同一个活动同一时间只有一次重读，重读进行中的新触发合并到当前这次。
-  const recheckAuthorization = useCallback((checkedCaseId: string) => {
-    if (recheckInFlight.current === checkedCaseId) return
-    recheckInFlight.current = checkedCaseId
-    const startedGeneration = generation.current
-    void getReviewCase(checkedCaseId)
-      .then((data) => {
-        if (generation.current !== startedGeneration) return
-        setPrimary((current) =>
-          current.status === 'ready' && current.caseId === checkedCaseId
-            ? { status: 'ready', caseId: checkedCaseId, data }
-            : current,
-        )
-      })
-      .catch((error: unknown) => {
-        if (!unavailable(error)) return
-        setPrimary((current) =>
-          current.caseId === checkedCaseId ? { status: 'unavailable', caseId: checkedCaseId } : current,
-        )
-      })
-      .finally(() => {
-        if (recheckInFlight.current === checkedCaseId) recheckInFlight.current = null
-      })
-  }, [])
-
-  // 从属资源第一次就被拒绝只是权限边界（例如非管理者的管理进度），区块显示不可用即可；
-  // 只有之前成功读取过的资源后来被拒绝，才说明访问权可能变了。
-  const noteSubordinate = useCallback(
-    (caseIdOfResource: string, resource: string, denied: boolean) => {
-      const key = `${caseIdOfResource}:${resource}`
-      if (!denied) {
-        seenSubordinates.current.add(key)
-      } else if (seenSubordinates.current.has(key)) {
-        recheckAuthorization(caseIdOfResource)
-      }
-    },
-    [recheckAuthorization],
-  )
+  const authorization = useMemo(() => createAuthorizationController(setPrimary), [])
 
   useEffect(() => {
-    generation.current += 1
+    const loadGeneration = authorization.load()
     setMembers(idleSection)
     setFindings(idleSection)
     setActivities(idleSection)
@@ -253,16 +260,20 @@ export function ReviewCaseDetailPage() {
     setPrimary({ status: 'loading', caseId: requestedCaseId })
     void getReviewCase(requestedCaseId, controller.signal)
       .then((data) => {
-        if (!controller.signal.aborted) {
+        if (controller.signal.aborted) return
+        authorization.respond(loadGeneration, requestedCaseId, 'ok')
+        if (authorization.isCurrent(loadGeneration) && authorization.status() === 'authorized') {
           setPrimary({ status: 'ready', caseId: requestedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
         if (unavailable(error)) {
-          setPrimary({ status: 'unavailable', caseId: requestedCaseId })
+          // 状态机发出 remove-protected，把该活动置为不可用。
+          authorization.respond(loadGeneration, requestedCaseId, 'denied')
           return
         }
+        authorization.respond(loadGeneration, requestedCaseId, 'error')
         setPrimary({
           status: 'error',
           caseId: requestedCaseId,
@@ -270,7 +281,7 @@ export function ReviewCaseDetailPage() {
         })
       })
     return () => controller.abort()
-  }, [caseId, revision])
+  }, [authorization, caseId, revision])
 
   const primaryMatchesRoute = primary.caseId === caseId
   const authorizedCaseId =
@@ -278,19 +289,20 @@ export function ReviewCaseDetailPage() {
   useEffect(() => {
     if (authorizedCaseId === null) return
     const controller = new AbortController()
+    const generation = authorization.generation()
     setMembers({ status: 'loading', caseId: authorizedCaseId })
     setActivities({ status: 'loading', caseId: authorizedCaseId })
 
     void getReviewCaseMembers(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
-          noteSubordinate(authorizedCaseId, 'members', false)
           setMembers({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        noteSubordinate(authorizedCaseId, 'members', unavailable(error))
+        // 与主授权同语义的从属读取被拒（403/404）：重新确认主授权，不论是不是第一次。
+        if (unavailable(error)) authorization.trigger(generation, authorizedCaseId)
         setMembers(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -305,13 +317,13 @@ export function ReviewCaseDetailPage() {
     void getReviewCaseActivities(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
-          noteSubordinate(authorizedCaseId, 'activities', false)
           setActivities({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        noteSubordinate(authorizedCaseId, 'activities', unavailable(error))
+        // 与主授权同语义的从属读取被拒（403/404）：重新确认主授权，不论是不是第一次。
+        if (unavailable(error)) authorization.trigger(generation, authorizedCaseId)
         setActivities(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -324,24 +336,25 @@ export function ReviewCaseDetailPage() {
       })
 
     return () => controller.abort()
-  }, [authorizedCaseId, teamRevision])
+  }, [authorization, authorizedCaseId, teamRevision])
 
   useEffect(() => {
     if (authorizedCaseId === null) return
     const controller = new AbortController()
+    const generation = authorization.generation()
     setFindings({ status: 'loading', caseId: authorizedCaseId })
     setManagement({ status: 'loading', caseId: authorizedCaseId })
 
     void getReviewCaseFindings(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
-          noteSubordinate(authorizedCaseId, 'findings', false)
           setFindings({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        noteSubordinate(authorizedCaseId, 'findings', unavailable(error))
+        // 与主授权同语义的从属读取被拒（403/404）：重新确认主授权，不论是不是第一次。
+        if (unavailable(error)) authorization.trigger(generation, authorizedCaseId)
         setFindings(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -356,13 +369,12 @@ export function ReviewCaseDetailPage() {
     void getManagementCaseProgress(authorizedCaseId, controller.signal)
       .then((data) => {
         if (!controller.signal.aborted) {
-          noteSubordinate(authorizedCaseId, 'management', false)
           setManagement({ status: 'ready', caseId: authorizedCaseId, data })
         }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        noteSubordinate(authorizedCaseId, 'management', unavailable(error))
+        // 管理进度的 403/404 是额外的权限边界（非管理者的常态），只显示不可用，永不触发主授权重读。
         setManagement(
           unavailable(error)
             ? { status: 'unavailable', caseId: authorizedCaseId }
@@ -375,7 +387,7 @@ export function ReviewCaseDetailPage() {
       })
 
     return () => controller.abort()
-  }, [authorizedCaseId])
+  }, [authorization, authorizedCaseId])
 
   if (!primaryMatchesRoute || primary.status === 'loading') {
     return (
@@ -495,7 +507,7 @@ export function ReviewCaseDetailPage() {
         membersError={memberState.status === 'error' ? memberState.message : null}
         onTeamChanged={() => {
           setTeamRevision((value) => value + 1)
-          recheckAuthorization(reviewCase.id)
+          authorization.trigger(authorization.generation(), reviewCase.id)
         }}
         onAccessLost={() => setRevision((value) => value + 1)}
       />
