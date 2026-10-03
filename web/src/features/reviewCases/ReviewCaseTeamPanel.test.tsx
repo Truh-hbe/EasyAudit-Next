@@ -75,6 +75,26 @@ describe('ReviewCaseTeamPanel', () => {
     })
   })
 
+  it('tells the user how long to wait on 429/503 only when Retry-After is usable', () => {
+    for (const status of [429, 503]) {
+      for (const action of ['add', 'remove'] as const) {
+        expect(classifyTeamFailure(new ApiError(status, 'busy', 30), action)).toEqual({
+          kind: 'retry-later',
+          message: '服务繁忙，请30 秒后手动重试。',
+        })
+        expect(
+          classifyTeamFailure(new ApiError(status, 'busy', new Headers({ 'Retry-After': '12' })), action),
+        ).toMatchObject({ kind: 'retry-later', message: '服务繁忙，请12 秒后手动重试。' })
+        for (const unusable of [undefined, null, new Headers(), new Headers({ 'Retry-After': 'soon' })]) {
+          expect(classifyTeamFailure(new ApiError(status, 'busy', unusable), action)).toEqual({
+            kind: 'retry-later',
+            message: '服务繁忙，请稍后手动重试。',
+          })
+        }
+      }
+    }
+  })
+
   it('treats network failures and 5xx on writes as unknown results, not conflicts', () => {
     for (const error of [new ApiError(500, 'boom'), new TypeError('Failed to fetch')]) {
       const failure = classifyTeamFailure(error, 'remove')

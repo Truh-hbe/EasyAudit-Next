@@ -203,6 +203,43 @@ test('团队面板：移除的并发 409 提示数据已变化并重新读取，
   expect(state.removes).toHaveLength(1)
 })
 
+for (const { status, retryAfter, expected } of [
+  { status: 503, retryAfter: '30', expected: '服务繁忙，请30 秒后手动重试。' },
+  { status: 429, retryAfter: null, expected: '服务繁忙，请稍后手动重试。' },
+]) {
+  test(`团队面板：移除遇到 ${status}${retryAfter === null ? '（无 Retry-After）' : '（Retry-After）'}时提示等待并由用户手动重试，不自动重放`, async ({ page }) => {
+    const state = await mockCase(page, 'case-busy')
+    await page.goto('/review-cases/case-busy')
+    const team = page.getByRole('region', { name: '团队管理' })
+    await expect(team.getByText('Team Lead')).toBeVisible()
+    let deletes = 0
+    await page.route((url) => url.pathname.startsWith('/api/v1/review-cases/case-busy/members/'), (route) => {
+      deletes += 1
+      return route.fulfill({
+        status,
+        contentType: 'application/json',
+        headers: retryAfter === null ? {} : { 'Retry-After': retryAfter },
+        body: JSON.stringify({ detail: 'busy' }),
+      })
+    })
+    const readsBefore = state.memberReads
+
+    await team.getByRole('button', { name: /移除/ }).click()
+    await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
+    await expect(team.getByText(expected)).toBeVisible()
+    await expect(team.getByText('Team Lead')).toBeVisible()
+    // 等待足够久，确认没有后台自动重放，也没有把它当作冲突去刷新成员。
+    await page.waitForTimeout(1000)
+    expect(deletes).toBe(1)
+    expect(state.memberReads).toBe(readsBefore)
+
+    // 用户手动再点一次才会发第二个请求。
+    await team.getByRole('button', { name: /移除/ }).click()
+    await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
+    await expect.poll(() => deletes).toBe(2)
+  })
+}
+
 test('团队面板：移除时网络中断是“未确认”，先刷新核对，不当作冲突也不重放', async ({ page }) => {
   const state = await mockCase(page, 'case-unknown')
   state.removeStatus = 'abort'
@@ -283,6 +320,36 @@ for (const width of [375, 320]) {
     await expect(page.getByRole('heading', { name: 'Team Case case-narrow' })).toBeVisible()
     await expect(page.getByRole('region', { name: '团队管理' }).getByText('Team Lead')).toBeVisible()
     expect(await overflow()).toBeLessThanOrEqual(1)
+  })
+}
+
+for (const width of [375, 320]) {
+  test(`添加成员 Drawer 打开时在 ${width}px 下没有页面级横向溢出`, async ({ page }) => {
+    await mockCase(page, 'case-narrow-drawer')
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/review-cases/case-narrow-drawer')
+    const team = page.getByRole('region', { name: '团队管理' })
+    await expect(team.getByText('Team Lead')).toBeVisible()
+
+    await team.getByRole('button', { name: '添加成员' }).click()
+    const drawer = page.getByRole('dialog', { name: '添加成员' })
+    await expect(drawer.getByLabel('团队角色')).toBeVisible()
+    await drawer.getByLabel('成员').fill('Cand')
+    await expect(page.getByTitle('Candidate One')).toBeVisible()
+    const overflow = await page.evaluate(() => {
+      const root = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement
+      return root.scrollWidth - root.clientWidth
+    })
+    expect(overflow).toBeLessThanOrEqual(1)
+    // Drawer 本身也不应超出视口。
+    // 面板有滑入动画，轮询到动画结束后再断言位置。
+    await expect
+      .poll(async () => {
+        const box = await drawer.boundingBox()
+        return box !== null && box.x >= -1 && box.x + box.width <= width + 1
+      })
+      .toBe(true)
   })
 }
 
