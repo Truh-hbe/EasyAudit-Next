@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Page, type Request, type Response, type Route } from '@playwright/test'
 
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -380,35 +380,76 @@ for (const width of [375, 320]) {
   })
 }
 
+// 把 initialDone 之后的所有候选人搜索挂在 gate 上，并记录每个请求最终是被放行送达，还是被客户端取消。
+// 取消是预期结果（修复后的行为）；fulfill 因其他原因失败则记入 unexpectedErrors，由测试断言为空。
+function holdCandidateSearches(page: Page, caseId: string, gate: { promise: Promise<void> }) {
+  const tracker = {
+    active: false,
+    held: 0,
+    delivered: [] as Response[],
+    aborted: new Set<Request>(),
+    unexpectedErrors: [] as unknown[],
+    heldRequests: [] as Request[],
+  }
+  page.on('requestfailed', (request) => tracker.aborted.add(request))
+  page.on('response', (response) => {
+    if (tracker.heldRequests.includes(response.request())) tracker.delivered.push(response)
+  })
+  void page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}/member-candidates`, async (route) => {
+    if (!tracker.active) return route.fallback()
+    const request = route.request()
+    tracker.held += 1
+    tracker.heldRequests.push(request)
+    await gate.promise
+    try {
+      await fulfillJson(route, 200, [{ user_id: 'candidate-ghost', display_name: 'Ghost Candidate' }])
+    } catch (error) {
+      // 请求已被客户端取消时 fulfill 失败是预期的；requestfailed 事件可能稍晚到达，先让出一轮。
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      if (!tracker.aborted.has(request)) tracker.unexpectedErrors.push(error)
+    }
+  })
+  return {
+    tracker,
+    // 放行之后，等每个被挂住的请求要么完整送达页面、要么确认被取消，再等页面处理完响应。
+    async settle() {
+      await expect
+        .poll(() => tracker.delivered.length + [...tracker.aborted].filter((r) => tracker.heldRequests.includes(r)).length)
+        .toBe(tracker.held)
+      for (const response of tracker.delivered) await response.finished()
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            const win = globalThis as unknown as { requestAnimationFrame(cb: () => void): void }
+            win.requestAnimationFrame(() => win.requestAnimationFrame(() => resolve()))
+          }),
+      )
+      expect(tracker.unexpectedErrors).toEqual([])
+    },
+  }
+}
+
 test('添加成员：POST 403 之后，旧的候选人搜索 200 晚到也不会把姓名写回来', async ({ page }) => {
   const state = await mockCase(page, 'case-late-search')
   const addGate = deferred()
   const searchGate = deferred()
-  let initialDone = false
-  let gatedSearches = 0
-  // 候选人搜索和 POST 都停在途中，POST 失败后才放行搜索。
-  await page.route((url) => url.pathname === '/api/v1/review-cases/case-late-search/member-candidates', async (route) => {
-    if (!initialDone) return route.fallback()
-    gatedSearches += 1
-    await searchGate.promise
-    return fulfillJson(route, 200, [{ user_id: 'candidate-ghost', display_name: 'Ghost Candidate' }]).catch(() => undefined)
-  })
+  const held = holdCandidateSearches(page, 'case-late-search', searchGate)
   state.addStatus = 403
   await page.goto('/review-cases/case-late-search')
   const team = page.getByRole('region', { name: '团队管理' })
   await team.getByRole('button', { name: '添加成员' }).click()
   const drawer = page.getByRole('dialog', { name: '添加成员' })
   await pickCandidate(page, drawer, 'Cand', 'Candidate One')
-  initialDone = true
+  held.tracker.active = true
   state.addGate = addGate.promise
 
-  // 再发起一次搜索并让它停在途中（此后所有候选人请求都被 searchGate 挡住），然后提交添加。
+  // 再发起一次搜索并让它停在途中（此后所有候选人请求都被挂住），然后提交添加。
   await drawer.getByLabel('成员').fill('Late')
-  await expect.poll(() => gatedSearches).toBeGreaterThan(0)
+  await expect.poll(() => held.tracker.held).toBeGreaterThan(0)
   // 下拉框展开时按钮被遮挡，直接派发点击，不通过失焦收起下拉框。
   await drawer.getByRole('button', { name: '添加成员' }).dispatchEvent('click')
   await expect.poll(() => state.postCount).toBe(1)
-  // 再等过防抖时间，让提交时失焦可能触发的搜索也发出（修复后它们已被取消）。
+  // 等过防抖时间，让提交时失焦可能触发的搜索也发出（修复后它们已被取消）。
   await page.waitForTimeout(600)
 
   // POST 先失败：候选人和已选成员被清空，403 提示出现；然后旧搜索才返回 200。
@@ -416,12 +457,46 @@ test('添加成员：POST 403 之后，旧的候选人搜索 200 晚到也不会
   await expect(drawer.getByText('当前用户没有管理审查团队的权限。')).toBeVisible()
   await expect(drawer.getByText('Candidate One')).toHaveCount(0)
   searchGate.resolve()
-  await page.waitForTimeout(500)
+  await held.settle()
 
   await drawer.getByLabel('成员').click()
   await expect(page.getByTitle('Ghost Candidate')).toHaveCount(0)
   await expect(drawer.getByText('Candidate One')).toHaveCount(0)
   await expect(drawer.getByText('当前用户没有管理审查团队的权限。')).toBeVisible()
+})
+
+test('添加成员：POST 在途时关闭重开，POST 403 后新会话里晚到的候选人搜索也不会写回姓名', async ({ page }) => {
+  const state = await mockCase(page, 'case-reopen-403')
+  const addGate = deferred()
+  const searchGate = deferred()
+  const held = holdCandidateSearches(page, 'case-reopen-403', searchGate)
+  state.addStatus = 403
+  await page.goto('/review-cases/case-reopen-403')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('button', { name: '添加成员' }).click()
+  let drawer = page.getByRole('dialog', { name: '添加成员' })
+  await pickCandidate(page, drawer, 'Cand', 'Candidate One')
+  state.addGate = addGate.promise
+  await drawer.getByRole('button', { name: '添加成员' }).click()
+  await expect.poll(() => state.postCount).toBe(1)
+
+  // POST 仍在途：关闭再重开，新会话发起的候选搜索停在途中。
+  held.tracker.active = true
+  await drawer.getByRole('button', { name: /Close|关闭/ }).first().click()
+  await expect(page.getByRole('dialog', { name: '添加成员' })).toHaveCount(0)
+  await team.getByRole('button', { name: '添加成员' }).click()
+  drawer = page.getByRole('dialog', { name: '添加成员' })
+  await expect.poll(() => held.tracker.held).toBeGreaterThan(0)
+
+  // 旧 POST 返回 403（发起它的会话已不是当前会话），随后新会话的搜索才返回 200。
+  addGate.resolve()
+  await expect(team.getByText('当前用户没有管理审查团队的权限。')).toBeVisible()
+  searchGate.resolve()
+  await held.settle()
+
+  await drawer.getByLabel('成员').click()
+  await expect(page.getByTitle('Ghost Candidate')).toHaveCount(0)
+  await expect(drawer.getByText('Candidate One')).toHaveCount(0)
 })
 
 function deferred() {

@@ -215,12 +215,16 @@ function AddMemberDrawer({
       setSubmitting(false)
     }
     const inSession = isCurrentSession()
-    if (!outcome.ok && inSession && outcome.failure.kind !== 'gone') {
-      cancelSearch()
-      setSearching(false)
-      setCandidates([])
-      form.setFieldValue('member', undefined)
-      setError(outcome.failure)
+    if (!outcome.ok && outcome.failure.kind !== 'gone' && caseIdRef.current === commandCaseId) {
+      // 403 说明同一审查活动的权限已变化：不论发起请求的编辑会话是否还在，当前所有会话的候选搜索、
+      // 候选人和已选姓名都要失效。其余失败只影响发起它的会话。
+      if (inSession || outcome.failure.kind === 'forbidden') {
+        cancelSearch()
+        setSearching(false)
+        setCandidates([])
+        form.setFieldValue('member', undefined)
+      }
+      if (inSession) setError(outcome.failure)
     }
     onOutcome(outcome, commandCaseId, inSession)
   }
