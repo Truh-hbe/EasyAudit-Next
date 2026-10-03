@@ -71,7 +71,7 @@ DB 的 statement/lock/idle 设置由业务 engine 追加至 libpq options，同�
 
 | 输入 | 消费与默认 / 校验 | 生效与注意事项 |
 | --- | --- | --- |
-| `EASYAUDIT_RELEASE` | Compose 镜像 tag/label 必填；backup 核对运行中 api/web/object-storage label 与检出一致；restore 核对 manifest 与 HEAD/env/已有 api label | 每个 Shell/unit 显式 export；不是长期写死在模板里的值 |
+| `EASYAUDIT_RELEASE` | Compose 镜像 tag/label 必填；backup 核对运行中 api/web/object-storage label 与 `EASYAUDIT_RELEASE` 一致（不读取 HEAD，检出是否对齐由操作者核对）；restore 核对 manifest 与 HEAD/env/已有 api label | 每个 Shell/unit 显式 export；不是长期写死在模板里的值 |
 | `COMPOSE_PROJECT_NAME` | Docker Compose project；Compose 默认 name=`easyaudit`；drill/smoke 在脚本中自行指定固定测试 project | 所有命令和脚本必须使用已确认的同一 project；改名不会自动隔离外部配置或已有数据 |
 | `EASYAUDIT_SECRETS_DIR` / `EASYAUDIT_CERTS_DIR` | Compose 默认 `deploy/secrets` / `deploy/certs`；restore Bash 检查 Shell 值或自身 deploy 路径 | 使用绝对路径并 export；文件或挂载改变时重建消费者 |
 | `EASYAUDIT_HTTPS_PORT` | 默认 443，展开为 gateway 发布端口；工具不保证目标端口空闲 | 试点保留 443；测试可指定空闲端口，recreate gateway |
