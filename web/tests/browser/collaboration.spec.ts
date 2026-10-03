@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
-import { openAssignDrawer, pickCandidate } from './assignmentDrawer'
+import { openAssignDrawer, pickCandidate } from './assignmentDrawer.js'
 
 const user = {
   id: '11111111-1111-1111-1111-111111111111',

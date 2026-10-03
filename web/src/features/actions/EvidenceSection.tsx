@@ -43,7 +43,7 @@ interface EvidenceSectionProps {
 }
 
 // 证据：Upload 只负责选择文件和文件列表；传输走 uploadActionEvidence（原始字节、MIME、编码文件名、说明），
-// 由明确的“上传证据”按钮触发（beforeUpload 返回 false，不使用 action / customRequest）。
+// 由明确的“上传证据”按钮触发（beforeUpload 返回 false，不使用 Upload 自带的传输）。
 // 没有真实的上传进度，所以不显示百分比；中断后不自动重传。下载是同源附件链接，不读成 Blob。
 export function EvidenceSection({ actionId, cancelled, state, names, onRefresh }: EvidenceSectionProps) {
   const [fileList, setFileList] = useState<UploadFile[]>([])

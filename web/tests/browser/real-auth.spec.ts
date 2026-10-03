@@ -7,6 +7,7 @@ import {
   type Page,
 } from '@playwright/test'
 
+import { openAssignDrawer, searchCandidate } from './assignmentDrawer.js'
 import { notificationViewLabel } from './notificationView.js'
 
 const COOKIE_NAME = '__Host-easyaudit_session'
@@ -529,14 +530,15 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   await page.getByRole('link', { name: '打开当前目标' }).click()
   await expect(page.getByRole('heading', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
 
-  const newActionForm = page.getByRole('heading', { name: '新建整改项' }).locator('..')
+  await page.getByRole('button', { name: '新建整改项', exact: true }).click()
+  const newActionForm = page.getByRole('dialog', { name: '新建整改项' })
   await newActionForm.getByLabel('标题').fill(JOURNEY_ACTION_TITLE)
   const createActionResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/actions` &&
       response.request().method() === 'POST',
   )
-  await newActionForm.getByRole('button', { name: '新建整改项' }).click()
+  await newActionForm.getByRole('button', { name: '创建整改项' }).click()
   const createActionResponse = await createActionResponsePromise
   expect(createActionResponse.status()).toBe(201)
   const createdAction = (await createActionResponse.json()) as { id: string; lifecycle: string }
@@ -545,17 +547,18 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   await page.getByRole('link', { name: JOURNEY_ACTION_TITLE }).click()
   await expect(page.getByRole('heading', { name: JOURNEY_ACTION_TITLE })).toBeVisible()
 
-  const assigneeSection = page.getByRole('heading', { name: '执行关系' }).locator('..')
-  await assigneeSection.getByLabel('搜索').fill('Journey Owner')
-  await assigneeSection.getByRole('button', { name: '搜索候选' }).click()
-  const ownerCandidate = assigneeSection.getByRole('listitem').filter({ hasText: JOURNEY_OWNER_DISPLAY_NAME })
+  const assigneeSection = page.getByRole('region', { name: '整改事项' })
+  const assignDrawer = await openAssignDrawer(page, '添加执行人', '添加执行人')
+  await searchCandidate(assignDrawer, '执行人', 'Journey Owner')
+  const ownerCandidate = page.getByTitle(JOURNEY_OWNER_DISPLAY_NAME, { exact: true })
   await expect(ownerCandidate).toBeVisible()
   const addAssigneeResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) === `/api/v1/action-items/${createdAction.id}/assignees` &&
       response.request().method() === 'POST',
   )
-  await ownerCandidate.getByRole('button', { name: '添加' }).click()
+  await ownerCandidate.click()
+  await assignDrawer.getByRole('button', { name: '添加执行人' }).click()
   expect((await addAssigneeResponsePromise).status()).toBe(201)
   await expect(assigneeSection.getByText(JOURNEY_OWNER_DISPLAY_NAME, { exact: true })).toBeVisible()
 
@@ -582,21 +585,25 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   await expect(page.getByRole('button', { name: '重新打开' })).toBeVisible()
 
   await page.getByRole('link', { name: '返回发现项' }).click()
-  await page.getByLabel('根本原因').fill('Real multi-user root cause accepted through Product UI')
+  await page.getByRole('button', { name: '填写整改计划' }).click()
+  const planDrawer = page.getByRole('dialog', { name: '整改计划' })
+  await planDrawer.getByLabel('根本原因').fill('Real multi-user root cause accepted through Product UI')
   const planResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/rectification-submissions` &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: '提交整改计划' }).click()
+  await planDrawer.getByRole('button', { name: '提交整改计划' }).click()
   expect((await planResponsePromise).status()).toBe(201)
-  await page.getByLabel('整改完成说明').fill('First correction completed through assigned Action')
+  await page.getByRole('button', { name: '提交整改完成' }).click()
+  const firstCompletion = page.getByRole('dialog', { name: '整改完成' })
+  await firstCompletion.getByLabel('整改完成说明').fill('First correction completed through assigned Action')
   const firstSubmitResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/rectification-submissions` &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: '提交验证' }).click()
+  await firstCompletion.getByRole('button', { name: '提交验证' }).click()
   const firstSubmitResponse = await firstSubmitResponsePromise
   expect(firstSubmitResponse.status()).toBe(201)
   const firstSubmitted = (await firstSubmitResponse.json()) as { finding: { lifecycle: string } }
@@ -612,13 +619,15 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   const verificationLink = page.getByRole('link', { name: JOURNEY_FINDING_TITLE })
   await expect(verificationLink).toBeVisible()
   await verificationLink.click()
-  await page.getByLabel('驳回原因').fill('Reviewer requires a second corrective cycle')
+  await page.getByRole('button', { name: '驳回验证' }).click()
+  const rejectDialog = page.getByRole('dialog', { name: '驳回验证' })
+  await rejectDialog.getByLabel('驳回原因').fill('Reviewer requires a second corrective cycle')
   const rejectResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/verification-submissions` &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: '驳回验证' }).click()
+  await rejectDialog.getByRole('button', { name: '确认驳回' }).click()
   const rejectResponse = await rejectResponsePromise
   expect(rejectResponse.status()).toBe(201)
   const rejected = (await rejectResponse.json()) as { finding: { lifecycle: string } }
@@ -657,13 +666,15 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   expect(((await secondCompleteResponse.json()) as { lifecycle: string }).lifecycle).toBe('done')
 
   await page.getByRole('link', { name: '返回发现项' }).click()
-  await page.getByLabel('整改完成说明').fill('Second correction completed after reviewer rejection')
+  await page.getByRole('button', { name: '提交整改完成' }).click()
+  const secondCompletion = page.getByRole('dialog', { name: '整改完成' })
+  await secondCompletion.getByLabel('整改完成说明').fill('Second correction completed after reviewer rejection')
   const secondSubmitResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) === `/api/v1/findings/${JOURNEY_FINDING_ID}/rectification-submissions` &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: '提交验证' }).click()
+  await secondCompletion.getByRole('button', { name: '提交验证' }).click()
   const secondSubmitResponse = await secondSubmitResponsePromise
   expect(secondSubmitResponse.status()).toBe(201)
   const secondSubmitted = (await secondSubmitResponse.json()) as { finding: { lifecycle: string } }
