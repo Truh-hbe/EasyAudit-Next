@@ -63,6 +63,8 @@ export function ActorAssignDrawer({
   const [form] = Form.useForm<FormValues>()
   const [candidates, setCandidates] = useState<AssignmentCandidateResponse[]>([])
   const [searching, setSearching] = useState(false)
+  // 重置时重建 Select，确保下拉里不残留上一次的候选名称。
+  const [selectKey, setSelectKey] = useState(0)
   const [searchedQuery, setSearchedQuery] = useState<string | null>(null)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -89,6 +91,7 @@ export function ActorAssignDrawer({
     setSearching(false)
     setSearchedQuery(null)
     setSearchError(null)
+    setSelectKey((key) => key + 1)
   }
 
   useEffect(() => {
@@ -218,6 +221,7 @@ export function ActorAssignDrawer({
         </Form.Item>
         <Form.Item label={actorFieldLabel} name="actor" rules={[{ required: true, message: `请选择${actorFieldLabel}` }]}>
           <Select
+            key={selectKey}
             labelInValue
             showSearch={{
               filterOption: false,
