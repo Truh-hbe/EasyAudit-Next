@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+import { openAssignDrawer, pickCandidate } from './assignmentDrawer'
+
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
   organization_id: '22222222-2222-2222-2222-222222222222',
@@ -111,7 +113,7 @@ test('Finding visibility revocation replaces previously authorized content with 
   childRequestsAfterRevocation = 0
   allowed = false
   await page.reload()
-  await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   await expect(page.getByText('Previously visible Finding')).toHaveCount(0)
   expect(childRequestsAfterRevocation).toBe(0)
 })
@@ -131,7 +133,7 @@ test('same-org refusal and cross-org non-resolution never start Finding child re
       return fulfillJson(route, 500, { detail: 'must not be called' })
     })
     await page.goto(`/findings/${target.id}`)
-    await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
+    await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   }
   expect(childRequests).toBe(0)
 })
@@ -177,12 +179,13 @@ test('participant success renders only the persisted relationship returned by au
   )
 
   await page.goto(`/findings/${findingId}`)
-  await page.getByLabel('搜索').fill('Candidate')
-  await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByText('Candidate Department')).toBeVisible()
-  await page.getByRole('button', { name: '添加', exact: true }).click()
+  const drawer = await openAssignDrawer(page, '添加参与人', '添加参与人')
+  await pickCandidate(drawer, '参与人', 'Candidate', 'Candidate Department')
+  await drawer.getByRole('button', { name: '添加参与人' }).click()
 
-  await expect(page.getByText('Persisted Department')).toBeVisible()
+  await expect(page.getByRole('list', { name: '参与方' }).getByText('Persisted Department')).toBeVisible()
+  await expect(page.getByText('责任方', { exact: true })).toBeVisible()
+  await expect(page.getByText('责任部门 Persisted Department')).toBeVisible() // 首屏概览同步来自刷新后的服务端数据
   await expect(page.getByText('Candidate Department')).toHaveCount(0)
 })
 

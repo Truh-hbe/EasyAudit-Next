@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+import { openAssignDrawer, pickCandidate, searchCandidate } from './assignmentDrawer'
+
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
   organization_id: '22222222-2222-2222-2222-222222222222',
@@ -116,26 +118,24 @@ test('participant candidate lookup exposes loading, no-results, error and select
   )
 
   await page.goto('/findings/finding-candidates')
-  const search = page.getByLabel('搜索')
+  const drawer = await openAssignDrawer(page, '添加参与人', '添加参与人')
 
-  await search.fill('Slow')
-  await page.getByRole('button', { name: '搜索候选' }).click()
+  await searchCandidate(drawer, '参与人', 'Q')
+  await expect(page.getByText('请输入至少 2 个字符搜索')).toBeVisible()
+
+  await searchCandidate(drawer, '参与人', 'Slow')
   await expect(page.getByText('正在查询可选人员…')).toBeVisible()
   await expect(page.getByText('没有匹配候选。')).toBeVisible()
 
-  await search.fill('None')
-  await page.getByRole('button', { name: '搜索候选' }).click()
+  await searchCandidate(drawer, '参与人', 'None')
   await expect(page.getByText('没有匹配候选。')).toBeVisible()
 
-  await search.fill('Boom')
-  await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByRole('alert')).toContainText('candidate lookup failed')
+  await searchCandidate(drawer, '参与人', 'Boom')
+  await expect(drawer.getByRole('alert')).toContainText('candidate lookup failed')
 
-  await search.fill('Quality')
-  await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByText('Quality Department')).toBeVisible()
-  await page.getByRole('button', { name: '添加', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('participant authority changed')
+  await pickCandidate(drawer, '参与人', 'Quality', 'Quality Department')
+  await drawer.getByRole('button', { name: '添加参与人' }).click()
+  await expect(drawer.getByRole('alert')).toContainText('participant authority changed')
   await expect(page.getByText('暂无参与关系。')).toBeVisible()
 })
 

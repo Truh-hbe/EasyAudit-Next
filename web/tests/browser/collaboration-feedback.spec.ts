@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+import { openAssignDrawer, pickCandidate } from './assignmentDrawer'
+
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
   organization_id: '22222222-2222-2222-2222-222222222222',
@@ -54,12 +56,12 @@ test('Finding participant 409 remains visible after authoritative terminal refet
   })
 
   await page.goto('/findings/finding-feedback')
-  await page.getByLabel('搜索').fill('Quality')
-  await page.getByRole('button', { name: '搜索候选' }).click()
-  await page.getByRole('button', { name: '添加', exact: true }).click()
+  const drawer = await openAssignDrawer(page, '添加参与人', '添加参与人')
+  await pickCandidate(drawer, '参与人', 'Quality', 'Quality Department')
+  await drawer.getByRole('button', { name: '添加参与人' }).click()
 
   await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
-  await expect(page.getByRole('status')).toContainText('Concurrent Finding transition')
+  await expect(drawer.getByRole('alert')).toContainText('Concurrent Finding transition')
   await expect(page.getByText('Quality Department')).toHaveCount(0)
   await expect(page.getByText('暂无参与关系。')).toBeVisible()
 })
@@ -107,7 +109,7 @@ test('Action command feedback is retained for refetch but cleared when the route
 
   await page.goto('/action-items/action-a')
   await page.getByRole('button', { name: '开始整改项', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('Action A stale transition')
+  await expect(page.getByRole('alert')).toContainText('Action A stale transition')
   await expect(page.getByRole('heading', { name: 'Action A', exact: true })).toBeVisible()
 
   await page.evaluate(
@@ -115,5 +117,5 @@ test('Action command feedback is retained for refetch but cleared when the route
   )
 
   await expect(page.getByRole('heading', { name: 'Action B', exact: true })).toBeVisible()
-  await expect(page.getByRole('status')).toHaveCount(0)
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })

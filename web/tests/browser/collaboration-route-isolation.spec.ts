@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+import { openAssignDrawer, searchCandidate } from './assignmentDrawer'
+
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
   organization_id: '22222222-2222-2222-2222-222222222222',
@@ -102,21 +104,18 @@ test('Finding route change clears drafts and ignores a late candidate search fro
   )
 
   await page.goto('/findings/finding-route-a')
-  await page.getByLabel('搜索').fill('Late')
-  await page.getByLabel('标题').fill('Draft Action A')
-  await page.getByLabel('根本原因').fill('Root cause A')
-  await page.getByLabel('整改完成说明').fill('Completion A')
-  await page.getByRole('button', { name: '搜索候选' }).click()
+  const drawer = await openAssignDrawer(page, '添加参与人', '添加参与人')
+  await searchCandidate(drawer, '参与人', 'Late')
   await expect(page.getByText('正在查询可选人员…')).toBeVisible()
 
   await switchRoute(page, '/findings/finding-route-b')
   await expect(page.getByRole('heading', { name: 'Route Finding finding-route-b' })).toBeVisible()
-  await expect(page.getByLabel('搜索')).toHaveValue('')
-  await expect(page.getByLabel('标题')).toHaveValue('')
-  await expect(page.getByLabel('根本原因')).toHaveValue('')
-  await expect(page.getByLabel('整改完成说明')).toHaveValue('')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
 
   await new Promise((resolve) => setTimeout(resolve, 350))
+  await expect(page.getByText('Late Candidate From A')).toHaveCount(0)
+  const reopened = await openAssignDrawer(page, '添加参与人', '添加参与人')
+  await expect(reopened.getByRole('combobox', { name: '参与人' })).toHaveValue('')
   await expect(page.getByText('Late Candidate From A')).toHaveCount(0)
 })
 
@@ -155,16 +154,14 @@ test('Action route change clears drafts and ignores a late mutation result from 
   )
 
   await page.goto('/action-items/action-route-a')
-  await page.getByLabel('搜索').fill('Candidate A')
-  await page.getByLabel('取消原因').fill('Reason A')
   await page.getByRole('button', { name: '开始整改项', exact: true }).click()
 
   await switchRoute(page, '/action-items/action-route-b')
   await expect(page.getByRole('heading', { name: 'Route Action action-route-b' })).toBeVisible()
-  await expect(page.getByLabel('搜索')).toHaveValue('')
-  await expect(page.getByLabel('取消原因')).toHaveValue('')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
 
   await new Promise((resolve) => setTimeout(resolve, 350))
-  await expect(page.getByRole('status')).toHaveCount(0)
+  await expect(page.getByText('已完成：开始整改项')).toHaveCount(0)
+  await expect(page.getByRole('alert')).toHaveCount(0)
   await expect(page.getByRole('article').locator('header').getByText('待开始', { exact: true })).toBeVisible()
 })

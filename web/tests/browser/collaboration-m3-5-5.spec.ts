@@ -267,7 +267,7 @@ test('M3.5.5 narrow product route matrix keeps essential controls inside the doc
 
   for (const [path, heading] of routes) {
     await page.goto(path)
-    await expect(page.getByRole('heading', { name: heading }).first()).toBeVisible()
+    await expect(page.getByRole('heading', { name: heading }).first(), path).toBeVisible()
     await expectNoDocumentOverflow(page)
   }
   await expect(page.getByText(user.display_name)).toBeVisible()
