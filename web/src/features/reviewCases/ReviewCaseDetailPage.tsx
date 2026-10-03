@@ -78,7 +78,7 @@ function FindingSection({ state }: { state: SectionState<FindingResponse[]> }) {
         {state.status === 'ready' ? (
           <ItemList
             label="发现项"
-            emptyText="暂无发现项。"
+            emptyText="暂无可见的发现项。"
             items={state.data.map((finding) => ({
               key: finding.id,
               content: (

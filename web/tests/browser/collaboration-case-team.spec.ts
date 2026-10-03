@@ -596,17 +596,25 @@ async function caseWithOtherMember(page: Page, caseId: string) {
 
 test('主授权重读：从属资源第一次就被拒绝（观察员看管理进度）不触发额外的主读取', async ({ page }) => {
   await mockCase(page, 'case-edge')
-  await page.route((url) => url.pathname === '/api/v1/management/review-cases/case-edge/progress', (route) =>
-    fulfillJson(route, 403, { detail: 'forbidden' }),
-  )
+  const managementGate = deferred()
+  await page.route((url) => url.pathname === '/api/v1/management/review-cases/case-edge/progress', async (route) => {
+    await managementGate.promise
+    return fulfillJson(route, 403, { detail: 'forbidden' })
+  })
   const counters = await stubReadPolicy(page, 'case-edge', {})
   counters.arm()
   await page.goto('/review-cases/case-edge')
-  await expect(page.getByText('当前用户没有可用的管理进度摘要。')).toBeVisible()
+  // 管理进度只在主授权通过后才会请求；它被扣住时，主加载已经完成。
   await expect(page.getByRole('region', { name: '团队管理' }).getByText('Team Lead')).toBeVisible()
-  await page.waitForTimeout(500)
-  // 只有加载本身的主读取（开发模式 StrictMode 下为 2 次）；管理进度的首次 403 没有带来额外读取。
-  expect(counters.caseReads).toBe(2)
+  // 开发模式 StrictMode 会让首次加载的请求次数不稳定（取决于 abort 与拦截器的先后），所以只记录基线，不断言精确次数。
+  const baseline = counters.caseReads
+  expect(baseline).toBeGreaterThanOrEqual(1)
+
+  managementGate.resolve()
+  await expect(page.getByText('当前用户没有可用的管理进度摘要。')).toBeVisible()
+  // 触发会在同一个响应处理里同步发出请求；给拦截器一个确定的处理窗口后确认没有新增。
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 300)))
+  expect(counters.caseReads).toBe(baseline)
 })
 
 test('主授权重读：重读在途时又移除了自己，旧重读返回 200 后补读一次，补读 403 即移除内容', async ({ page }) => {
