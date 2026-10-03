@@ -131,8 +131,11 @@ function AddMemberDrawer({
   const caseIdRef = useRef(reviewCase.id)
   caseIdRef.current = reviewCase.id
   const searchRef = useRef<{ controller: AbortController; timer: number | null } | null>(null)
+  // 搜索代次：每次取消或发起新搜索都递增，晚到的响应只在代次仍相同时才能写入状态。
+  const searchGenerationRef = useRef(0)
 
   function cancelSearch() {
+    searchGenerationRef.current += 1
     const current = searchRef.current
     if (current === null) return
     current.controller.abort()
@@ -149,17 +152,19 @@ function AddMemberDrawer({
       return
     }
     const controller = new AbortController()
+    const generation = searchGenerationRef.current
+    const isStale = () => controller.signal.aborted || searchGenerationRef.current !== generation
     setSearching(true)
     setError(null)
     const timer = window.setTimeout(() => {
       void searchReviewCaseMemberCandidates(reviewCase.id, roleKey, query, controller.signal)
         .then((data) => {
-          if (controller.signal.aborted) return
+          if (isStale()) return
           setCandidates(data)
           setSearching(false)
         })
         .catch((failure: unknown) => {
-          if (controller.signal.aborted) return
+          if (isStale()) return
           setCandidates([])
           setSearching(false)
           const classified = classifyTeamFailure(failure, 'search')
@@ -191,6 +196,9 @@ function AddMemberDrawer({
   async function submit(values: AddMemberFormValues) {
     if (values.member === undefined || submittingRef.current) return
     submittingRef.current = true
+    // 提交前取消在途搜索，避免它在提交结果之后把候选人写回来。
+    cancelSearch()
+    setSearching(false)
     const session = sessionRef.current
     const commandCaseId = reviewCase.id
     const isCurrentSession = () => sessionRef.current === session
@@ -208,6 +216,8 @@ function AddMemberDrawer({
     }
     const inSession = isCurrentSession()
     if (!outcome.ok && inSession && outcome.failure.kind !== 'gone') {
+      cancelSearch()
+      setSearching(false)
       setCandidates([])
       form.setFieldValue('member', undefined)
       setError(outcome.failure)

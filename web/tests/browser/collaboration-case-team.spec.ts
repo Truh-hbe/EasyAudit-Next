@@ -316,6 +316,29 @@ for (const width of [375, 320]) {
     await expect(page.getByRole('link', { name: /A very long review case title/ })).toBeVisible()
     expect(await overflow()).toBeLessThanOrEqual(1)
 
+    // 状态单元格必须落在表格滚动容器的当前可视区域内（长标题不能把它挤出首屏）。
+    const statusCell = page.getByRole('row', { name: /A very long review case title/ }).getByRole('cell', { name: '审查中' })
+    await expect(statusCell).toBeVisible()
+    const cell = await statusCell.boundingBox()
+    const container = await statusCell.evaluate((element) => {
+      const win = globalThis as unknown as {
+        getComputedStyle(el: unknown): { overflowX: string }
+      }
+      let node = (element as unknown as { parentElement: unknown }).parentElement as
+        | { parentElement: unknown; getBoundingClientRect(): { left: number; right: number } }
+        | null
+      while (node !== null && !['auto', 'scroll'].includes(win.getComputedStyle(node).overflowX)) {
+        node = node.parentElement as typeof node
+      }
+      if (node === null) return null
+      const rect = node.getBoundingClientRect()
+      return { left: rect.left, right: rect.right }
+    })
+    expect(cell).not.toBeNull()
+    expect(container).not.toBeNull()
+    expect(cell!.x).toBeGreaterThanOrEqual(container!.left - 1)
+    expect(cell!.x + cell!.width).toBeLessThanOrEqual(container!.right + 1)
+
     await page.goto('/review-cases/case-narrow')
     await expect(page.getByRole('heading', { name: 'Team Case case-narrow' })).toBeVisible()
     await expect(page.getByRole('region', { name: '团队管理' }).getByText('Team Lead')).toBeVisible()
@@ -336,12 +359,16 @@ for (const width of [375, 320]) {
     await expect(drawer.getByLabel('团队角色')).toBeVisible()
     await drawer.getByLabel('成员').fill('Cand')
     await expect(page.getByTitle('Candidate One')).toBeVisible()
-    const overflow = await page.evaluate(() => {
-      const root = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
-        .document.documentElement
-      return root.scrollWidth - root.clientWidth
-    })
-    expect(overflow).toBeLessThanOrEqual(1)
+    // 滑入动画期间面板在视口外，scrollWidth 会瞬时变大；轮询到稳定状态再断言。
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const root = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+            .document.documentElement
+          return root.scrollWidth - root.clientWidth
+        }),
+      )
+      .toBeLessThanOrEqual(1)
     // Drawer 本身也不应超出视口。
     // 面板有滑入动画，轮询到动画结束后再断言位置。
     await expect
@@ -352,6 +379,50 @@ for (const width of [375, 320]) {
       .toBe(true)
   })
 }
+
+test('添加成员：POST 403 之后，旧的候选人搜索 200 晚到也不会把姓名写回来', async ({ page }) => {
+  const state = await mockCase(page, 'case-late-search')
+  const addGate = deferred()
+  const searchGate = deferred()
+  let initialDone = false
+  let gatedSearches = 0
+  // 候选人搜索和 POST 都停在途中，POST 失败后才放行搜索。
+  await page.route((url) => url.pathname === '/api/v1/review-cases/case-late-search/member-candidates', async (route) => {
+    if (!initialDone) return route.fallback()
+    gatedSearches += 1
+    await searchGate.promise
+    return fulfillJson(route, 200, [{ user_id: 'candidate-ghost', display_name: 'Ghost Candidate' }]).catch(() => undefined)
+  })
+  state.addStatus = 403
+  await page.goto('/review-cases/case-late-search')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('button', { name: '添加成员' }).click()
+  const drawer = page.getByRole('dialog', { name: '添加成员' })
+  await pickCandidate(page, drawer, 'Cand', 'Candidate One')
+  initialDone = true
+  state.addGate = addGate.promise
+
+  // 再发起一次搜索并让它停在途中（此后所有候选人请求都被 searchGate 挡住），然后提交添加。
+  await drawer.getByLabel('成员').fill('Late')
+  await expect.poll(() => gatedSearches).toBeGreaterThan(0)
+  // 下拉框展开时按钮被遮挡，直接派发点击，不通过失焦收起下拉框。
+  await drawer.getByRole('button', { name: '添加成员' }).dispatchEvent('click')
+  await expect.poll(() => state.postCount).toBe(1)
+  // 再等过防抖时间，让提交时失焦可能触发的搜索也发出（修复后它们已被取消）。
+  await page.waitForTimeout(600)
+
+  // POST 先失败：候选人和已选成员被清空，403 提示出现；然后旧搜索才返回 200。
+  addGate.resolve()
+  await expect(drawer.getByText('当前用户没有管理审查团队的权限。')).toBeVisible()
+  await expect(drawer.getByText('Candidate One')).toHaveCount(0)
+  searchGate.resolve()
+  await page.waitForTimeout(500)
+
+  await drawer.getByLabel('成员').click()
+  await expect(page.getByTitle('Ghost Candidate')).toHaveCount(0)
+  await expect(drawer.getByText('Candidate One')).toHaveCount(0)
+  await expect(drawer.getByText('当前用户没有管理审查团队的权限。')).toBeVisible()
+})
 
 function deferred() {
   let resolve!: () => void

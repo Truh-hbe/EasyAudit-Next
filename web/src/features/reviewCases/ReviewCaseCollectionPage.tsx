@@ -36,16 +36,16 @@ function nonNegativeInteger(raw: string | null): number {
 
 const columns: TableColumnsType<ReviewCaseResponse> = [
   {
-    title: '审查活动',
-    dataIndex: 'title',
-    key: 'title',
-    render: (_title: string, reviewCase) => <Link to={`/review-cases/${reviewCase.id}`}>{reviewCase.title}</Link>,
-  },
-  {
     title: '状态',
     dataIndex: 'lifecycle',
     key: 'lifecycle',
     render: (_lifecycle: unknown, reviewCase) => <StatusTag kind="reviewCase" value={reviewCase.lifecycle} />,
+  },
+  {
+    title: '审查活动',
+    dataIndex: 'title',
+    key: 'title',
+    render: (_title: string, reviewCase) => <Link to={`/review-cases/${reviewCase.id}`}>{reviewCase.title}</Link>,
   },
   {
     title: '审查场景',
