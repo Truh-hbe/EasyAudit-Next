@@ -227,6 +227,7 @@ test('verification approve success closes from server truth and refreshes persis
 
   await page.goto(`/findings/${findingId}`)
   await page.getByRole('button', { name: '通过验证' }).click()
+  await page.getByRole('dialog', { name: '通过验证' }).getByRole('button', { name: '确认通过' }).click()
 
   await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
@@ -262,7 +263,8 @@ test('Finding creation 403 leaves the authorized Case list unchanged and creates
   await page.getByLabel('项目类别').fill('assembly')
   await page.getByRole('button', { name: '新建发现项' }).click()
 
-  await expect(page.getByRole('alert')).toContainText('create authority revoked')
+  await expect(page.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('create authority revoked')).toHaveCount(0) // 不展示后端 detail
   await expect(page.getByText('暂无可见的发现项。')).toBeVisible()
   await expect(page.getByText('Forbidden local draft')).toHaveCount(0)
   await expect(page).toHaveURL(new RegExp(`/review-cases/${caseId}$`))

@@ -159,6 +159,7 @@ test('compliance_review@1 nonconformity goes issue → plan/completion → appro
   await expect(header(page).getByText('待验证', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: '通过验证' }).click()
+  await page.getByRole('dialog', { name: '通过验证' }).getByRole('button', { name: '确认通过' }).click()
   await expect(header(page).getByText('已关闭', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: '重新打开', exact: true }).click()
@@ -260,6 +261,7 @@ test('Action runs start → complete → reopen and shows executor, due time and
   await page.getByRole('button', { name: '完成整改项', exact: true }).click()
   await expect(header(page).getByText('已完成', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '重新打开整改项', exact: true }).click()
+  await page.getByRole('dialog', { name: '重新打开整改项' }).getByRole('button', { name: '确认重新打开' }).click()
   await expect(header(page).getByText('执行中', { exact: true })).toBeVisible()
   expect(state.posts).toEqual([
     { action: 'start', reason: null },
@@ -315,10 +317,10 @@ test('selecting a file does not send it; only the explicit button uploads', asyn
 })
 
 const failureCases = [
-  { name: '403', status: 403, headers: {} as Record<string, string>, expected: '当前用户没有权限开始整改项：Forbidden' },
+  { name: '403', status: 403, headers: {} as Record<string, string>, expected: '当前账号没有执行此操作的权限。' },
   { name: '429 with Retry-After', status: 429, headers: { 'Retry-After': '30' }, expected: '30 秒后手动重试' },
   { name: '503 with Retry-After', status: 503, headers: { 'Retry-After': '12' }, expected: '12 秒后手动重试' },
-  { name: '409', status: 409, headers: {} as Record<string, string>, expected: '数据已变化，正在获取最新状态' },
+  { name: '409', status: 409, headers: {} as Record<string, string>, expected: '数据已变化，正在获取最新状态', detail: 'Concurrent ActionItem transition' },
 ]
 
 for (const failure of failureCases) {
@@ -328,7 +330,7 @@ for (const failure of failureCases) {
     let attempts = 0
     await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/transitions', (route) => {
       attempts += 1
-      return fulfillJson(route, failure.status, { detail: 'Forbidden' }, failure.headers)
+      return fulfillJson(route, failure.status, { detail: failure.detail ?? 'Forbidden' }, failure.headers)
     })
     await page.goto('/action-items/action-ui5')
     await page.getByRole('button', { name: '开始整改项', exact: true }).click()
@@ -412,3 +414,169 @@ for (const [width, height] of [[375, 812], [320, 740], [640, 800]] as const) {
     expect(await overflow()).toBeLessThanOrEqual(1)
   })
 }
+
+test('approve and Action reopen need a confirmation: 0 requests before and after cancel, exactly 1 after confirm', async ({ page }) => {
+  const world: FindingWorld = { scenarioKey: 'process_review', findingType: '', lifecycle: 'verifying', posts: [] }
+  await stubFindingWorld(page, world)
+  await page.goto('/findings/finding-ui5')
+
+  await page.getByRole('button', { name: '通过验证' }).click()
+  const approve = page.getByRole('dialog', { name: '通过验证' })
+  await expect(approve).toContainText('发现项将关闭')
+  expect(world.posts).toHaveLength(0)
+  await approve.getByRole('button', { name: /^取\s*消$/ }).click()
+  await expect(approve).toHaveCount(0)
+  await page.waitForTimeout(200)
+  expect(world.posts).toHaveLength(0)
+  await page.getByRole('button', { name: '通过验证' }).click()
+  await page.getByRole('dialog', { name: '通过验证' }).getByRole('button', { name: '确认通过' }).click()
+  await expect(header(page).getByText('已关闭', { exact: true })).toBeVisible()
+  expect(world.posts.map((post) => post.path)).toEqual(['verification-submissions'])
+
+  const state = { lifecycle: 'done', posts: [] as unknown[] }
+  const other = await page.context().newPage()
+  await stubActionWorld(other, state)
+  await other.goto('/action-items/action-ui5')
+  await other.getByRole('button', { name: '重新打开整改项', exact: true }).click()
+  const reopen = other.getByRole('dialog', { name: '重新打开整改项' })
+  await expect(reopen).toContainText('回到执行中')
+  expect(state.posts).toHaveLength(0)
+  await reopen.getByRole('button', { name: /^取\s*消$/ }).click()
+  await other.waitForTimeout(200)
+  expect(state.posts).toHaveLength(0)
+  await other.getByRole('button', { name: '重新打开整改项', exact: true }).click()
+  await other.getByRole('dialog', { name: '重新打开整改项' }).getByRole('button', { name: '确认重新打开' }).click()
+  await expect(other.getByRole('article').locator('header').getByText('执行中', { exact: true })).toBeVisible()
+  expect(state.posts).toEqual([{ action: 'reopen', reason: null }])
+})
+
+const conflicts = [
+  { name: 'lifecycle or concurrent change', detail: 'Concurrent ActionItem transition', expected: '数据已变化，正在获取最新状态', refetch: true },
+  { name: 'duplicate relation', detail: '(psycopg.errors.UniqueViolation) duplicate key value violates unique constraint "uq_assignee"', expected: '该成员已在列表中', refetch: true },
+  { name: 'unclassified conflict', detail: 'some internal conflict: secret-detail', expected: '与服务器当前状态冲突', refetch: true },
+]
+
+for (const conflict of conflicts) {
+  test(`409 ${conflict.name} gets its own prompt, hides backend detail, refetches and never replays`, async ({ page }) => {
+    const state = { lifecycle: 'todo', posts: [] as unknown[] }
+    await stubActionWorld(page, state)
+    let attempts = 0
+    let reads = 0
+    await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5', (route) => {
+      reads += 1
+      return fulfillJson(route, 200, actionResponse('todo'))
+    })
+    await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/transitions', (route) => {
+      attempts += 1
+      return fulfillJson(route, 409, { detail: conflict.detail })
+    })
+    await page.goto('/action-items/action-ui5')
+    await page.getByRole('button', { name: '开始整改项', exact: true }).click()
+    await expect(page.getByRole('alert')).toContainText(conflict.expected)
+    await expect(page.getByRole('alert')).not.toContainText('secret-detail')
+    await expect(page.getByRole('alert')).not.toContainText('uq_assignee')
+    await expect.poll(() => reads).toBeGreaterThanOrEqual(2) // 重新读取
+    await page.waitForTimeout(300)
+    expect(attempts).toBe(1)
+  })
+}
+
+test('a write 403 shows a neutral prompt without backend detail and re-checks the primary resource', async ({ page }) => {
+  const state = { lifecycle: 'todo', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  let reads = 0
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5', (route) => {
+    reads += 1
+    return fulfillJson(route, 200, actionResponse('todo'))
+  })
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/transitions', (route) =>
+    fulfillJson(route, 403, { detail: 'Action primary role required' }),
+  )
+  await page.goto('/action-items/action-ui5')
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('Action primary role required')).toHaveCount(0)
+  await expect.poll(() => reads).toBeGreaterThanOrEqual(2)
+  await expect(page.getByRole('region', { name: '整改事项' }).getByText('Primary Executor')).toBeVisible() // 仍有读权限：内容保留
+})
+
+for (const failure of [
+  { status: 429, retryAfter: '30', expected: '30 秒后手动重试' },
+  { status: 503, retryAfter: '12', expected: '12 秒后手动重试' },
+]) {
+  test(`upload ${failure.status} shows the Retry-After wait and is not retried`, async ({ page }) => {
+    const state = { lifecycle: 'in_progress', posts: [] as unknown[] }
+    await stubActionWorld(page, state)
+    let attempts = 0
+    await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/evidence-uploads', (route) => {
+      attempts += 1
+      return fulfillJson(route, failure.status, { detail: 'busy' }, { 'Retry-After': failure.retryAfter })
+    })
+    await page.goto('/action-items/action-ui5')
+    await page.getByLabel('证据文件').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: Buffer.from('data') })
+    await page.getByRole('button', { name: '上传证据' }).click()
+    await expect(page.getByRole('alert')).toContainText(failure.expected)
+    await page.waitForTimeout(400)
+    expect(attempts).toBe(1)
+    await expect(page.getByRole('button', { name: '上传证据' })).toBeEnabled()
+  })
+}
+
+test('an upload result that arrives after switching Action is discarded and not written to the new Action', async ({ page }) => {
+  const state = { lifecycle: 'in_progress', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5-b', (route) =>
+    fulfillJson(route, 200, { ...actionResponse('in_progress'), id: 'action-ui5-b', title: 'UI5 Action B' }),
+  )
+  for (const child of ['assignee-views', 'activities', 'evidences']) {
+    await page.route((url) => url.pathname === `/api/v1/action-items/action-ui5-b/${child}`, (route) =>
+      fulfillJson(route, 200, []),
+    )
+  }
+  let uploads = 0
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/evidence-uploads', async (route) => {
+    uploads += 1
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    return fulfillJson(route, 201, {
+      id: 'late', organization_id: user.organization_id, action_item_id: 'action-ui5', storage_key: 'k',
+      original_name: 'late.pdf', content_type: 'application/pdf', size_bytes: 4, sha256: 'b'.repeat(64),
+      description: null, uploaded_by: user.id, created_at: '2026-10-01T03:00:00Z',
+    })
+  })
+  await page.goto('/action-items/action-ui5')
+  await page.getByLabel('证据文件').setInputFiles({ name: 'late.pdf', mimeType: 'application/pdf', buffer: Buffer.from('data') })
+  await page.getByRole('button', { name: '上传证据' }).click()
+  await expect.poll(() => uploads).toBe(1)
+
+  await page.evaluate(
+    "history.pushState({}, '', '/action-items/action-ui5-b'); dispatchEvent(new PopStateEvent('popstate'))",
+  )
+  await expect(page.getByRole('heading', { level: 1, name: 'UI5 Action B' })).toBeVisible()
+  await page.waitForTimeout(600)
+  await expect(page.getByText('服务器已确认上传')).toHaveCount(0)
+  await expect(page.getByText('late.pdf')).toHaveCount(0)
+  await expect(page.getByText('暂无证据。')).toBeVisible()
+})
+
+test('a refreshing section keeps its old content and says it is refreshing', async ({ page }) => {
+  const world: FindingWorld = { scenarioKey: 'process_review', findingType: '', lifecycle: 'open', posts: [] }
+  await stubFindingWorld(page, world)
+  let participantReads = 0
+  await page.route((url) => url.pathname === '/api/v1/findings/finding-ui5/participant-views', async (route) => {
+    participantReads += 1
+    if (participantReads > 1) await new Promise((resolve) => setTimeout(resolve, 800))
+    return fulfillJson(route, 200, [
+      { finding_id: 'finding-ui5', actor_kind: 'user', actor_id: user.id, role_key: 'owner', assigned_at: '2026-08-28T02:00:00Z', display_name: 'Kept Participant' },
+    ])
+  })
+  await page.route((url) => url.pathname === '/api/v1/findings/finding-ui5/nudge', (route) =>
+    fulfillJson(route, 200, { activity_id: 'activity-1', recipient_count: 1 }),
+  )
+  await page.goto('/findings/finding-ui5')
+  const participants = page.getByRole('region', { name: '参与方' })
+  await expect(participants.getByText('Kept Participant')).toBeVisible()
+  await page.getByRole('button', { name: '催办', exact: true }).click()
+  await expect(participants.getByText('正在刷新')).toBeVisible()
+  await expect(participants.getByText('Kept Participant')).toBeVisible()
+  await expect(participants.getByText('正在刷新')).toHaveCount(0)
+})

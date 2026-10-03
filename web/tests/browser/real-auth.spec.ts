@@ -651,6 +651,7 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
       response.request().method() === 'POST',
   )
   await page.getByRole('button', { name: '重新打开' }).click()
+  await page.getByRole('dialog', { name: '重新打开整改项' }).getByRole('button', { name: '确认重新打开' }).click()
   const reopenActionResponse = await reopenActionResponsePromise
   expect(reopenActionResponse.status()).toBe(200)
   expect(((await reopenActionResponse.json()) as { lifecycle: string }).lifecycle).toBe('in_progress')
@@ -695,6 +696,7 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
       response.request().method() === 'POST',
   )
   await page.getByRole('button', { name: '通过验证' }).click()
+  await page.getByRole('dialog', { name: '通过验证' }).getByRole('button', { name: '确认通过' }).click()
   const approveResponse = await approveResponsePromise
   expect(approveResponse.status()).toBe(201)
   const approved = (await approveResponse.json()) as { finding: { lifecycle: string } }

@@ -248,7 +248,7 @@ test('Action stale transition 409 refetches server lifecycle and Evidence stays 
     (url) => url.pathname === '/api/v1/action-items/action-1/transitions',
     (route) => {
       lifecycle = 'in_progress'
-      return fulfillJson(route, 409, { detail: 'stale Action lifecycle' })
+      return fulfillJson(route, 409, { detail: 'Concurrent ActionItem transition' })
     },
   )
 
@@ -259,7 +259,7 @@ test('Action stale transition 409 refetches server lifecycle and Evidence stays 
   await page.getByRole('button', { name: '开始整改项', exact: true }).click()
 
   await expect(page.getByRole('article').locator('header').getByText('执行中', { exact: true })).toBeVisible()
-  await expect(page.getByRole('alert')).toContainText('stale Action lifecycle')
+  await expect(page.getByRole('alert')).not.toContainText('Concurrent ActionItem')
   await expect(page.getByRole('alert')).toContainText('数据已变化，正在获取最新状态')
 })
 

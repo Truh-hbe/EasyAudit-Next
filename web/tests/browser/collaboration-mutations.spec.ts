@@ -219,7 +219,8 @@ test('assignee refusal invalidates stale candidates and success refreshes persis
   const drawer = await openAssignDrawer(page, '添加执行人', '添加执行人')
   await pickCandidate(drawer, '执行人', 'Candidate', 'Candidate User')
   await drawer.getByRole('button', { name: '添加执行人' }).click()
-  await expect(drawer.getByRole('alert')).toContainText('assignment authority changed')
+  await expect(drawer.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('assignment authority changed')).toHaveCount(0)
   await expect(page.getByText('Candidate User')).toHaveCount(0) // 过期候选被清空
   await expect(page.getByText('Persisted Assignee')).toHaveCount(0)
   await expect(page.getByText('暂无执行人。')).toBeVisible()
@@ -326,7 +327,9 @@ test('verification refusal, reject success, and reopen validation preserve autho
 
   await page.goto(`/findings/${findingId}`)
   await page.getByRole('button', { name: '通过验证' }).click()
-  await expect(page.getByRole('alert')).toContainText('review authority revoked')
+  await page.getByRole('dialog', { name: '通过验证' }).getByRole('button', { name: '确认通过' }).click()
+  await expect(page.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('review authority revoked')).toHaveCount(0)
   await expect(page.getByRole('article').locator('header').getByText('待验证', { exact: true })).toBeVisible()
   await expect(page.getByText('暂无提交记录。')).toBeVisible()
 

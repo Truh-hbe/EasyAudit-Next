@@ -11,7 +11,9 @@ describe('classifyCommandFailure', () => {
   })
 
   it('keeps 403/404 distinct and never reveals whether the object exists', () => {
-    expect(classify(new ApiError(403, 'Forbidden')).kind).toBe('forbidden')
+    const forbidden = classify(new ApiError(403, 'Finding owner role required'))
+    expect(forbidden).toMatchObject({ kind: 'forbidden', message: '当前账号没有执行此操作的权限。' })
+    expect(forbidden.message).not.toContain('owner')
     expect(classify(new ApiError(404, 'secret detail'))).toMatchObject({ kind: 'gone', message: '内容不存在或无权访问' })
   })
 
@@ -31,6 +33,28 @@ describe('classifyCommandFailure', () => {
 
   it('does not match a field name inside a longer identifier', () => {
     expect(classify(new ApiError(422, 'my_reason_x invalid'), ['reason']).fieldErrors).toEqual({})
+  })
+
+  it('splits 409 into lifecycle change, duplicate relation and unclassified conflict without leaking detail', () => {
+    for (const detail of ['Concurrent Finding transition', 'Concurrent ActionItem transition', 'Concurrent ReviewCase transition']) {
+      const failure = classify(new ApiError(409, detail))
+      expect(failure.kind).toBe('changed')
+      expect(failure.message).toContain('数据已变化，正在获取最新状态')
+      expect(failure.message).not.toContain('Concurrent')
+    }
+    const duplicate = classify(
+      new ApiError(409, '(psycopg.errors.UniqueViolation) duplicate key value violates unique constraint "uq_x"'),
+    )
+    expect(duplicate.kind).toBe('duplicate')
+    expect(duplicate.message).toContain('已在列表中')
+    expect(duplicate.message).not.toContain('uq_x')
+    const other = classify(new ApiError(409, 'something unexpected: secret'))
+    expect(other.kind).toBe('conflict')
+    expect(other.message).toContain('冲突')
+    expect(other.message).not.toContain('secret')
+    for (const detail of ['Concurrent Finding transition', 'duplicate key', 'other']) {
+      expect(failureNeedsRefresh(classify(new ApiError(409, detail)))).toBe(true)
+    }
   })
 
   it('reports network failures and 5xx as unconfirmed, and 413/415 as upload limits', () => {

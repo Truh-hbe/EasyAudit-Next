@@ -7,6 +7,8 @@ export type CommandFailureKind =
   | 'forbidden'
   | 'gone'
   | 'changed'
+  | 'duplicate'
+  | 'conflict'
   | 'retry-later'
   | 'too-large'
   | 'type-not-allowed'
@@ -23,10 +25,28 @@ export interface CommandFailure {
 
 export type CommandResult = { ok: true } | { ok: false; failure: CommandFailure }
 
+export const FORBIDDEN_WRITE_TEXT = '当前账号没有执行此操作的权限。'
 export const NOT_AVAILABLE_TEXT = '内容不存在或无权访问'
 export const TOO_LARGE_TEXT = '文件超过大小上限，未上传。'
 export const TYPE_NOT_ALLOWED_TEXT =
   '文件类型不被允许，或扩展名与类型不一致。允许：PDF、PNG、JPEG、DOCX、XLSX、PPTX、TXT、CSV。'
+
+// 后端目前没有结构化的 409 原因字段，只能按 detail 文案分类（与 #83 的 classifyTeamFailure 同样存在文案耦合）：
+// - 生命周期/并发：Concurrent Finding / ReviewCase / ActionItem transition（见 review_core/application）；
+// - 重复关系：参与人、执行人已存在，后端以 IntegrityError 的文本返回（唯一约束冲突）；
+// - 其余一律按无法分类的冲突处理。分类之外的 detail 不展示给用户（可能含数据库或角色细节）。
+const CONCURRENT_TRANSITION = /^Concurrent (Finding|ReviewCase|ActionItem) transition$/
+const DUPLICATE_RELATION = /duplicate key|unique ?constraint|UniqueViolation/i
+
+export function classifyConflict(detail: string, label: string): Pick<CommandFailure, 'kind' | 'message'> {
+  if (CONCURRENT_TRANSITION.test(detail)) {
+    return { kind: 'changed', message: `数据已变化，正在获取最新状态。${label}未完成，请确认后重新操作。` }
+  }
+  if (DUPLICATE_RELATION.test(detail)) {
+    return { kind: 'duplicate', message: `该成员已在列表中，或列表刚刚发生变化，${label}未完成。正在获取最新状态。` }
+  }
+  return { kind: 'conflict', message: `${label}与服务器当前状态冲突，未完成。正在获取最新状态，请确认后再试。` }
+}
 
 export const BUSY_FAILURE: CommandFailure = { kind: 'busy', message: '', fieldErrors: {} }
 
@@ -67,15 +87,12 @@ export function classifyCommandFailure(error: unknown, options: ClassifyOptions)
       case 401:
         return { kind: 'session', message: '', fieldErrors: {} }
       case 403:
-        return { kind: 'forbidden', message: `当前用户没有权限${label}：${detail}`, fieldErrors: {} }
+        // 不展示后端 detail（可能带出角色细节）。用户可能仍有读权限，所以只在操作区提示，并由页面重新校验主资源授权。
+        return { kind: 'forbidden', message: FORBIDDEN_WRITE_TEXT, fieldErrors: {} }
       case 404:
         return { kind: 'gone', message: NOT_AVAILABLE_TEXT, fieldErrors: {} }
       case 409:
-        return {
-          kind: 'changed',
-          message: `数据已变化，正在获取最新状态。${label}未完成，请确认后重新操作。（${detail}）`,
-          fieldErrors: {},
-        }
+        return { ...classifyConflict(detail, label), fieldErrors: {} }
       case 413:
         return { kind: 'too-large', message: TOO_LARGE_TEXT, fieldErrors: {} }
       case 415:
@@ -114,6 +131,8 @@ export function failureNeedsRefresh(failure: CommandFailure): boolean {
     failure.kind === 'forbidden' ||
     failure.kind === 'gone' ||
     failure.kind === 'changed' ||
+    failure.kind === 'duplicate' ||
+    failure.kind === 'conflict' ||
     failure.kind === 'rejected' ||
     failure.kind === 'unknown-result'
   )
@@ -121,7 +140,7 @@ export function failureNeedsRefresh(failure: CommandFailure): boolean {
 
 // 需要用户留意"可能已变化 / 未确认"的提示用警告色，明确拒绝用错误色。
 export function failureAlertType(failure: CommandFailure): 'warning' | 'error' {
-  return failure.kind === 'changed' || failure.kind === 'unknown-result' || failure.kind === 'retry-later'
+  return failure.kind === 'changed' || failure.kind === 'duplicate' || failure.kind === 'unknown-result' || failure.kind === 'retry-later'
     ? 'warning'
     : 'error'
 }

@@ -17,6 +17,7 @@ import { formatDateTime } from '../../product/format'
 import { ItemList } from '../../ui/ItemList'
 import { actorText } from '../actorNames'
 import { SectionNotice } from '../SectionNotice'
+import { SectionSpin } from '../SectionSpin'
 import type { ResourceState } from '../useScopedResource'
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx,.txt,.csv'
@@ -161,6 +162,7 @@ export function EvidenceSection({ actionId, cancelled, state, names, onRefresh }
 
           <Flex vertical gap={12} component="section" aria-labelledby="evidence-list-title">
             <h3 id="evidence-list-title">已上传的证据</h3>
+            <SectionSpin state={state}>
             <SectionNotice state={state} loadingLabel="正在读取证据" unavailableText="证据不可用。" />
             {state.status === 'ready' ? (
               <ItemList
@@ -192,6 +194,7 @@ export function EvidenceSection({ actionId, cancelled, state, names, onRefresh }
                 }))}
               />
             ) : null}
+            </SectionSpin>
           </Flex>
         </Flex>
       </Card>

@@ -41,6 +41,7 @@ import { ActorAssignDrawer, actorKindText } from '../ActorAssignDrawer'
 import type { AssignRoleOption } from '../ActorAssignDrawer'
 import { actorText } from '../actorNames'
 import { SectionNotice } from '../SectionNotice'
+import { SectionSpin } from '../SectionSpin'
 import { useScopedResource } from '../useScopedResource'
 import { ActionCreateDrawer } from './ActionCreateDrawer'
 import type { ActionCreateInput } from './ActionCreateDrawer'
@@ -119,13 +120,15 @@ export function FindingDetailPage() {
     return map
   }, [participantData])
 
+  // targetId 是构造该命令时的发现项：弹层或确认框晚于路由切换残留时，当前页面已不是它，不发请求。
   async function runCommand(
+    targetId: string,
     label: string,
     command: () => Promise<unknown>,
     options: ScenarioCommandOptions = {},
   ): Promise<CommandResult> {
-    if (busyRef.current) return { ok: false, failure: BUSY_FAILURE }
-    const commandFindingId = findingId
+    if (currentFindingIdRef.current !== targetId || busyRef.current) return { ok: false, failure: BUSY_FAILURE }
+    const commandFindingId = targetId
     busyRef.current = true
     setCommandBusy(true)
     setNotice(null)
@@ -151,7 +154,7 @@ export function FindingDetailPage() {
   }
 
   async function runNudge(currentFindingId: string) {
-    if (nudgeBusyRef.current) return
+    if (currentFindingIdRef.current !== currentFindingId || nudgeBusyRef.current) return
     const commandFindingId = findingId
     nudgeBusyRef.current = true
     setNudgeBusy(true)
@@ -247,8 +250,12 @@ export function FindingDetailPage() {
           .map((participant) => `${participantRoleName(participant.role_key)} ${participant.display_name}`)
           .join('；') || '尚未指定'
 
+  const targetId = finding.id
+  const run = (label: string, command: () => Promise<unknown>, options?: ScenarioCommandOptions) =>
+    runCommand(targetId, label, command, options)
+
   async function createAction(input: ActionCreateInput): Promise<CommandResult> {
-    return runCommand('新建整改项', () => createActionItem(finding?.id ?? '', input), {
+    return run('新建整改项', () => createActionItem(targetId, input), {
       fields: ['title', 'due_at'],
       notify: false,
     })
@@ -286,8 +293,7 @@ export function FindingDetailPage() {
         <Alert type="warning" showIcon title={`重新读取失败，当前显示的可能不是最新内容：${primary.refreshError}`} />
       )}
 
-      <Spin spinning={primary.refreshing}>
-        <Flex vertical gap={16}>
+      <Flex vertical gap={16}>
           {caseState.status === 'loading' ? (
             <Card>
               <InitialLoading label="正在加载审查场景" rows={1} />
@@ -305,11 +311,12 @@ export function FindingDetailPage() {
             />
           ) : null}
           {Interaction === undefined ? null : (
-            <Interaction key={finding.id} finding={finding} disabled={commandBusy} commands={interactionCommands} execute={runCommand} />
+            <Interaction key={finding.id} finding={finding} disabled={commandBusy} commands={interactionCommands} execute={run} />
           )}
 
           <section aria-labelledby="finding-overview-title">
             <Card title={<h2 id="finding-overview-title">概览</h2>}>
+              <Spin spinning={primary.refreshing} description="正在刷新">
               <Descriptions
                 column={{ xs: 1, md: 2 }}
                 items={[
@@ -338,6 +345,7 @@ export function FindingDetailPage() {
                   },
                 ]}
               />
+              </Spin>
             </Card>
           </section>
 
@@ -352,6 +360,7 @@ export function FindingDetailPage() {
                 ) : null
               }
             >
+<SectionSpin state={participants}>
               <SectionNotice state={participants} loadingLabel="正在读取参与方" unavailableText="参与关系不可用。" />
               {participants.status === 'ready' ? (
                 <ItemList
@@ -371,6 +380,7 @@ export function FindingDetailPage() {
                   }))}
                 />
               ) : null}
+</SectionSpin>
             </Card>
           </section>
 
@@ -385,6 +395,7 @@ export function FindingDetailPage() {
                 ) : null
               }
             >
+<SectionSpin state={actions}>
               <SectionNotice state={actions} loadingLabel="正在读取整改项" unavailableText="整改项不可用。" />
               {actions.status === 'ready' ? (
                 <ItemList
@@ -406,6 +417,7 @@ export function FindingDetailPage() {
                   }))}
                 />
               ) : null}
+</SectionSpin>
             </Card>
           </section>
 
@@ -433,6 +445,7 @@ export function FindingDetailPage() {
 
           <section aria-labelledby="submission-history-title">
             <Card title={<h2 id="submission-history-title">提交记录</h2>}>
+              <SectionSpin state={submissions}>
               <Flex vertical gap={12}>
                 <SectionNotice state={submissions} loadingLabel="正在读取提交记录" unavailableText="提交记录不可用。" />
                 {submissions.status === 'ready' ? (
@@ -454,11 +467,13 @@ export function FindingDetailPage() {
                 ) : null}
                 <Typography.Text type="secondary">历史提交内容不用于推断当前状态或权限。</Typography.Text>
               </Flex>
+              </SectionSpin>
             </Card>
           </section>
 
           <section aria-labelledby="finding-activity-title">
             <Card title={<h2 id="finding-activity-title">操作记录</h2>}>
+              <SectionSpin state={activities}>
               <SectionNotice state={activities} loadingLabel="正在读取操作记录" unavailableText="操作记录不可用。" />
               {activities.status === 'ready' && activities.data.length === 0 ? (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无操作记录。" />
@@ -478,10 +493,10 @@ export function FindingDetailPage() {
                   }))}
                 />
               ) : null}
+              </SectionSpin>
             </Card>
           </section>
-        </Flex>
-      </Spin>
+      </Flex>
 
       {scenarioAdapter === undefined ? null : (
         <>
@@ -498,7 +513,7 @@ export function FindingDetailPage() {
               searchFindingParticipantCandidates(finding.id, role.value, role.actorKind, query, signal)
             }
             add={(role, candidate) =>
-              runCommand(
+              run(
                 '添加参与人',
                 () => addFindingParticipant(finding.id, candidate.actor_kind, candidate.actor_id, role.value),
                 { notify: false },

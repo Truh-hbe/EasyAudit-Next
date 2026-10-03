@@ -135,7 +135,8 @@ test('participant candidate lookup exposes loading, no-results, error and select
 
   await pickCandidate(drawer, '参与人', 'Quality', 'Quality Department')
   await drawer.getByRole('button', { name: '添加参与人' }).click()
-  await expect(drawer.getByRole('alert')).toContainText('participant authority changed')
+  await expect(drawer.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('participant authority changed')).toHaveCount(0)
   await expect(page.getByText('暂无参与关系。')).toBeVisible()
 })
 

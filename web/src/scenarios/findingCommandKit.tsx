@@ -1,9 +1,10 @@
 import { CheckOutlined, EditOutlined, RollbackOutlined, SendOutlined, StopOutlined } from '@ant-design/icons'
-import { App, Button, Card, Flex, Typography } from 'antd'
+import { Button, Card, Flex, Typography } from 'antd'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { CommandTextDialog } from '../ui/CommandTextDialog'
+import { useConfirm } from '../ui/useConfirm'
 import type { ScenarioFindingInteractionProps } from './registry'
 
 // 发现项业务操作的共用部件：各场景适配器按自己的生命周期规则选用，核心页面不感知场景。
@@ -159,17 +160,19 @@ export function VerificationCommands({ commands, execute, disabled }: CommandPro
   const [rejectOpen, setRejectOpen] = useState(false)
   return (
     <>
-      <Button
-        type="primary"
-        icon={<CheckOutlined aria-hidden />}
-        data-scenario-action="approve"
+      <ConfirmedCommand
+        primary
+        commands={commands}
+        execute={execute}
         disabled={disabled}
-        onClick={() =>
-          void execute('验证通过', () => commands.submitVerification('approve', { result: 'approved' }))
-        }
-      >
-        通过验证
-      </Button>
+        action="approve"
+        label="验证通过"
+        buttonText="通过验证"
+        confirmTitle="通过验证"
+        confirmContent="通过后发现项将关闭，状态变为已关闭；如需继续整改，需由有权限的人重新打开并说明原因。"
+        confirmOkText="确认通过"
+        run={() => commands.submitVerification('approve', { result: 'approved' })}
+      />
       <Button
         icon={<RollbackOutlined aria-hidden />}
         data-scenario-action="reject"
@@ -223,7 +226,7 @@ export function ConfirmedCommand({
   run,
   primary,
 }: ConfirmedCommandProps) {
-  const { modal } = App.useApp()
+  const { confirm } = useConfirm()
   return (
     <Button
       type={primary === true ? 'primary' : 'default'}
@@ -231,7 +234,7 @@ export function ConfirmedCommand({
       data-scenario-action={action}
       disabled={disabled}
       onClick={() =>
-        modal.confirm({
+        confirm({
           title: confirmTitle,
           content: confirmContent,
           okText: confirmOkText,

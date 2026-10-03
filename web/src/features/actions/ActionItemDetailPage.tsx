@@ -30,6 +30,7 @@ import { ActivityEventName } from '../../ui/ActivityEventName'
 import { ButtonLink } from '../../ui/ButtonLink'
 import { CommandTextDialog } from '../../ui/CommandTextDialog'
 import { InitialLoading } from '../../ui/InitialLoading'
+import { useConfirm } from '../../ui/useConfirm'
 import { ItemList } from '../../ui/ItemList'
 import { PageHeader } from '../../ui/PageHeader'
 import { StatusTag } from '../../ui/StatusTag'
@@ -37,6 +38,7 @@ import { ActorAssignDrawer } from '../ActorAssignDrawer'
 import type { AssignRoleOption } from '../ActorAssignDrawer'
 import { actorText } from '../actorNames'
 import { SectionNotice } from '../SectionNotice'
+import { SectionSpin } from '../SectionSpin'
 import { useScopedResource } from '../useScopedResource'
 import { EvidenceSection } from './EvidenceSection'
 
@@ -66,6 +68,7 @@ export function ActionItemDetailPage() {
   const [assignDrawerOpen, setAssignDrawerOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const refresh = () => setRevision((value) => value + 1)
+  const { confirm, destroy: destroyConfirm } = useConfirm()
 
   // 切换整改项时丢弃上一个整改项的弹层、提示与进行中状态。
   useEffect(() => {
@@ -77,7 +80,8 @@ export function ActionItemDetailPage() {
     setNudgeNotice(null)
     setAssignDrawerOpen(false)
     setCancelOpen(false)
-  }, [actionItemId])
+    destroyConfirm()
+  }, [actionItemId, destroyConfirm])
 
   const primary = useScopedResource(
     actionItemId ?? null,
@@ -116,13 +120,15 @@ export function ActionItemDetailPage() {
     return map
   }, [assigneeData])
 
+  // targetId 是构造该命令时的整改项：弹层或确认框晚于路由切换残留时，当前页面已不是它，不发请求。
   async function runCommand(
+    targetId: string,
     label: string,
     command: () => Promise<unknown>,
     options: { fields?: readonly string[]; notify?: boolean } = {},
   ): Promise<CommandResult> {
-    if (busyRef.current) return { ok: false, failure: BUSY_FAILURE }
-    const commandActionItemId = actionItemId
+    if (currentActionItemIdRef.current !== targetId || busyRef.current) return { ok: false, failure: BUSY_FAILURE }
+    const commandActionItemId = targetId
     busyRef.current = true
     setCommandBusy(true)
     setNotice(null)
@@ -148,7 +154,7 @@ export function ActionItemDetailPage() {
   }
 
   async function runNudge(currentActionId: string) {
-    if (nudgeBusyRef.current) return
+    if (currentActionItemIdRef.current !== currentActionId || nudgeBusyRef.current) return
     const commandActionItemId = actionItemId
     nudgeBusyRef.current = true
     setNudgeBusy(true)
@@ -228,6 +234,10 @@ export function ActionItemDetailPage() {
     actorKind: option.actorKind,
   }))
   const cancelled = action.lifecycle === 'cancelled'
+  const refreshingOf = (state: { status: string; refreshing?: boolean }) => state.status === 'ready' && state.refreshing === true
+  const overviewRefreshing = primary.refreshing || refreshingOf(assignees) || refreshingOf(findingState)
+  const run = (label: string, command: () => Promise<unknown>, options?: { fields?: readonly string[]; notify?: boolean }) =>
+    runCommand(action.id, label, command, options)
 
   return (
     <Flex component="article" vertical gap={16} aria-labelledby="action-title">
@@ -250,8 +260,7 @@ export function ActionItemDetailPage() {
         <Alert type="warning" showIcon title={`重新读取失败，当前显示的可能不是最新内容：${primary.refreshError}`} />
       )}
 
-      <Spin spinning={primary.refreshing}>
-        <Flex vertical gap={16}>
+      <Flex vertical gap={16}>
           <section aria-labelledby="action-overview-title">
             <Card
               title={<h2 id="action-overview-title">整改事项</h2>}
@@ -263,6 +272,7 @@ export function ActionItemDetailPage() {
                 ) : null
               }
             >
+              <Spin spinning={overviewRefreshing} description="正在刷新">
               <Descriptions
                 column={{ xs: 1, md: 2 }}
                 items={[
@@ -311,6 +321,7 @@ export function ActionItemDetailPage() {
                   { key: 'id', label: '整改项 ID', children: action.id },
                 ]}
               />
+              </Spin>
               <Typography.Text type="secondary">截止时间以服务器记录为准；本页不计算新的逾期规则。</Typography.Text>
             </Card>
           </section>
@@ -333,7 +344,7 @@ export function ActionItemDetailPage() {
                           type="primary"
                           icon={<PlayCircleOutlined aria-hidden />}
                           disabled={commandBusy}
-                          onClick={() => void runCommand('开始整改项', () => transitionActionItem(action.id, 'start'))}
+                          onClick={() => void run('开始整改项', () => transitionActionItem(action.id, 'start'))}
                         >
                           开始整改项
                         </Button>
@@ -343,7 +354,7 @@ export function ActionItemDetailPage() {
                           type="primary"
                           icon={<CheckOutlined aria-hidden />}
                           disabled={commandBusy}
-                          onClick={() => void runCommand('完成整改项', () => transitionActionItem(action.id, 'complete'))}
+                          onClick={() => void run('完成整改项', () => transitionActionItem(action.id, 'complete'))}
                         >
                           完成整改项
                         </Button>
@@ -352,7 +363,17 @@ export function ActionItemDetailPage() {
                         <Button
                           icon={<RollbackOutlined aria-hidden />}
                           disabled={commandBusy}
-                          onClick={() => void runCommand('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))}
+                          onClick={() =>
+                            confirm({
+                              title: '重新打开整改项',
+                              content: '重新打开后整改项回到执行中，已完成状态与完成时间将被清除，需要重新完成。',
+                              okText: '确认重新打开',
+                              cancelText: '取消',
+                              onOk: async () => {
+                                await run('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))
+                              },
+                            })
+                          }
                         >
                           重新打开整改项
                         </Button>
@@ -399,6 +420,7 @@ export function ActionItemDetailPage() {
 
           <section aria-labelledby="action-activity-title">
             <Card title={<h2 id="action-activity-title">操作记录</h2>}>
+              <SectionSpin state={activities}>
               <SectionNotice state={activities} loadingLabel="正在读取操作记录" unavailableText="操作记录不可用。" />
               {activities.status === 'ready' && activities.data.length === 0 ? (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无操作记录。" />
@@ -418,10 +440,10 @@ export function ActionItemDetailPage() {
                   }))}
                 />
               ) : null}
+              </SectionSpin>
             </Card>
           </section>
-        </Flex>
-      </Spin>
+      </Flex>
 
       {scenarioAdapter === undefined ? null : (
         <>
@@ -438,7 +460,7 @@ export function ActionItemDetailPage() {
               searchActionAssigneeCandidates(action.id, role.value as 'primary' | 'collaborator', role.actorKind, query, signal)
             }
             add={(role, candidate) =>
-              runCommand(
+              run(
                 '添加执行人',
                 () => addActionAssignee(action.id, candidate.actor_kind, candidate.actor_id, role.value as 'primary' | 'collaborator'),
                 { notify: false },
@@ -457,7 +479,7 @@ export function ActionItemDetailPage() {
             okText="确认取消"
             danger
             run={(reason) =>
-              runCommand('取消整改项', () => transitionActionItem(action.id, 'cancel', reason), {
+              run('取消整改项', () => transitionActionItem(action.id, 'cancel', reason), {
                 fields: ['reason'],
                 notify: false,
               })

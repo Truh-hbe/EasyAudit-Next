@@ -104,7 +104,7 @@ test('409 refetch switches compliance interaction from persisted observation to 
       transitionActions.push(payload.action)
       if (payload.action === 'accept_observation') {
         findingType = 'nonconformity'
-        return fulfillJson(route, 409, { detail: 'Finding classification changed' })
+        return fulfillJson(route, 409, { detail: 'Concurrent Finding transition' })
       }
       expect(payload.action).toBe('issue')
       lifecycle = 'rectifying'
@@ -123,7 +123,7 @@ test('409 refetch switches compliance interaction from persisted observation to 
 
   await page.getByRole('button', { name: '接受观察项' }).click()
   await page.getByRole('dialog', { name: '接受观察项' }).getByRole('button', { name: '确认接受并关闭' }).click()
-  await expect(page.getByRole('alert')).toContainText('Finding classification changed')
+  await expect(page.getByRole('alert')).toContainText('数据已变化，正在获取最新状态')
   await expect(page.getByRole('button', { name: '接受观察项' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '签发不符合项' })).toBeVisible()
 
