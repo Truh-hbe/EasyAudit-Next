@@ -1,14 +1,26 @@
-import { useState } from 'react'
-
 import type {
   ScenarioCaseSectionProps,
+  ScenarioDescriptionItem,
   ScenarioFindingInteractionProps,
-  ScenarioFindingSectionProps,
   ScenarioFormFieldsProps,
   ScenarioFormValues,
   ScenarioUiAdapter,
 } from './registry'
+import type { FindingResponse, ReviewCaseResponse } from '../api/product'
 import { CaseCreateTextField } from './CaseCreateTextField'
+import { FindingCreateRadioField, FindingCreateTextField } from './FindingCreateFields'
+import {
+  CommandNote,
+  CommandRow,
+  ConfirmedCommand,
+  DirectCommand,
+  FindingCommandCard,
+  RectificationCommands,
+  ReopenCommand,
+  VerificationCommands,
+  VoidCommand,
+} from './findingCommandKit'
+import { ScenarioFieldsCard } from './ScenarioFieldsCard'
 
 function scenarioText(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : '—'
@@ -24,26 +36,15 @@ function formValue(values: ScenarioFormValues, name: string): string {
   return values[name] ?? ''
 }
 
+function caseItems(reviewCase: ReviewCaseResponse): ScenarioDescriptionItem[] {
+  return [
+    { key: 'standard_reference', label: '标准 / 依据', value: scenarioText(reviewCase.scenario_data.standard_reference) },
+    { key: 'scope_summary', label: '范围摘要', value: scenarioText(reviewCase.scenario_data.scope_summary) },
+  ]
+}
+
 export function ComplianceReviewV1CaseSection({ reviewCase }: ScenarioCaseSectionProps) {
-  return (
-    <section className="surface-card" aria-labelledby="compliance-review-v1-title">
-      <div className="section-heading">
-        <div>
-          <h2 id="compliance-review-v1-title">合规审查信息</h2>
-        </div>
-      </div>
-      <dl className="fact-grid">
-        <div>
-          <dt>标准 / 依据</dt>
-          <dd>{scenarioText(reviewCase.scenario_data.standard_reference)}</dd>
-        </div>
-        <div>
-          <dt>范围摘要</dt>
-          <dd>{scenarioText(reviewCase.scenario_data.scope_summary)}</dd>
-        </div>
-      </dl>
-    </section>
-  )
+  return <ScenarioFieldsCard id="compliance-review-v1-title" title="合规审查信息" items={caseItems(reviewCase)} />
 }
 
 export function ComplianceReviewV1CaseCreateFields({
@@ -74,270 +75,93 @@ export function ComplianceReviewV1CaseCreateFields({
   )
 }
 
-export function ComplianceReviewV1FindingSection({ finding }: ScenarioFindingSectionProps) {
-  return (
-    <section className="surface-card" aria-labelledby="compliance-review-v1-finding-title">
-      <div className="section-heading">
-        <div>
-          <h2 id="compliance-review-v1-finding-title">合规审查发现项信息</h2>
-        </div>
-      </div>
-      <dl className="fact-grid">
-        <div>
-          <dt>条款 / 要求</dt>
-          <dd>{scenarioText(finding.scenario_data.criterion_reference)}</dd>
-        </div>
-        <div>
-          <dt>发现项类型</dt>
-          <dd>{findingTypeText(finding.scenario_data.finding_type)}</dd>
-        </div>
-      </dl>
-    </section>
-  )
+function findingItems(finding: FindingResponse): ScenarioDescriptionItem[] {
+  return [
+    { key: 'criterion_reference', label: '条款 / 要求', value: scenarioText(finding.scenario_data.criterion_reference) },
+    { key: 'finding_type', label: '发现项类型', value: findingTypeText(finding.scenario_data.finding_type) },
+  ]
 }
 
 export function ComplianceReviewV1FindingCreateFields({
   values,
   onChange,
   disabled,
+  fieldErrors,
 }: ScenarioFormFieldsProps) {
   return (
-    <div className="form-grid">
-      <label>
-        条款 / 要求
-        <input
-          value={formValue(values, 'criterion_reference')}
-          onChange={(event) => onChange('criterion_reference', event.target.value)}
-          disabled={disabled}
-          placeholder="例如 8.5.1"
-        />
-      </label>
-      <label>
-        发现项类型
-        <select
-          value={formValue(values, 'finding_type')}
-          onChange={(event) => onChange('finding_type', event.target.value)}
-          disabled={disabled}
-        >
-          <option value="">请选择</option>
-          <option value="nonconformity">不符合项</option>
-          <option value="observation">观察项</option>
-        </select>
-      </label>
-    </div>
+    <>
+      <FindingCreateTextField
+        name="criterion_reference"
+        label="条款 / 要求"
+        placeholder="例如 8.5.1"
+        value={formValue(values, 'criterion_reference')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.criterion_reference}
+      />
+      <FindingCreateRadioField
+        name="finding_type"
+        label="发现项类型"
+        value={formValue(values, 'finding_type')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.finding_type}
+        options={[
+          { value: 'nonconformity', label: '不符合项' },
+          { value: 'observation', label: '观察项' },
+        ]}
+      />
+    </>
   )
 }
 
-export function ComplianceReviewV1FindingInteraction({
-  finding,
-  disabled,
-  commands,
-  execute,
-}: ScenarioFindingInteractionProps) {
+export function ComplianceReviewV1FindingInteraction(props: ScenarioFindingInteractionProps) {
+  const { finding, commands, execute, disabled } = props
+  const shared = { commands, execute, disabled }
   const findingType = finding.scenario_data.finding_type
-  const [voidReason, setVoidReason] = useState('')
-  const [rootCause, setRootCause] = useState('')
-  const [completionComment, setCompletionComment] = useState('')
-  const [verificationComment, setVerificationComment] = useState('')
-  const [reopenReason, setReopenReason] = useState('')
-
+  const interpretable = findingType === 'observation' || findingType === 'nonconformity'
   return (
-    <section className="surface-card" aria-labelledby="finding-command-title">
-      <h2 id="finding-command-title">业务操作</h2>
-      <p className="empty-note">
-        以下操作按合规审查场景展示；最终授权、状态与并发判断以服务器为准。
-      </p>
-      {finding.lifecycle === 'open' && findingType === 'observation' ? (
-        <div className="command-stack">
-          <button
-            type="button"
-            data-scenario-action="accept_observation"
-            onClick={() =>
-              void execute('接受观察项', () => commands.transition('accept_observation'))
-            }
+    <FindingCommandCard scenarioLabel="合规审查">
+      <CommandRow>
+        {finding.lifecycle === 'open' && findingType === 'observation' ? (
+          <ConfirmedCommand
+            primary
+            execute={execute}
+            commands={commands}
             disabled={disabled}
-          >
-            接受观察项
-          </button>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'open' && findingType === 'nonconformity' ? (
-        <div className="command-stack">
-          <button
-            type="button"
-            data-scenario-action="issue"
-            onClick={() => void execute('签发不符合项', () => commands.transition('issue'))}
+            action="accept_observation"
+            label="接受观察项"
+            buttonText="接受观察项"
+            confirmTitle="接受观察项"
+            confirmContent="接受后观察项直接关闭，不需要整改项，且不能重新打开。"
+            confirmOkText="确认接受并关闭"
+            run={() => commands.transition('accept_observation')}
+          />
+        ) : null}
+        {finding.lifecycle === 'open' && findingType === 'nonconformity' ? (
+          <DirectCommand
+            primary
+            execute={execute}
             disabled={disabled}
-          >
-            签发不符合项
-          </button>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'open' &&
-      (findingType === 'observation' || findingType === 'nonconformity') ? (
-        <div className="command-stack">
-          <label>
-            作废原因
-            <input
-              value={voidReason}
-              onChange={(event) => setVoidReason(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
-          <button
-            type="button"
-            className="secondary"
-            data-scenario-action="void"
-            onClick={() =>
-              void execute('作废发现项', () => commands.transition('void', voidReason))
-            }
-            disabled={disabled}
-          >
-            作废发现项
-          </button>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'open' &&
-      findingType !== 'observation' &&
-      findingType !== 'nonconformity' ? (
-        <p role="status">当前发现项类型无法解释，业务操作已关闭。</p>
-      ) : null}
-      {finding.lifecycle === 'rectifying' ? (
-        <div className="command-grid">
-          <form
-            className="command-form subsurface"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void execute('提交整改计划', () =>
-                commands.submitRectification('submit_plan', {
-                  stage: 'plan',
-                  root_cause: rootCause,
-                }),
-              )
-            }}
-          >
-            <h3>整改计划</h3>
-            <label>
-              根本原因
-              <input
-                value={rootCause}
-                onChange={(event) => setRootCause(event.target.value)}
-                disabled={disabled}
-                placeholder="由服务器校验必填规则"
-              />
-            </label>
-            <button type="submit" data-scenario-action="submit_plan" disabled={disabled}>
-              提交整改计划
-            </button>
-          </form>
-          <form
-            className="command-form subsurface"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void execute('提交验证', () =>
-                commands.submitRectification('submit_for_verification', {
-                  stage: 'completion',
-                  comment: completionComment,
-                }),
-              )
-            }}
-          >
-            <h3>整改完成</h3>
-            <label>
-              整改完成说明
-              <input
-                value={completionComment}
-                onChange={(event) => setCompletionComment(event.target.value)}
-                disabled={disabled}
-              />
-            </label>
-            <button
-              type="submit"
-              data-scenario-action="submit_for_verification"
-              disabled={disabled}
-            >
-              提交验证
-            </button>
-          </form>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'verifying' ? (
-        <div className="command-grid">
-          <div className="subsurface">
-            <h3>验证通过</h3>
-            <button
-              type="button"
-              data-scenario-action="approve"
-              onClick={() =>
-                void execute('验证通过', () =>
-                  commands.submitVerification('approve', { result: 'approved' }),
-                )
-              }
-              disabled={disabled}
-            >
-              通过验证
-            </button>
-          </div>
-          <form
-            className="command-form subsurface"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void execute('验证驳回', () =>
-                commands.submitVerification('reject', {
-                  result: 'rejected',
-                  comment: verificationComment,
-                }),
-              )
-            }}
-          >
-            <h3>验证驳回</h3>
-            <label>
-              驳回原因
-              <input
-                value={verificationComment}
-                onChange={(event) => setVerificationComment(event.target.value)}
-                disabled={disabled}
-              />
-            </label>
-            <button
-              type="submit"
-              className="secondary"
-              data-scenario-action="reject"
-              disabled={disabled}
-            >
-              驳回验证
-            </button>
-          </form>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'closed' && findingType === 'nonconformity' ? (
-        <form
-          className="command-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void execute('重新打开发现项', () => commands.reopen(reopenReason))
-          }}
-        >
-          <label>
-            重新打开原因
-            <input
-              value={reopenReason}
-              onChange={(event) => setReopenReason(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
-          <button type="submit" data-scenario-action="reopen" disabled={disabled}>
-            重新打开
-          </button>
-        </form>
+            action="issue"
+            label="签发不符合项"
+            buttonText="签发不符合项"
+            run={() => commands.transition('issue')}
+          />
+        ) : null}
+        {finding.lifecycle === 'open' && interpretable ? <VoidCommand {...shared} /> : null}
+        {finding.lifecycle === 'rectifying' ? <RectificationCommands {...shared} /> : null}
+        {finding.lifecycle === 'verifying' ? <VerificationCommands {...shared} /> : null}
+        {finding.lifecycle === 'closed' && findingType === 'nonconformity' ? <ReopenCommand {...shared} /> : null}
+      </CommandRow>
+      {finding.lifecycle === 'open' && !interpretable ? (
+        <CommandNote>当前发现项类型无法解释，业务操作已关闭。</CommandNote>
       ) : null}
       {finding.lifecycle === 'closed' && findingType === 'observation' ? (
-        <p className="empty-note">观察项已接受并闭环。</p>
+        <CommandNote>观察项已接受并闭环。</CommandNote>
       ) : null}
-      {finding.lifecycle === 'voided' ? (
-        <p className="empty-note">当前发现项已作废，没有可执行的操作。</p>
-      ) : null}
-    </section>
+      {finding.lifecycle === 'voided' ? <CommandNote>当前发现项已作废，没有可执行的操作。</CommandNote> : null}
+    </FindingCommandCard>
   )
 }
 
@@ -354,7 +178,11 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
     { roleKey: 'reviewer', label: '复核员' },
     { roleKey: 'observer', label: '观察员' },
   ],
-  FindingScenarioSection: ComplianceReviewV1FindingSection,
+  findingScenarioItems: findingItems,
+  findingKindLabel: (finding) => {
+    const label = findingTypeText(finding.scenario_data.finding_type)
+    return label === '—' ? null : label
+  },
   FindingCreateFields: ComplianceReviewV1FindingCreateFields,
   buildFindingScenarioData: (values) => ({
     criterion_reference: formValue(values, 'criterion_reference'),

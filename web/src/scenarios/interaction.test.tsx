@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import type { FindingResponse } from '../api/product'
+import type { CommandResult } from '../product/commandFailure'
 import { resolveFindingScenarioAdapter } from './index'
 import type { ScenarioFindingCommandPorts } from './registry'
 
@@ -12,8 +13,9 @@ const commands: ScenarioFindingCommandPorts = {
   reopen: async () => undefined,
 }
 
-async function execute(_label: string, command: () => Promise<unknown>): Promise<void> {
+async function execute(_label: string, command: () => Promise<unknown>): Promise<CommandResult> {
   await command()
+  return { ok: true }
 }
 
 function finding(

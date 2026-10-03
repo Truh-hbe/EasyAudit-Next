@@ -1,14 +1,25 @@
-import { useState } from 'react'
-
 import type {
   ScenarioCaseSectionProps,
+  ScenarioDescriptionItem,
   ScenarioFindingInteractionProps,
-  ScenarioFindingSectionProps,
   ScenarioFormFieldsProps,
   ScenarioFormValues,
   ScenarioUiAdapter,
 } from './registry'
+import type { FindingResponse, ReviewCaseResponse } from '../api/product'
 import { CaseCreateTextField } from './CaseCreateTextField'
+import { FindingCreateTextField } from './FindingCreateFields'
+import {
+  CommandNote,
+  CommandRow,
+  DirectCommand,
+  FindingCommandCard,
+  RectificationCommands,
+  ReopenCommand,
+  VerificationCommands,
+  VoidCommand,
+} from './findingCommandKit'
+import { ScenarioFieldsCard } from './ScenarioFieldsCard'
 
 function scenarioText(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : '—'
@@ -18,26 +29,15 @@ function formValue(values: ScenarioFormValues, name: string): string {
   return values[name] ?? ''
 }
 
+function caseItems(reviewCase: ReviewCaseResponse): ScenarioDescriptionItem[] {
+  return [
+    { key: 'area_code', label: '区域代码', value: scenarioText(reviewCase.scenario_data.area_code) },
+    { key: 'review_type', label: '审查类型', value: scenarioText(reviewCase.scenario_data.review_type) },
+  ]
+}
+
 export function ProcessReviewV1CaseSection({ reviewCase }: ScenarioCaseSectionProps) {
-  return (
-    <section className="surface-card" aria-labelledby="process-review-v1-title">
-      <div className="section-heading">
-        <div>
-          <h2 id="process-review-v1-title">过程审查信息</h2>
-        </div>
-      </div>
-      <dl className="fact-grid">
-        <div>
-          <dt>区域代码</dt>
-          <dd>{scenarioText(reviewCase.scenario_data.area_code)}</dd>
-        </div>
-        <div>
-          <dt>审查类型</dt>
-          <dd>{scenarioText(reviewCase.scenario_data.review_type)}</dd>
-        </div>
-      </dl>
-    </section>
-  )
+  return <ScenarioFieldsCard id="process-review-v1-title" title="过程审查信息" items={caseItems(reviewCase)} />
 }
 
 export function ProcessReviewV1CaseCreateFields({
@@ -68,241 +68,69 @@ export function ProcessReviewV1CaseCreateFields({
   )
 }
 
-export function ProcessReviewV1FindingSection({ finding }: ScenarioFindingSectionProps) {
-  return (
-    <section className="surface-card" aria-labelledby="process-review-v1-finding-title">
-      <div className="section-heading">
-        <div>
-          <h2 id="process-review-v1-finding-title">过程审查发现项信息</h2>
-        </div>
-      </div>
-      <dl className="fact-grid">
-        <div>
-          <dt>问题类型</dt>
-          <dd>{scenarioText(finding.scenario_data.issue_type)}</dd>
-        </div>
-        <div>
-          <dt>项目类别</dt>
-          <dd>{scenarioText(finding.scenario_data.project_category)}</dd>
-        </div>
-      </dl>
-    </section>
-  )
+function findingItems(finding: FindingResponse): ScenarioDescriptionItem[] {
+  return [
+    { key: 'issue_type', label: '问题类型', value: scenarioText(finding.scenario_data.issue_type) },
+    { key: 'project_category', label: '项目类别', value: scenarioText(finding.scenario_data.project_category) },
+  ]
 }
 
 export function ProcessReviewV1FindingCreateFields({
   values,
   onChange,
   disabled,
+  fieldErrors,
 }: ScenarioFormFieldsProps) {
   return (
-    <div className="form-grid">
-      <label>
-        问题类型
-        <input
-          value={formValue(values, 'issue_type')}
-          onChange={(event) => onChange('issue_type', event.target.value)}
-          disabled={disabled}
-          placeholder="由审查场景校验"
-        />
-      </label>
-      <label>
-        项目类别
-        <input
-          value={formValue(values, 'project_category')}
-          onChange={(event) => onChange('project_category', event.target.value)}
-          disabled={disabled}
-          placeholder="由审查场景校验"
-        />
-      </label>
-    </div>
+    <>
+      <FindingCreateTextField
+        name="issue_type"
+        label="问题类型"
+        placeholder="由审查场景校验"
+        value={formValue(values, 'issue_type')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.issue_type}
+      />
+      <FindingCreateTextField
+        name="project_category"
+        label="项目类别"
+        placeholder="由审查场景校验"
+        value={formValue(values, 'project_category')}
+        onChange={onChange}
+        disabled={disabled}
+        error={fieldErrors?.project_category}
+      />
+    </>
   )
 }
 
-export function ProcessReviewV1FindingInteraction({
-  finding,
-  disabled,
-  commands,
-  execute,
-}: ScenarioFindingInteractionProps) {
-  const [voidReason, setVoidReason] = useState('')
-  const [rootCause, setRootCause] = useState('')
-  const [completionComment, setCompletionComment] = useState('')
-  const [verificationComment, setVerificationComment] = useState('')
-  const [reopenReason, setReopenReason] = useState('')
-
+export function ProcessReviewV1FindingInteraction(props: ScenarioFindingInteractionProps) {
+  const { finding, commands, execute, disabled } = props
+  const shared = { commands, execute, disabled }
   return (
-    <section className="surface-card" aria-labelledby="finding-command-title">
-      <h2 id="finding-command-title">业务操作</h2>
-      <p className="empty-note">
-        以下操作按过程审查场景展示；最终授权、状态与并发判断以服务器为准。
-      </p>
-      {finding.lifecycle === 'open' ? (
-        <div className="command-stack">
-          <button
-            type="button"
-            data-scenario-action="issue"
-            onClick={() => void execute('签发发现项', () => commands.transition('issue'))}
-            disabled={disabled}
-          >
-            签发发现项
-          </button>
-          <label>
-            作废原因
-            <input
-              value={voidReason}
-              onChange={(event) => setVoidReason(event.target.value)}
+    <FindingCommandCard scenarioLabel="过程审查">
+      <CommandRow>
+        {finding.lifecycle === 'open' ? (
+          <>
+            <DirectCommand
+              primary
+              execute={execute}
               disabled={disabled}
+              action="issue"
+              label="签发发现项"
+              buttonText="签发发现项"
+              run={() => commands.transition('issue')}
             />
-          </label>
-          <button
-            type="button"
-            className="secondary"
-            data-scenario-action="void"
-            onClick={() =>
-              void execute('作废发现项', () => commands.transition('void', voidReason))
-            }
-            disabled={disabled}
-          >
-            作废发现项
-          </button>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'rectifying' ? (
-        <div className="command-grid">
-          <form
-            className="command-form subsurface"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void execute('提交整改计划', () =>
-                commands.submitRectification('submit_plan', {
-                  stage: 'plan',
-                  root_cause: rootCause,
-                }),
-              )
-            }}
-          >
-            <h3>整改计划</h3>
-            <label>
-              根本原因
-              <input
-                value={rootCause}
-                onChange={(event) => setRootCause(event.target.value)}
-                disabled={disabled}
-                placeholder="由服务器校验必填规则"
-              />
-            </label>
-            <button type="submit" data-scenario-action="submit_plan" disabled={disabled}>
-              提交整改计划
-            </button>
-          </form>
-          <form
-            className="command-form subsurface"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void execute('提交验证', () =>
-                commands.submitRectification('submit_for_verification', {
-                  stage: 'completion',
-                  comment: completionComment,
-                }),
-              )
-            }}
-          >
-            <h3>整改完成</h3>
-            <label>
-              整改完成说明
-              <input
-                value={completionComment}
-                onChange={(event) => setCompletionComment(event.target.value)}
-                disabled={disabled}
-                placeholder="服务器将校验整改项完成状态与说明"
-              />
-            </label>
-            <button
-              type="submit"
-              data-scenario-action="submit_for_verification"
-              disabled={disabled}
-            >
-              提交验证
-            </button>
-          </form>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'verifying' ? (
-        <div className="command-grid">
-          <div className="subsurface">
-            <h3>验证通过</h3>
-            <button
-              type="button"
-              data-scenario-action="approve"
-              onClick={() =>
-                void execute('验证通过', () =>
-                  commands.submitVerification('approve', { result: 'approved' }),
-                )
-              }
-              disabled={disabled}
-            >
-              通过验证
-            </button>
-          </div>
-          <form
-            className="command-form subsurface"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void execute('验证驳回', () =>
-                commands.submitVerification('reject', {
-                  result: 'rejected',
-                  comment: verificationComment,
-                }),
-              )
-            }}
-          >
-            <h3>验证驳回</h3>
-            <label>
-              驳回原因
-              <input
-                value={verificationComment}
-                onChange={(event) => setVerificationComment(event.target.value)}
-                disabled={disabled}
-                placeholder="驳回时由服务器校验必填规则"
-              />
-            </label>
-            <button
-              type="submit"
-              className="secondary"
-              data-scenario-action="reject"
-              disabled={disabled}
-            >
-              驳回验证
-            </button>
-          </form>
-        </div>
-      ) : null}
-      {finding.lifecycle === 'closed' ? (
-        <form
-          className="command-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void execute('重新打开发现项', () => commands.reopen(reopenReason))
-          }}
-        >
-          <label>
-            重新打开原因
-            <input
-              value={reopenReason}
-              onChange={(event) => setReopenReason(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
-          <button type="submit" data-scenario-action="reopen" disabled={disabled}>
-            重新打开
-          </button>
-        </form>
-      ) : null}
-      {finding.lifecycle === 'voided' ? (
-        <p className="empty-note">当前发现项已作废，没有可执行的操作。</p>
-      ) : null}
-    </section>
+            <VoidCommand {...shared} />
+          </>
+        ) : null}
+        {finding.lifecycle === 'rectifying' ? <RectificationCommands {...shared} /> : null}
+        {finding.lifecycle === 'verifying' ? <VerificationCommands {...shared} /> : null}
+        {finding.lifecycle === 'closed' ? <ReopenCommand {...shared} /> : null}
+      </CommandRow>
+      {finding.lifecycle === 'voided' ? <CommandNote>当前发现项已作废，没有可执行的操作。</CommandNote> : null}
+    </FindingCommandCard>
   )
 }
 
@@ -319,7 +147,8 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
     { roleKey: 'reviewer', label: '复核员' },
     { roleKey: 'observer', label: '观察员' },
   ],
-  FindingScenarioSection: ProcessReviewV1FindingSection,
+  findingScenarioItems: findingItems,
+  findingKindLabel: () => null,
   FindingCreateFields: ProcessReviewV1FindingCreateFields,
   buildFindingScenarioData: (values) => ({
     issue_type: formValue(values, 'issue_type'),

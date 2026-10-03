@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { NotificationOutlined, PlusOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Card, Descriptions, Empty, Flex, Result, Spin, Timeline, Typography } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { ApiError } from '../../api/client'
 import { nudgeFinding } from '../../api/collaboration'
 import {
   addFindingParticipant,
@@ -18,711 +19,496 @@ import {
   submitRectification,
   transitionFinding,
 } from '../../api/product'
-import type {
-  ActionItemResponse,
-  AssignmentCandidateResponse,
-  FindingActivityResponse,
-  FindingParticipantViewResponse,
-  FindingResponse,
-  ReviewCaseResponse,
-  SubmissionResponse,
-} from '../../api/product'
 import {
-  DISPLAY_TIME_ZONE_HINT,
-  formatDateTime,
-  invalidDisplayZoneInputMessage,
-  parseOptionalDisplayZoneInput,
-} from '../../product/format'
+  BUSY_FAILURE,
+  NOT_AVAILABLE_TEXT,
+  classifyCommandFailure,
+  failureAlertType,
+  failureNeedsRefresh,
+} from '../../product/commandFailure'
+import type { CommandFailure, CommandResult } from '../../product/commandFailure'
+import { formatDateTime } from '../../product/format'
 import { participantRoleName, scenarioName, scenarioVersionText, submissionPurposeName } from '../../product/terms'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
-import type { ScenarioFindingCommandPorts } from '../../scenarios/registry'
+import type { ScenarioCommandOptions, ScenarioFindingCommandPorts } from '../../scenarios/registry'
 import { ActivityEventName } from '../../ui/ActivityEventName'
+import { ButtonLink } from '../../ui/ButtonLink'
+import { InitialLoading } from '../../ui/InitialLoading'
+import { ItemList } from '../../ui/ItemList'
+import { PageHeader } from '../../ui/PageHeader'
 import { StatusTag } from '../../ui/StatusTag'
+import { ActorAssignDrawer, actorKindText } from '../ActorAssignDrawer'
+import type { AssignRoleOption } from '../ActorAssignDrawer'
+import { actorText } from '../actorNames'
+import { SectionNotice } from '../SectionNotice'
+import { useScopedResource } from '../useScopedResource'
+import { ActionCreateDrawer } from './ActionCreateDrawer'
+import type { ActionCreateInput } from './ActionCreateDrawer'
 
-type PrimaryState =
-  | { status: 'loading'; findingId: string | undefined }
-  | { status: 'unavailable'; findingId: string | undefined }
-  | { status: 'error'; findingId: string | undefined; message: string }
-  | { status: 'ready'; findingId: string; data: FindingResponse }
+const RESPONSIBILITY_ROLES = ['responsible_department', 'owner'] as const
 
-type ChildState<T> =
-  | { status: 'idle' }
-  | { status: 'loading'; findingId: string }
-  | { status: 'unavailable'; findingId: string }
-  | { status: 'error'; findingId: string; message: string }
-  | { status: 'ready'; findingId: string; data: T }
-
-type CandidateState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: AssignmentCandidateResponse[] }
-
-const idleChild = { status: 'idle' } as const
-
-function unavailable(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 403 || error.status === 404)
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
-}
-
-function stateForFinding<T>(state: ChildState<T>, findingId: string): ChildState<T> {
-  return state.status !== 'idle' && state.findingId === findingId ? state : idleChild
-}
-
-function actorKindText(actorKind: 'user' | 'department'): string {
-  return actorKind === 'user' ? '用户' : '部门'
-}
-
-function ActivitySection({ state }: { state: ChildState<FindingActivityResponse[]> }) {
-  return (
-    <section className="surface-card" aria-labelledby="finding-activity-title">
-      <h2 id="finding-activity-title">操作记录</h2>
-      {state.status === 'idle' || state.status === 'loading' ? <p>正在读取操作记录…</p> : null}
-      {state.status === 'unavailable' ? <p className="empty-note">操作记录不可用。</p> : null}
-      {state.status === 'error' ? <p role="alert">{state.message}</p> : null}
-      {state.status === 'ready' && state.data.length === 0 ? (
-        <p className="empty-note">暂无操作记录。</p>
-      ) : null}
-      {state.status === 'ready' && state.data.length > 0 ? (
-        <ol className="activity-list">
-          {state.data.map((activity) => (
-            <li key={activity.id}>
-              <ActivityEventName eventType={activity.event_type} />
-              <span>{formatDateTime(activity.occurred_at)}</span>
-              <span>操作人 {activity.actor_id ?? '系统'}</span>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-    </section>
-  )
-}
-
-function SubmissionSection({ state }: { state: ChildState<SubmissionResponse[]> }) {
-  return (
-    <section className="surface-card" aria-labelledby="submission-history-title">
-      <h2 id="submission-history-title">提交记录</h2>
-      {state.status === 'idle' || state.status === 'loading' ? <p>正在读取提交记录…</p> : null}
-      {state.status === 'unavailable' ? <p className="empty-note">提交记录不可用。</p> : null}
-      {state.status === 'error' ? <p role="alert">{state.message}</p> : null}
-      {state.status === 'ready' && state.data.length === 0 ? (
-        <p className="empty-note">暂无提交记录。</p>
-      ) : null}
-      {state.status === 'ready' && state.data.length > 0 ? (
-        <ol className="surface-list">
-          {state.data.map((submission) => (
-            <li key={submission.id}>
-              <strong>{submissionPurposeName(submission.purpose)}</strong>
-              <span>{formatDateTime(submission.submitted_at)}</span>
-              <span>提交人 {submission.submitted_by}</span>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      <p className="empty-note">历史提交内容不用于推断当前状态或权限。</p>
-    </section>
-  )
-}
+type NudgeNotice =
+  | { findingId: string; type: 'success'; text: string }
+  | { findingId: string; type: 'failure'; failure: CommandFailure }
 
 export function FindingDetailPage() {
   const { findingId } = useParams()
+  const { message } = App.useApp()
   const currentFindingIdRef = useRef(findingId)
   currentFindingIdRef.current = findingId
-  const candidateSearchSequenceRef = useRef(0)
+  const busyRef = useRef(false)
+  const nudgeBusyRef = useRef(false)
   const [revision, setRevision] = useState(0)
-  const [primary, setPrimary] = useState<PrimaryState>({
-    status: 'loading',
-    findingId: undefined,
-  })
-  const [reviewCase, setReviewCase] = useState<ChildState<ReviewCaseResponse>>(idleChild)
-  const [participants, setParticipants] = useState<
-    ChildState<FindingParticipantViewResponse[]>
-  >(idleChild)
-  const [actions, setActions] = useState<ChildState<ActionItemResponse[]>>(idleChild)
-  const [submissions, setSubmissions] = useState<ChildState<SubmissionResponse[]>>(idleChild)
-  const [activities, setActivities] = useState<ChildState<FindingActivityResponse[]>>(idleChild)
-  const [candidateState, setCandidateState] = useState<CandidateState>({ status: 'idle' })
-  const [candidateQuery, setCandidateQuery] = useState('')
-  const [participantRoleKey, setParticipantRoleKey] = useState('')
-  const [actionTitle, setActionTitle] = useState('')
-  const [actionDueAt, setActionDueAt] = useState('')
   const [commandBusy, setCommandBusy] = useState(false)
-  const [commandMessage, setCommandMessage] = useState<string | null>(null)
+  const [notice, setNotice] = useState<CommandFailure | null>(null)
   const [nudgeBusy, setNudgeBusy] = useState(false)
-  const [nudgeMessage, setNudgeMessage] = useState<string | null>(null)
+  const [nudgeNotice, setNudgeNotice] = useState<NudgeNotice | null>(null)
+  const [participantDrawerOpen, setParticipantDrawerOpen] = useState(false)
+  const [actionDrawerOpen, setActionDrawerOpen] = useState(false)
+  const refresh = () => setRevision((value) => value + 1)
 
+  // 切换发现项时丢弃上一个发现项的弹层、提示与进行中状态。
   useEffect(() => {
-    candidateSearchSequenceRef.current += 1
-    setCandidateState({ status: 'idle' })
-    setCandidateQuery('')
-    setParticipantRoleKey('')
-    setActionTitle('')
-    setActionDueAt('')
+    busyRef.current = false
+    nudgeBusyRef.current = false
     setCommandBusy(false)
-    setCommandMessage(null)
+    setNotice(null)
     setNudgeBusy(false)
-    setNudgeMessage(null)
+    setNudgeNotice(null)
+    setParticipantDrawerOpen(false)
+    setActionDrawerOpen(false)
   }, [findingId])
 
-  useEffect(() => {
-    setReviewCase(idleChild)
-    setParticipants(idleChild)
-    setActions(idleChild)
-    setSubmissions(idleChild)
-    setActivities(idleChild)
-    setCandidateState({ status: 'idle' })
+  const primary = useScopedResource(
+    findingId ?? null,
+    revision,
+    (signal) => getFinding(findingId ?? '', signal),
+    '发现项请求失败',
+  )
+  const finding = primary.status === 'ready' ? primary.data : null
+  // 主资源授权通过之后才读取从属资源。
+  const scope = finding?.id ?? null
+  const caseId = finding?.case_id ?? ''
+  const caseState = useScopedResource(scope, revision, (signal) => getReviewCase(caseId, signal), '审查活动请求失败')
+  const participants = useScopedResource(
+    scope,
+    revision,
+    (signal) => getFindingParticipantViews(scope ?? '', signal),
+    '参与人请求失败',
+  )
+  const actions = useScopedResource(scope, revision, (signal) => getFindingActions(scope ?? '', signal), '整改项请求失败')
+  const submissions = useScopedResource(
+    scope,
+    revision,
+    (signal) => getFindingSubmissions(scope ?? '', signal),
+    '提交记录请求失败',
+  )
+  const activities = useScopedResource(
+    scope,
+    revision,
+    (signal) => getFindingActivities(scope ?? '', signal),
+    '操作记录请求失败',
+  )
 
-    if (findingId === undefined) {
-      setPrimary({ status: 'unavailable', findingId })
-      return
+  const participantData = participants.status === 'ready' ? participants.data : null
+  const names = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const participant of participantData ?? []) {
+      if (participant.actor_kind === 'user') map.set(participant.actor_id, participant.display_name)
     }
+    return map
+  }, [participantData])
 
-    const requestedFindingId = findingId
-    const controller = new AbortController()
-    setPrimary({ status: 'loading', findingId: requestedFindingId })
-    void getFinding(requestedFindingId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          setPrimary({ status: 'ready', findingId: requestedFindingId, data })
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setPrimary(
-          unavailable(error)
-            ? { status: 'unavailable', findingId: requestedFindingId }
-            : {
-                status: 'error',
-                findingId: requestedFindingId,
-                message: errorMessage(error, '发现项请求失败'),
-              },
-        )
-      })
-    return () => controller.abort()
-  }, [findingId, revision])
-
-  const primaryMatchesRoute = primary.findingId === findingId
-  const authorizedFindingId =
-    primaryMatchesRoute && primary.status === 'ready' ? primary.data.id : null
-
-  useEffect(() => {
-    if (authorizedFindingId === null || primary.status !== 'ready') return
-    const currentFinding = primary.data
-    const controller = new AbortController()
-    setReviewCase({ status: 'loading', findingId: authorizedFindingId })
-    setParticipants({ status: 'loading', findingId: authorizedFindingId })
-    setActions({ status: 'loading', findingId: authorizedFindingId })
-    setSubmissions({ status: 'loading', findingId: authorizedFindingId })
-    setActivities({ status: 'loading', findingId: authorizedFindingId })
-
-    void getReviewCase(currentFinding.case_id, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          setReviewCase({ status: 'ready', findingId: authorizedFindingId, data })
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setReviewCase(
-          unavailable(error)
-            ? { status: 'unavailable', findingId: authorizedFindingId }
-            : {
-                status: 'error',
-                findingId: authorizedFindingId,
-                message: errorMessage(error, '审查活动请求失败'),
-              },
-        )
-      })
-
-    void getFindingParticipantViews(authorizedFindingId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          setParticipants({ status: 'ready', findingId: authorizedFindingId, data })
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setParticipants(
-          unavailable(error)
-            ? { status: 'unavailable', findingId: authorizedFindingId }
-            : {
-                status: 'error',
-                findingId: authorizedFindingId,
-                message: errorMessage(error, '参与人请求失败'),
-              },
-        )
-      })
-
-    void getFindingActions(authorizedFindingId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          setActions({ status: 'ready', findingId: authorizedFindingId, data })
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setActions(
-          unavailable(error)
-            ? { status: 'unavailable', findingId: authorizedFindingId }
-            : {
-                status: 'error',
-                findingId: authorizedFindingId,
-                message: errorMessage(error, '整改项请求失败'),
-              },
-        )
-      })
-
-    void getFindingSubmissions(authorizedFindingId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          setSubmissions({ status: 'ready', findingId: authorizedFindingId, data })
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setSubmissions(
-          unavailable(error)
-            ? { status: 'unavailable', findingId: authorizedFindingId }
-            : {
-                status: 'error',
-                findingId: authorizedFindingId,
-                message: errorMessage(error, '提交记录请求失败'),
-              },
-        )
-      })
-
-    void getFindingActivities(authorizedFindingId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          setActivities({ status: 'ready', findingId: authorizedFindingId, data })
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setActivities(
-          unavailable(error)
-            ? { status: 'unavailable', findingId: authorizedFindingId }
-            : {
-                status: 'error',
-                findingId: authorizedFindingId,
-                message: errorMessage(error, '操作记录请求失败'),
-              },
-        )
-      })
-
-    return () => controller.abort()
-  }, [authorizedFindingId, primary])
-
-  async function runCommand(label: string, command: () => Promise<unknown>) {
+  async function runCommand(
+    label: string,
+    command: () => Promise<unknown>,
+    options: ScenarioCommandOptions = {},
+  ): Promise<CommandResult> {
+    if (busyRef.current) return { ok: false, failure: BUSY_FAILURE }
     const commandFindingId = findingId
+    busyRef.current = true
     setCommandBusy(true)
-    setCommandMessage(null)
+    setNotice(null)
+    let result: CommandResult
     try {
       await command()
-      if (currentFindingIdRef.current !== commandFindingId) return
-      setCommandMessage(`${label}已由服务器确认。`)
-      setCandidateState({ status: 'idle' })
-      setRevision((value) => value + 1)
+      result = { ok: true }
     } catch (error) {
-      if (currentFindingIdRef.current !== commandFindingId) return
-      setCommandMessage(errorMessage(error, `${label}失败`))
-      if (error instanceof ApiError && [403, 409, 422].includes(error.status)) {
-        setRevision((value) => value + 1)
-      }
-    } finally {
-      if (currentFindingIdRef.current === commandFindingId) {
-        setCommandBusy(false)
-      }
+      result = { ok: false, failure: classifyCommandFailure(error, { label, fields: options.fields }) }
     }
+    if (currentFindingIdRef.current !== commandFindingId) return result
+    busyRef.current = false
+    setCommandBusy(false)
+    if (result.ok) {
+      void message.success(`已完成：${label}`)
+      refresh()
+    } else {
+      if (options.notify !== false && result.failure.message !== '') setNotice(result.failure)
+      // 不自动重放；冲突、权限变化或结果未知时只重新读取，由用户核对后再决定。
+      if (failureNeedsRefresh(result.failure)) refresh()
+    }
+    return result
   }
 
   async function runNudge(currentFindingId: string) {
+    if (nudgeBusyRef.current) return
     const commandFindingId = findingId
+    nudgeBusyRef.current = true
     setNudgeBusy(true)
-    setNudgeMessage(null)
+    setNudgeNotice(null)
     try {
       const result = await nudgeFinding(currentFindingId)
       if (currentFindingIdRef.current !== commandFindingId) return
-      setNudgeMessage(
-        `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
-      )
-      setRevision((value) => value + 1)
+      setNudgeNotice({
+        findingId: currentFindingId,
+        type: 'success',
+        text: `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
+      })
+      refresh()
     } catch (error) {
       if (currentFindingIdRef.current !== commandFindingId) return
-      setNudgeMessage(errorMessage(error, '发现项催办失败'))
-      if (error instanceof ApiError && error.status === 404) {
-        setRevision((value) => value + 1)
-      }
+      const failure = classifyCommandFailure(error, { label: '催办' })
+      setNudgeNotice({ findingId: currentFindingId, type: 'failure', failure })
+      if (failureNeedsRefresh(failure)) refresh()
     } finally {
       if (currentFindingIdRef.current === commandFindingId) {
+        nudgeBusyRef.current = false
         setNudgeBusy(false)
       }
     }
   }
 
-  if (!primaryMatchesRoute || primary.status === 'loading') {
+  if (findingId === undefined || primary.status === 'unavailable') {
     return (
-      <section className="surface-page">
-        <h1>发现项</h1>
-        <p>正在确认访问权限…</p>
-      </section>
+      <Flex vertical gap={16}>
+        <PageHeader title="发现项" />
+        <Card>
+          <Result status="404" title={NOT_AVAILABLE_TEXT} extra={<ButtonLink to="/review-cases">返回审查活动列表</ButtonLink>} />
+        </Card>
+      </Flex>
     )
   }
 
-  if (primary.status === 'unavailable') {
+  if (primary.status === 'loading') {
     return (
-      <section className="surface-page">
-        <h1>发现项不可用</h1>
-        <p>当前没有可见的发现项内容。</p>
-      </section>
+      <Flex vertical gap={16} aria-busy="true">
+        <PageHeader title="发现项" />
+        <Card>
+          <InitialLoading label="正在确认访问权限" rows={6} />
+        </Card>
+      </Flex>
     )
   }
 
   if (primary.status === 'error') {
     return (
-      <section className="surface-page">
-        <h1>发现项</h1>
-        <div role="alert" className="surface-card">
-          <p>{primary.message}</p>
-          <button type="button" onClick={() => setRevision((value) => value + 1)}>
-            重新加载
-          </button>
-        </div>
-      </section>
+      <Flex vertical gap={16}>
+        <PageHeader title="发现项" />
+        <Alert
+          type="error"
+          showIcon
+          title={primary.message}
+          action={
+            <Button size="small" onClick={refresh}>
+              重新加载
+            </Button>
+          }
+        />
+      </Flex>
     )
   }
 
-  const finding = primary.data
-  const caseState = stateForFinding(reviewCase, finding.id)
-  const participantState = stateForFinding(participants, finding.id)
-  const actionState = stateForFinding(actions, finding.id)
-  const submissionState = stateForFinding(submissions, finding.id)
-  const activityState = stateForFinding(activities, finding.id)
+  if (primary.status !== 'ready' || finding === null) return null
+
   const caseContext = caseState.status === 'ready' ? caseState.data : null
   const scenarioAdapter =
     caseContext === null
       ? undefined
       : resolveFindingScenarioAdapter(caseContext.scenario_key, caseContext.scenario_version)
-  const participantOption =
-    scenarioAdapter?.participantOptions.find((option) => option.roleKey === participantRoleKey) ??
-    scenarioAdapter?.participantOptions[0]
-  const FindingScenarioSection = scenarioAdapter?.FindingScenarioSection
-  const FindingInteractionSection = scenarioAdapter?.FindingInteractionSection
-
+  const terminal = finding.lifecycle === 'closed' || finding.lifecycle === 'voided'
+  const Interaction = scenarioAdapter?.FindingInteractionSection
+  const kindLabel = scenarioAdapter?.findingKindLabel(finding) ?? null
   const interactionCommands: ScenarioFindingCommandPorts = {
     transition: (action, reason) => transitionFinding(finding.id, action, reason ?? null),
     submitRectification: (action, payload) => submitRectification(finding.id, action, payload),
-    submitVerification: (action, payload) =>
-      submitFindingVerification(finding.id, action, payload),
+    submitVerification: (action, payload) => submitFindingVerification(finding.id, action, payload),
     reopen: (reason) => reopenFinding(finding.id, reason),
   }
+  const participantRoles: AssignRoleOption[] = (scenarioAdapter?.participantOptions ?? []).map((option) => ({
+    value: option.roleKey,
+    label: option.label,
+    actorKind: option.actorKind,
+  }))
+  const responsibility =
+    participants.status !== 'ready'
+      ? '读取中'
+      : participants.data
+          .filter((participant) => (RESPONSIBILITY_ROLES as readonly string[]).includes(participant.role_key))
+          .map((participant) => `${participantRoleName(participant.role_key)} ${participant.display_name}`)
+          .join('；') || '尚未指定'
 
-  async function searchParticipants() {
-    if (participantOption === undefined) return
-    if (candidateQuery.trim().length < 2) {
-      setCandidateState({ status: 'error', message: '候选搜索至少输入 2 个字符。' })
-      return
-    }
-    const searchSequence = candidateSearchSequenceRef.current + 1
-    candidateSearchSequenceRef.current = searchSequence
-    const searchFindingId = findingId
-    setCandidateState({ status: 'loading' })
-    try {
-      const data = await searchFindingParticipantCandidates(
-        finding.id,
-        participantOption.roleKey,
-        participantOption.actorKind,
-        candidateQuery,
-      )
-      if (
-        currentFindingIdRef.current !== searchFindingId ||
-        candidateSearchSequenceRef.current !== searchSequence
-      ) {
-        return
-      }
-      setCandidateState({ status: 'ready', data })
-    } catch (error) {
-      if (
-        currentFindingIdRef.current !== searchFindingId ||
-        candidateSearchSequenceRef.current !== searchSequence
-      ) {
-        return
-      }
-      setCandidateState({ status: 'error', message: errorMessage(error, '候选搜索失败') })
-    }
+  async function createAction(input: ActionCreateInput): Promise<CommandResult> {
+    return runCommand('新建整改项', () => createActionItem(finding?.id ?? '', input), {
+      fields: ['title', 'due_at'],
+      notify: false,
+    })
   }
 
   return (
-    <article className="surface-page" aria-labelledby="finding-title">
-      <header className="case-header surface-card">
-        <div>
-          <p className="eyebrow">发现项 · 严重度 <StatusTag kind="severity" value={finding.severity} /></p>
-          <h1 id="finding-title">{finding.title}</h1>
-          <p>
-            <Link to={`/review-cases/${finding.case_id}`}>返回审查活动</Link>
-          </p>
-        </div>
-        <StatusTag kind="finding" value={finding.lifecycle} />
-      </header>
+    <Flex component="article" vertical gap={16} aria-labelledby="finding-title">
+      <PageHeader
+        title={finding.title}
+        titleId="finding-title"
+        meta={
+          <>
+            <StatusTag kind="finding" value={finding.lifecycle} />
+            <StatusTag kind="severity" value={finding.severity} />
+            {caseContext === null ? null : (
+              <Typography.Text type="secondary">
+                {scenarioName(caseContext.scenario_key)}
+                {kindLabel === null ? '' : ` · ${kindLabel}`}
+              </Typography.Text>
+            )}
+          </>
+        }
+        extra={<ButtonLink to={`/review-cases/${finding.case_id}`}>返回审查活动</ButtonLink>}
+      />
 
-      <section className="surface-card" aria-labelledby="finding-overview-title">
-        <h2 id="finding-overview-title">概览</h2>
-        <dl className="fact-grid">
-          <div>
-            <dt>发现项 ID</dt>
-            <dd>{finding.id}</dd>
-          </div>
-          <div>
-            <dt>审查活动</dt>
-            <dd>{finding.case_id}</dd>
-          </div>
-          <div>
-            <dt>提出时间</dt>
-            <dd>{formatDateTime(finding.raised_at)}</dd>
-          </div>
-          <div>
-            <dt>提出人</dt>
-            <dd>{finding.raised_by}</dd>
-          </div>
-          <div className="wide-fact">
-            <dt>描述</dt>
-            <dd>{finding.description ?? '—'}</dd>
-          </div>
-        </dl>
-      </section>
-
-      {caseState.status === 'loading' || caseState.status === 'idle' ? (
-        <section className="surface-card">
-          <p>正在加载审查场景…</p>
-        </section>
-      ) : null}
-      {caseState.status === 'unavailable' || caseState.status === 'error' ? (
-        <section className="surface-card">
-          <h2>审查场景</h2>
-          <p className="empty-note">
-            审查场景信息不可用，场景相关的编辑已关闭。
-          </p>
-        </section>
-      ) : null}
-      {caseContext !== null && FindingScenarioSection === undefined ? (
-        <section className="surface-card">
-          <h2>审查场景</h2>
-          <p role="status">
-            暂不支持当前版本的审查场景界面（{scenarioName(caseContext.scenario_key)} ·{' '}
-            {scenarioVersionText(caseContext.scenario_key, caseContext.scenario_version)}）。仍可查看发现项的通用信息。
-          </p>
-        </section>
-      ) : null}
-      {FindingScenarioSection === undefined ? null : (
-        <FindingScenarioSection finding={finding} />
-      )}
-
-      <section className="surface-card" aria-labelledby="participants-title">
-        <div className="section-heading">
-          <h2 id="participants-title">参与关系</h2>
-        </div>
-        {participantState.status === 'idle' || participantState.status === 'loading' ? (
-          <p>正在读取参与关系…</p>
-        ) : null}
-        {participantState.status === 'unavailable' ? (
-          <p className="empty-note">参与关系不可用。</p>
-        ) : null}
-        {participantState.status === 'error' ? <p role="alert">{participantState.message}</p> : null}
-        {participantState.status === 'ready' && participantState.data.length === 0 ? (
-          <p className="empty-note">暂无参与关系。</p>
-        ) : null}
-        {participantState.status === 'ready' && participantState.data.length > 0 ? (
-          <ul className="surface-list">
-            {participantState.data.map((participant) => (
-              <li
-                key={`${participant.actor_kind}-${participant.actor_id}-${participant.role_key}`}
-              >
-                <strong>{participant.display_name}</strong>
-                <span>
-                  {participantRoleName(participant.role_key)} · {actorKindText(participant.actor_kind)}
-                </span>
-                <span>加入于 {formatDateTime(participant.assigned_at)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        {scenarioAdapter !== undefined && !['closed', 'voided'].includes(finding.lifecycle) ? (
-          <div className="subsurface">
-            <h3>添加参与人</h3>
-            <div className="form-grid">
-              <label>
-                关系角色
-                <select
-                  value={participantOption?.roleKey ?? ''}
-                  onChange={(event) => {
-                    setParticipantRoleKey(event.target.value)
-                    candidateSearchSequenceRef.current += 1
-                    setCandidateState({ status: 'idle' })
-                  }}
-                  disabled={commandBusy}
-                >
-                  {scenarioAdapter.participantOptions.map((option) => (
-                    <option key={option.roleKey} value={option.roleKey}>
-                      {option.label} · {actorKindText(option.actorKind)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                搜索
-                <input
-                  value={candidateQuery}
-                  onChange={(event) => setCandidateQuery(event.target.value)}
-                  disabled={commandBusy}
-                  placeholder="至少 2 个字符"
-                />
-              </label>
-            </div>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => void searchParticipants()}
-              disabled={commandBusy}
-            >
-              搜索候选
-            </button>
-            {candidateState.status === 'loading' ? <p>正在查询可选人员…</p> : null}
-            {candidateState.status === 'error' ? <p role="alert">{candidateState.message}</p> : null}
-            {candidateState.status === 'ready' && candidateState.data.length === 0 ? (
-              <p className="empty-note">没有匹配候选。</p>
-            ) : null}
-            {candidateState.status === 'ready' && candidateState.data.length > 0 ? (
-              <ul className="surface-list candidate-list">
-                {candidateState.data.map((candidate) => (
-                  <li key={`${candidate.actor_kind}-${candidate.actor_id}`}>
-                    <strong>{candidate.display_name}</strong>
-                    <span>{actorKindText(candidate.actor_kind)}</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void runCommand('添加参与人', () =>
-                          addFindingParticipant(
-                            finding.id,
-                            candidate.actor_kind,
-                            candidate.actor_id,
-                            participantOption?.roleKey ?? '',
-                          ),
-                        )
-                      }
-                      disabled={commandBusy || participantOption === undefined}
-                    >
-                      添加
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="surface-card" aria-labelledby="actions-title">
-        <h2 id="actions-title">整改项</h2>
-        {actionState.status === 'idle' || actionState.status === 'loading' ? (
-          <p>正在读取整改项…</p>
-        ) : null}
-        {actionState.status === 'unavailable' ? (
-          <p className="empty-note">整改项不可用。</p>
-        ) : null}
-        {actionState.status === 'error' ? <p role="alert">{actionState.message}</p> : null}
-        {actionState.status === 'ready' && actionState.data.length === 0 ? (
-          <p className="empty-note">暂无整改项。</p>
-        ) : null}
-        {actionState.status === 'ready' && actionState.data.length > 0 ? (
-          <ul className="surface-list">
-            {actionState.data.map((action) => (
-              <li key={action.id}>
-                <Link to={`/action-items/${action.id}`}>{action.title}</Link>
-                <span>
-                  <StatusTag kind="actionItem" value={action.lifecycle} /> 到期 {formatDateTime(action.due_at)}
-                </span>
-                <span>完成于 {formatDateTime(action.completed_at)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {scenarioAdapter !== undefined && finding.lifecycle === 'rectifying' ? (
-          <form
-            className="command-form subsurface"
-            onSubmit={(event) => {
-              event.preventDefault()
-              const dueAt = parseOptionalDisplayZoneInput(actionDueAt)
-              if (!dueAt.valid) {
-                setCommandMessage(invalidDisplayZoneInputMessage('到期时间'))
-                return
-              }
-              void runCommand('新建整改项', () =>
-                createActionItem(finding.id, { title: actionTitle, due_at: dueAt.iso }),
-              )
-            }}
-          >
-            <h3>新建整改项</h3>
-            <p id="action-due-time-zone-hint" className="field-help">{DISPLAY_TIME_ZONE_HINT}</p>
-            <div className="form-grid">
-              <label>
-                标题
-                <input
-                  value={actionTitle}
-                  onChange={(event) => setActionTitle(event.target.value)}
-                  disabled={commandBusy}
-                />
-              </label>
-              <label>
-                到期时间
-                <input
-                  type="datetime-local"
-                  aria-describedby="action-due-time-zone-hint"
-                  value={actionDueAt}
-                  onChange={(event) => setActionDueAt(event.target.value)}
-                  disabled={commandBusy}
-                />
-              </label>
-            </div>
-            <button type="submit" disabled={commandBusy}>
-              新建整改项
-            </button>
-          </form>
-        ) : null}
-      </section>
-
-      {FindingInteractionSection === undefined ? null : (
-        <FindingInteractionSection
-          key={finding.id}
-          finding={finding}
-          disabled={commandBusy}
-          commands={interactionCommands}
-          execute={runCommand}
+      {notice === null || notice.kind === 'session' ? null : (
+        <Alert
+          type={failureAlertType(notice)}
+          showIcon
+          title={notice.message}
+          closable={{ onClose: () => setNotice(null) }}
         />
       )}
-      {commandMessage === null ? null : <p role="status">{commandMessage}</p>}
+      {primary.refreshError === null ? null : (
+        <Alert type="warning" showIcon title={`重新读取失败，当前显示的可能不是最新内容：${primary.refreshError}`} />
+      )}
 
-      <section className="surface-card" aria-labelledby="finding-nudge-title">
-        <h2 id="finding-nudge-title">协作提醒</h2>
-        <p className="empty-note">
-          按钮不代表有催办权限，也不选择被催办的人；服务器会按当前审查场景和相关人员重新授权并确定对象。
-        </p>
-        <button
-          type="button"
-          className="secondary"
-          disabled={nudgeBusy}
-          onClick={() => void runNudge(finding.id)}
-        >
-          {nudgeBusy ? '正在催办…' : '催办'}
-        </button>
-        {nudgeMessage === null ? null : <p role="status">{nudgeMessage}</p>}
-      </section>
+      <Spin spinning={primary.refreshing}>
+        <Flex vertical gap={16}>
+          {caseState.status === 'loading' ? (
+            <Card>
+              <InitialLoading label="正在加载审查场景" rows={1} />
+            </Card>
+          ) : null}
+          {caseState.status === 'unavailable' || caseState.status === 'error' ? (
+            <Alert type="warning" showIcon title="审查场景信息不可用，场景相关的编辑已关闭。" />
+          ) : null}
+          {caseContext !== null && scenarioAdapter === undefined ? (
+            <Alert
+              type="warning"
+              showIcon
+              role="status"
+              title={`暂不支持当前版本的审查场景界面（${scenarioName(caseContext.scenario_key)} · ${scenarioVersionText(caseContext.scenario_key, caseContext.scenario_version)}）。仍可查看发现项的通用信息。`}
+            />
+          ) : null}
+          {Interaction === undefined ? null : (
+            <Interaction key={finding.id} finding={finding} disabled={commandBusy} commands={interactionCommands} execute={runCommand} />
+          )}
 
-      <SubmissionSection state={submissionState} />
-      <ActivitySection state={activityState} />
-    </article>
+          <section aria-labelledby="finding-overview-title">
+            <Card title={<h2 id="finding-overview-title">概览</h2>}>
+              <Descriptions
+                column={{ xs: 1, md: 2 }}
+                items={[
+                  { key: 'responsibility', label: '责任方', children: responsibility },
+                  {
+                    key: 'scenario',
+                    label: '场景类型',
+                    children:
+                      caseContext === null
+                        ? '—'
+                        : `${scenarioName(caseContext.scenario_key)} · ${scenarioVersionText(caseContext.scenario_key, caseContext.scenario_version)}`,
+                  },
+                  ...(scenarioAdapter?.findingScenarioItems(finding) ?? []).map((item) => ({
+                    key: item.key,
+                    label: item.label,
+                    children: item.value,
+                  })),
+                  { key: 'raised_at', label: '提出时间', children: formatDateTime(finding.raised_at) },
+                  { key: 'raised_by', label: '提出人', children: actorText(finding.raised_by, names) },
+                  { key: 'description', label: '描述', span: { xs: 1, md: 2 }, children: finding.description ?? '—' },
+                  { key: 'id', label: '发现项 ID', children: finding.id },
+                  {
+                    key: 'case',
+                    label: '审查活动',
+                    children: <Link to={`/review-cases/${finding.case_id}`}>{caseContext?.title ?? finding.case_id}</Link>,
+                  },
+                ]}
+              />
+            </Card>
+          </section>
+
+          <section aria-labelledby="participants-title">
+            <Card
+              title={<h2 id="participants-title">参与方</h2>}
+              extra={
+                scenarioAdapter !== undefined && !terminal ? (
+                  <Button icon={<PlusOutlined aria-hidden />} onClick={() => setParticipantDrawerOpen(true)}>
+                    添加参与人
+                  </Button>
+                ) : null
+              }
+            >
+              <SectionNotice state={participants} loadingLabel="正在读取参与方" unavailableText="参与关系不可用。" />
+              {participants.status === 'ready' ? (
+                <ItemList
+                  label="参与方"
+                  emptyText="暂无参与关系。"
+                  items={participants.data.map((participant) => ({
+                    key: `${participant.actor_kind}-${participant.actor_id}-${participant.role_key}`,
+                    content: (
+                      <Flex vertical>
+                        <Typography.Text strong>{participant.display_name}</Typography.Text>
+                        <Typography.Text type="secondary">
+                          {participantRoleName(participant.role_key)} · {actorKindText(participant.actor_kind)} · 加入于{' '}
+                          {formatDateTime(participant.assigned_at)}
+                        </Typography.Text>
+                      </Flex>
+                    ),
+                  }))}
+                />
+              ) : null}
+            </Card>
+          </section>
+
+          <section aria-labelledby="actions-title">
+            <Card
+              title={<h2 id="actions-title">整改项</h2>}
+              extra={
+                scenarioAdapter !== undefined && finding.lifecycle === 'rectifying' ? (
+                  <Button icon={<PlusOutlined aria-hidden />} onClick={() => setActionDrawerOpen(true)}>
+                    新建整改项
+                  </Button>
+                ) : null
+              }
+            >
+              <SectionNotice state={actions} loadingLabel="正在读取整改项" unavailableText="整改项不可用。" />
+              {actions.status === 'ready' ? (
+                <ItemList
+                  label="整改项"
+                  emptyText="暂无整改项。"
+                  items={actions.data.map((action) => ({
+                    key: action.id,
+                    content: (
+                      <Flex justify="space-between" align="center" wrap gap={8}>
+                        <Flex vertical gap={4}>
+                          <Link to={`/action-items/${action.id}`}>{action.title}</Link>
+                          <Typography.Text type="secondary">
+                            到期 {formatDateTime(action.due_at)} · 完成于 {formatDateTime(action.completed_at)}
+                          </Typography.Text>
+                        </Flex>
+                        <StatusTag kind="actionItem" value={action.lifecycle} />
+                      </Flex>
+                    ),
+                  }))}
+                />
+              ) : null}
+            </Card>
+          </section>
+
+          <section aria-labelledby="finding-nudge-title">
+            <Card title={<h2 id="finding-nudge-title">协作提醒</h2>}>
+              <Flex vertical gap={12} align="flex-start">
+                <Typography.Text type="secondary">
+                  按钮不代表有催办权限，也不选择被催办的人；服务器会按当前审查场景和相关人员重新授权并确定对象。
+                </Typography.Text>
+                <Button
+                  icon={<NotificationOutlined aria-hidden />}
+                  loading={nudgeBusy}
+                  onClick={() => void runNudge(finding.id)}
+                >
+                  催办
+                </Button>
+                {nudgeNotice === null || nudgeNotice.findingId !== finding.id ? null : nudgeNotice.type === 'success' ? (
+                  <Alert type="success" showIcon title={nudgeNotice.text} />
+                ) : nudgeNotice.failure.message === '' ? null : (
+                  <Alert type={failureAlertType(nudgeNotice.failure)} showIcon title={nudgeNotice.failure.message} />
+                )}
+              </Flex>
+            </Card>
+          </section>
+
+          <section aria-labelledby="submission-history-title">
+            <Card title={<h2 id="submission-history-title">提交记录</h2>}>
+              <Flex vertical gap={12}>
+                <SectionNotice state={submissions} loadingLabel="正在读取提交记录" unavailableText="提交记录不可用。" />
+                {submissions.status === 'ready' ? (
+                  <ItemList
+                    label="提交记录"
+                    emptyText="暂无提交记录。"
+                    items={submissions.data.map((submission) => ({
+                      key: submission.id,
+                      content: (
+                        <Flex vertical>
+                          <Typography.Text strong>{submissionPurposeName(submission.purpose)}</Typography.Text>
+                          <Typography.Text type="secondary">
+                            {formatDateTime(submission.submitted_at)} · 提交人 {actorText(submission.submitted_by, names)}
+                          </Typography.Text>
+                        </Flex>
+                      ),
+                    }))}
+                  />
+                ) : null}
+                <Typography.Text type="secondary">历史提交内容不用于推断当前状态或权限。</Typography.Text>
+              </Flex>
+            </Card>
+          </section>
+
+          <section aria-labelledby="finding-activity-title">
+            <Card title={<h2 id="finding-activity-title">操作记录</h2>}>
+              <SectionNotice state={activities} loadingLabel="正在读取操作记录" unavailableText="操作记录不可用。" />
+              {activities.status === 'ready' && activities.data.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无操作记录。" />
+              ) : null}
+              {activities.status === 'ready' && activities.data.length > 0 ? (
+                <Timeline
+                  items={activities.data.map((activity) => ({
+                    key: activity.id,
+                    content: (
+                      <Flex vertical gap={4}>
+                        <ActivityEventName eventType={activity.event_type} />
+                        <Typography.Text type="secondary">
+                          {formatDateTime(activity.occurred_at)} · 操作人 {actorText(activity.actor_id, names)}
+                        </Typography.Text>
+                      </Flex>
+                    ),
+                  }))}
+                />
+              ) : null}
+            </Card>
+          </section>
+        </Flex>
+      </Spin>
+
+      {scenarioAdapter === undefined ? null : (
+        <>
+          <ActorAssignDrawer
+            open={participantDrawerOpen}
+            onClose={() => setParticipantDrawerOpen(false)}
+            scopeKey={finding.id}
+            title="添加参与人"
+            roleFieldLabel="关系角色"
+            actorFieldLabel="参与人"
+            okText="添加参与人"
+            roles={participantRoles}
+            search={(role, query, signal) =>
+              searchFindingParticipantCandidates(finding.id, role.value, role.actorKind, query, signal)
+            }
+            add={(role, candidate) =>
+              runCommand(
+                '添加参与人',
+                () => addFindingParticipant(finding.id, candidate.actor_kind, candidate.actor_id, role.value),
+                { notify: false },
+              )
+            }
+            onAccessLost={refresh}
+          />
+          <ActionCreateDrawer open={actionDrawerOpen} onClose={() => setActionDrawerOpen(false)} create={createAction} />
+        </>
+      )}
+    </Flex>
   )
 }
