@@ -42,6 +42,7 @@ src/easyaudit_next/
   - 整改（Action 增改、指派、证据、整改提交）：`Finding → Action / Assignee / Evidence / Submission`
   - 验证、重开、Case 关闭：`ReviewCase → Finding → Submission / Activity`
   - Case 成员增删、用户停用：`Organization → Case（按 ID 排序）→ User（按 ID 排序）`
+  - 部门父节点变更（`update_department` 带 `parent_id`）：先 `Organization`（`FOR NO KEY UPDATE`），再读取 Department、做祖先成环检查并 UPDATE。锁在任何 Department 读取之前取得，所以检查看到的是其他已提交移动之后的树；成环抛 `DepartmentCycleError`，API 返回 409。同组织的部门结构变更串行，跨组织互不影响；`Organization` 排在所有其他锁之前，不与上面各条形成反向。`tests/integration/test_department_move_race.py` 固定双 Session 竞争。数据库触发器 `reject_department_cycle` 只是兜底（读事务快照，拦不住写偏差；对已损坏的环会无限递归，修改需要迁移，另行处理）。
 - **父行锁强度**：被外键引用的父行（Organization、User、Case、Finding、Action）一律用 `FOR NO KEY UPDATE`，SQLAlchemy 写作 `.with_for_update(key_share=True)`。
   - 原因：子表 INSERT 会对被引用的父行加 `FOR KEY SHARE`，它与 `FOR UPDATE` 冲突、与 `FOR NO KEY UPDATE` 不冲突。用 `FOR UPDATE` 时，一个请求先 INSERT 了引用 User/Case 的行（持有 KEY SHARE），再 INSERT Notification（需要 Organization 的 KEY SHARE），就会和持有 Organization `FOR UPDATE`、正在等该 User/Case 的成员管理/停用请求形成隐式的反向加锁，PostgreSQL 报 40P01，Web 请求返回 500。`NO KEY UPDATE` 之间、与 `FOR UPDATE` 仍然互斥，所以显式的 `lock_*` 互斥语义不变。
   - 只有事务里会修改该行主键或被引用唯一键时才允许 `FOR UPDATE`。目前没有这种情况；叶子行（`local_credentials`，没有 FK 引用它）可以保留 `FOR UPDATE`，在 `scripts/check_architecture.py` 里白名单。

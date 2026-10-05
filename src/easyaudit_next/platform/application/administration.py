@@ -234,6 +234,11 @@ class PlatformAdministrationService:
         now: datetime | None = None,
     ) -> Department:
         self._require_system_admin(actor)
+        if set_parent:
+            # Serialize hierarchy changes per organization: the ancestor check and the UPDATE
+            # must see each other's committed moves. Lock before any Department read so the
+            # reads below are not stale snapshots.
+            self._organizations.lock_for_update(actor.organization_id)
         department = self._departments.get(department_id)
         if department is None or department.organization_id != actor.organization_id:
             raise LookupError(f"Department {department_id} does not exist")
