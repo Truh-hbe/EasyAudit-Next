@@ -209,6 +209,8 @@ for (const { status, retryAfter, expected } of [
 ]) {
   test(`团队面板：移除遇到 ${status}${retryAfter === null ? '（无 Retry-After）' : '（Retry-After）'}时提示等待并由用户手动重试，不自动重放`, async ({ page }) => {
     const state = await mockCase(page, 'case-busy')
+    // 用可控时钟推进“等待期”，不依赖真实等待。
+    await page.clock.install()
     await page.goto('/review-cases/case-busy')
     const team = page.getByRole('region', { name: '团队管理' })
     await expect(team.getByText('Team Lead')).toBeVisible()
@@ -228,8 +230,9 @@ for (const { status, retryAfter, expected } of [
     await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
     await expect(team.getByText(expected)).toBeVisible()
     await expect(team.getByText('Team Lead')).toBeVisible()
-    // 等待足够久，确认没有后台自动重放，也没有把它当作冲突去刷新成员。
-    await page.waitForTimeout(1000)
+    // 把时间推进到等待期（Retry-After，缺省按 60 秒）结束之后：不应有后台自动重放，也不应把它当作冲突去刷新成员。
+    await page.clock.fastForward((Number(retryAfter ?? 60) + 5) * 1000)
+    await page.waitForTimeout(200)
     expect(deletes).toBe(1)
     expect(state.memberReads).toBe(readsBefore)
 
@@ -508,8 +511,13 @@ function deferred() {
 }
 
 async function pickCandidate(page: Page, drawer: ReturnType<Page['locator']>, query: string, name: string) {
-  await drawer.getByLabel('成员').fill(query)
+  const input = drawer.getByLabel('成员')
+  await input.fill(query)
   await page.getByTitle(name, { exact: true }).last().click()
+  // 选择完成的前置条件：已选名称显示在表单里，下拉框已收起（否则残留的选项会挡住后面的提交点击）。
+  await expect(drawer.getByTitle(name, { exact: true })).toBeVisible()
+  if ((await input.getAttribute('aria-expanded')) === 'true') await input.press('Escape')
+  await expect(input).toHaveAttribute('aria-expanded', 'false')
 }
 
 test('移除确认框：切换到无权访问的活动后确认框被销毁，且不会向旧活动发 DELETE', async ({ page }) => {
