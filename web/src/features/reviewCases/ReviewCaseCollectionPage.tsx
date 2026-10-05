@@ -1,17 +1,25 @@
-import { useEffect, useMemo, useState } from 'react'
+import { PlusOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Empty, Flex, Table, Typography } from 'antd'
+import type { TableColumnsType } from 'antd'
+import { cloneElement, useEffect, useMemo, useState } from 'react'
+import type { ReactElement } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import { listReviewCases } from '../../api/product'
-import type { ReviewCaseCollectionResponse } from '../../api/product'
+import type { ReviewCaseCollectionResponse, ReviewCaseResponse } from '../../api/product'
 import { formatDateTime } from '../../product/format'
 import { scenarioName, scenarioVersionText } from '../../product/terms'
 import { ButtonLink } from '../../ui/ButtonLink'
+import { InitialLoading } from '../../ui/InitialLoading'
+import { PageHeader } from '../../ui/PageHeader'
 import { StatusTag } from '../../ui/StatusTag'
 
-type CollectionState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: ReviewCaseCollectionResponse }
+interface CollectionState {
+  // 仅保留最近一次成功的结果；请求失败时清空，不用旧数据兜底。
+  data: ReviewCaseCollectionResponse | null
+  loading: boolean
+  error: string | null
+}
 
 function boundedInteger(raw: string | null, fallback: number, minimum: number, maximum: number): number {
   if (raw === null || raw.trim() === '') return fallback
@@ -26,23 +34,63 @@ function nonNegativeInteger(raw: string | null): number {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0
 }
 
+const columns: TableColumnsType<ReviewCaseResponse> = [
+  {
+    title: '状态',
+    dataIndex: 'lifecycle',
+    key: 'lifecycle',
+    render: (_lifecycle: unknown, reviewCase) => <StatusTag kind="reviewCase" value={reviewCase.lifecycle} />,
+  },
+  {
+    title: '审查活动',
+    dataIndex: 'title',
+    key: 'title',
+    render: (_title: string, reviewCase) => <Link to={`/review-cases/${reviewCase.id}`}>{reviewCase.title}</Link>,
+  },
+  {
+    title: '审查场景',
+    key: 'scenario',
+    render: (_value: unknown, reviewCase) => (
+      <Flex vertical>
+        <span>{scenarioName(reviewCase.scenario_key)}</span>
+        <Typography.Text type="secondary">
+          {scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}
+        </Typography.Text>
+      </Flex>
+    ),
+  },
+  {
+    title: '计划开始',
+    dataIndex: 'planned_start_at',
+    key: 'planned_start_at',
+    render: (_value: unknown, reviewCase) => formatDateTime(reviewCase.planned_start_at),
+  },
+  {
+    title: '计划结束',
+    dataIndex: 'planned_end_at',
+    key: 'planned_end_at',
+    render: (_value: unknown, reviewCase) => formatDateTime(reviewCase.planned_end_at),
+  },
+]
+
 export function ReviewCaseCollectionPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedLimit = useMemo(() => boundedInteger(searchParams.get('limit'), 50, 1, 100), [searchParams])
   const requestedOffset = useMemo(() => nonNegativeInteger(searchParams.get('offset')), [searchParams])
   const [revision, setRevision] = useState(0)
-  const [state, setState] = useState<CollectionState>({ status: 'loading' })
+  const [state, setState] = useState<CollectionState>({ data: null, loading: true, error: null })
 
   useEffect(() => {
     const controller = new AbortController()
-    setState({ status: 'loading' })
+    setState((previous) => ({ ...previous, loading: true, error: null }))
     void listReviewCases(requestedLimit, requestedOffset, controller.signal)
-      .then((data) => setState({ status: 'ready', data }))
+      .then((data) => setState({ data, loading: false, error: null }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
         setState({
-          status: 'error',
-          message: error instanceof Error ? error.message : '审查活动列表请求失败',
+          data: null,
+          loading: false,
+          error: error instanceof Error ? error.message : '审查活动列表请求失败',
         })
       })
     return () => controller.abort()
@@ -52,73 +100,71 @@ export function ReviewCaseCollectionPage() {
     setSearchParams({ limit: String(limit), offset: String(Math.max(0, offset)) })
   }
 
-  if (state.status === 'loading') {
-    return <section className="surface-page"><h1>审查活动</h1><p>正在读取审查活动…</p></section>
-  }
-
-  if (state.status === 'error') {
-    return (
-      <section className="surface-page">
-        <h1>审查活动</h1>
-        <div role="alert" className="surface-card">
-          <p>{state.message}</p>
-          <button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button>
-        </div>
-      </section>
-    )
-  }
-
   const { data } = state
-  const pageEnd = Math.min(data.offset + data.items.length, data.total)
-  return (
-    <section className="surface-page" aria-labelledby="review-case-list-title">
-      <div className="page-heading">
-        <div>
-          <h1 id="review-case-list-title">审查活动</h1>
-        </div>
-        <div className="heading-actions">
-          <ButtonLink type="primary" to="/review-plans/new">新建审查计划</ButtonLink>
-          <p>已授权 {data.total} 项</p>
-        </div>
-      </div>
+  const initialLoading = state.loading && data === null
 
-      {data.items.length === 0 ? (
-        <div className="surface-card"><p className="empty-note">当前页面没有可见的审查活动。</p></div>
-      ) : (
-        <div className="surface-card">
-          <ul className="case-list">
-            {data.items.map((reviewCase) => (
-              <li key={reviewCase.id}>
-                <div>
-                  <Link className="case-title-link" to={`/review-cases/${reviewCase.id}`}>{reviewCase.title}</Link>
-                  <p>{scenarioName(reviewCase.scenario_key)} · {scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}</p>
-                </div>
-                <span><StatusTag kind="reviewCase" value={reviewCase.lifecycle} /></span>
-                <span>计划开始 {formatDateTime(reviewCase.planned_start_at)}</span>
-                <span>计划结束 {formatDateTime(reviewCase.planned_end_at)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+  const emptyText =
+    data !== null && data.total > 0 ? (
+      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前页没有审查活动。">
+        <Button onClick={() => moveTo(0, requestedLimit)}>回到第一页</Button>
+      </Empty>
+    ) : (
+      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无可见的审查活动。" />
+    )
+
+  return (
+    <Flex vertical gap={16} aria-busy={initialLoading}>
+      <PageHeader
+        title="审查活动"
+        titleId="review-case-list-title"
+        meta={data === null ? undefined : <Typography.Text type="secondary">已授权 {data.total} 项</Typography.Text>}
+        extra={
+          <ButtonLink type="primary" to="/review-plans/new" icon={<PlusOutlined aria-hidden />}>
+            新建审查计划
+          </ButtonLink>
+        }
+      />
+
+      {state.error === null ? null : (
+        <Alert
+          type="error"
+          showIcon
+          title={state.error}
+          action={<Button size="small" onClick={() => setRevision((value) => value + 1)}>重新加载</Button>}
+        />
       )}
 
-      <nav className="pagination" aria-label="审查活动分页">
-        <button
-          type="button"
-          disabled={data.offset === 0}
-          onClick={() => moveTo(data.offset - data.limit, data.limit)}
-        >
-          上一页
-        </button>
-        <span>{data.total === 0 ? '0' : `${data.offset + 1}–${pageEnd}`} / {data.total}</span>
-        <button
-          type="button"
-          disabled={data.offset + data.items.length >= data.total}
-          onClick={() => moveTo(data.offset + data.limit, data.limit)}
-        >
-          下一页
-        </button>
-      </nav>
-    </section>
+      {initialLoading ? <Card><InitialLoading label="正在读取审查活动" rows={6} /></Card> : null}
+
+      {data === null ? null : (
+        <Card>
+          <Table<ReviewCaseResponse>
+            size="middle"
+            rowKey="id"
+            columns={columns}
+            dataSource={data.items}
+            loading={state.loading}
+            scroll={{ x: 'max-content' }}
+            locale={{ emptyText }}
+            pagination={{
+              current: Math.floor(data.offset / data.limit) + 1,
+              pageSize: data.limit,
+              total: data.total,
+              showSizeChanger: false,
+              hideOnSinglePage: true,
+              showTotal: (total, range) => `${range[0]}–${range[1]} / ${total}`,
+              onChange: (page, pageSize) => moveTo((page - 1) * pageSize, pageSize),
+              // 翻页按钮内只有英文名的图标（"left"/"right"），补上中文可访问名称。
+              itemRender: (_page, type, element) =>
+                type === 'prev' || type === 'next'
+                  ? cloneElement(element as ReactElement<{ 'aria-label'?: string }>, {
+                      'aria-label': type === 'prev' ? '上一页' : '下一页',
+                    })
+                  : element,
+            }}
+          />
+        </Card>
+      )}
+    </Flex>
   )
 }

@@ -6,8 +6,8 @@ import { ApiError } from '../../api/client'
 import { searchReviewCaseMemberCandidates } from '../../api/product'
 import {
   ReviewCaseTeamPanel,
+  classifyTeamFailure,
   roleLabelForCaseMember,
-  teamMutationErrorMessage,
 } from './ReviewCaseTeamPanel'
 
 const roleOptions = [
@@ -49,16 +49,62 @@ describe('ReviewCaseTeamPanel', () => {
     expect(roleLabelForCaseMember('future_role', roleOptions)).toBe('future_role')
   })
 
-  it('turns team conflicts into a safe recoverable message', () => {
-    expect(teamMutationErrorMessage(new ApiError(409, 'raw conflict'), 'fallback')).toBe(
-      '团队状态发生冲突，请刷新后重试。',
-    )
-    expect(teamMutationErrorMessage(new ApiError(403, 'raw permission'), 'fallback')).toBe(
-      '当前用户没有管理审查团队的权限。',
-    )
+  it('classifies team failures by cause instead of collapsing every 409', () => {
+    const lastManager = new ApiError(409, 'Cannot remove the final effective Case manager')
+    expect(classifyTeamFailure(lastManager, 'remove')).toMatchObject({ kind: 'last-manager' })
+    expect(classifyTeamFailure(new ApiError(409, 'CaseMember changed concurrently'), 'remove')).toMatchObject({
+      kind: 'changed',
+      message: '数据已变化，正在获取最新状态。',
+    })
+    // 添加时的 409 不展示服务端原文（可能是数据库唯一约束信息）。
+    const add = classifyTeamFailure(new ApiError(409, 'duplicate key value violates unique constraint'), 'add')
+    expect(add.kind).toBe('changed')
+    expect('message' in add && add.message).not.toContain('duplicate')
+    expect(classifyTeamFailure(new ApiError(403, 'raw permission'), 'search')).toEqual({
+      kind: 'forbidden',
+      message: '当前用户没有管理审查团队的权限。',
+    })
+    expect(classifyTeamFailure(new ApiError(404, 'ReviewCase not found'), 'add')).toMatchObject({
+      kind: 'gone',
+      message: '内容不存在或无权访问',
+    })
+    expect(classifyTeamFailure(new ApiError(401, 'x'), 'add')).toEqual({ kind: 'session' })
+    expect(classifyTeamFailure(new ApiError(429, 'slow', 7), 'add')).toMatchObject({
+      kind: 'retry-later',
+      message: '服务繁忙，请7 秒后手动重试。',
+    })
   })
 
-  it('renders every role from the exact adapter and keeps the current member visible', () => {
+  it('tells the user how long to wait on 429/503 only when Retry-After is usable', () => {
+    for (const status of [429, 503]) {
+      for (const action of ['add', 'remove'] as const) {
+        expect(classifyTeamFailure(new ApiError(status, 'busy', 30), action)).toEqual({
+          kind: 'retry-later',
+          message: '服务繁忙，请30 秒后手动重试。',
+        })
+        expect(
+          classifyTeamFailure(new ApiError(status, 'busy', new Headers({ 'Retry-After': '12' })), action),
+        ).toMatchObject({ kind: 'retry-later', message: '服务繁忙，请12 秒后手动重试。' })
+        for (const unusable of [undefined, null, new Headers(), new Headers({ 'Retry-After': 'soon' })]) {
+          expect(classifyTeamFailure(new ApiError(status, 'busy', unusable), action)).toEqual({
+            kind: 'retry-later',
+            message: '服务繁忙，请稍后手动重试。',
+          })
+        }
+      }
+    }
+  })
+
+  it('treats network failures and 5xx on writes as unknown results, not conflicts', () => {
+    for (const error of [new ApiError(500, 'boom'), new TypeError('Failed to fetch')]) {
+      const failure = classifyTeamFailure(error, 'remove')
+      expect(failure.kind).toBe('unknown-result')
+      expect('message' in failure && failure.message).toContain('未确认是否已移除成员')
+    }
+    expect(classifyTeamFailure(new TypeError('Failed to fetch'), 'add')).toMatchObject({ kind: 'unknown-result' })
+  })
+
+  it('keeps the current member visible with the exact adapter role label', () => {
     const markup = renderToStaticMarkup(
       <ReviewCaseTeamPanel
         reviewCase={reviewCase}
@@ -68,15 +114,13 @@ describe('ReviewCaseTeamPanel', () => {
         membersUnavailable={false}
         membersError={null}
         onTeamChanged={vi.fn()}
+        onAccessLost={vi.fn()}
       />,
     )
 
-    expect(markup).toContain('value="lead"')
-    expect(markup).toContain('value="auditor"')
-    expect(markup).toContain('value="reviewer"')
-    expect(markup).toContain('value="observer"')
     expect(markup).toContain('Team Lead')
     expect(markup).toContain('审查组长')
+    expect(markup).toContain('添加成员')
   })
 
   it('shapes candidate searches with the selected exact role and bounded query', async () => {

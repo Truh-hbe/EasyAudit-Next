@@ -260,7 +260,7 @@ test('Finding creation 403 leaves the authorized Case list unchanged and creates
   await page.getByRole('button', { name: '新建发现项' }).click()
 
   await expect(page.getByRole('alert')).toContainText('create authority revoked')
-  await expect(page.getByText('暂无发现项。')).toBeVisible()
+  await expect(page.getByText('暂无可见的发现项。')).toBeVisible()
   await expect(page.getByText('Forbidden local draft')).toHaveCount(0)
   await expect(page).toHaveURL(new RegExp(`/review-cases/${caseId}$`))
 })

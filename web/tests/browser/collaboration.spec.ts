@@ -296,7 +296,7 @@ test('Finding creation uses server response as truth and validation failure crea
   await page.getByLabel('项目类别').fill('assembly')
   await page.getByRole('button', { name: '新建发现项' }).click()
   await expect(page.getByRole('alert')).toContainText('Scenario validation failed')
-  await expect(page.getByText('暂无发现项。')).toBeVisible()
+  await expect(page.getByText('暂无可见的发现项。')).toBeVisible()
   await expect(page).toHaveURL(/\/review-cases\/case-1$/)
 
   shouldSucceed = true

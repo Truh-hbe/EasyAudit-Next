@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process'
 
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+import { confirmRemoveMember, dropdownOption, searchCandidates, submitCandidate, teamMemberRow, teamRegion } from './caseTeamView.js'
+
 const ADMIN_LOGIN_NAME = 'browser-m5-5-admin'
 const ADMIN_PASSWORD = 'm5-5-browser-admin-password-000'
 const FIRST_DISPLAY_NAME = 'M5.5 Browser Pilot Lead'
@@ -150,29 +152,11 @@ async function addMember(
   query: string,
   displayName: string,
 ): Promise<void> {
-  const team = page.getByRole('region', { name: '团队管理' })
-  await team.getByLabel('团队角色').selectOption(roleKey)
-  await team.getByLabel('搜索成员').fill(query)
-  const searchResponsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === `/api/v1/review-cases/${caseId}/member-candidates` &&
-      response.request().method() === 'GET',
-  )
-  await team.getByRole('button', { name: '搜索候选人' }).click()
-  expect((await searchResponsePromise).status()).toBe(200)
-  const candidate = team
-    .getByRole('list', { name: '候选成员' })
-    .getByRole('listitem')
-    .filter({ hasText: displayName })
-  await expect(candidate).toBeVisible()
-  const addResponsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === `/api/v1/review-cases/${caseId}/members` &&
-      response.request().method() === 'POST',
-  )
-  await candidate.getByRole('button', { name: '添加' }).click()
-  expect((await addResponsePromise).status()).toBe(201)
-  await expect(team.locator('ul.surface-list').first().getByText(displayName)).toBeVisible()
+  const { drawer, response } = await searchCandidates(page, caseId, roleKey, query)
+  expect(response.status()).toBe(200)
+  await expect(dropdownOption(page, displayName)).toBeVisible()
+  expect((await submitCandidate(page, caseId, drawer, displayName)).status()).toBe(201)
+  await expect(teamMemberRow(page, displayName)).toBeVisible()
 }
 
 async function removeMember(
@@ -181,17 +165,7 @@ async function removeMember(
   userId: string,
   displayName: string,
 ): Promise<number> {
-  const team = page.getByRole('region', { name: '团队管理' })
-  const member = team.locator('ul.surface-list').first().locator('li').filter({ hasText: displayName })
-  await expect(member).toBeVisible()
-  const responsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === `/api/v1/review-cases/${caseId}/members/${userId}` &&
-      response.request().method() === 'DELETE',
-  )
-  await member.getByRole('button', { name: '移除' }).click()
-  const response = await responsePromise
-  return response.status()
+  return (await confirmRemoveMember(page, caseId, userId, displayName)).status()
 }
 
 async function fetchStatus(page: Page, path: string): Promise<{ status: number; body: string }> {
@@ -261,9 +235,9 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
   await createAdminUser(page, INACTIVE_DISPLAY_NAME, INACTIVE_LOGIN_NAME, INACTIVE_PASSWORD)
   await deactivateAdminUser(page, INACTIVE_DISPLAY_NAME)
 
-  const firstContext = await browser.newContext({ baseURL: 'https://127.0.0.1:4173', ignoreHTTPSErrors: true })
+  const firstContext = await browser.newContext({ baseURL: `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`, ignoreHTTPSErrors: true })
   const firstPage = await firstContext.newPage()
-  const secondContext = await browser.newContext({ baseURL: 'https://127.0.0.1:4173', ignoreHTTPSErrors: true })
+  const secondContext = await browser.newContext({ baseURL: `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`, ignoreHTTPSErrors: true })
   const secondPage = await secondContext.newPage()
   let planPostCount = 0
   let casePostCount = 0
@@ -330,26 +304,23 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
       firstPage,
       `/api/v1/review-cases/${processCase.id}/activities`,
     )
-    const finalManagerResponse = await (async () => {
-      const team = firstPage.getByRole('region', { name: '团队管理' })
-      const lead = team.locator('ul.surface-list').first().locator('li').filter({ hasText: FIRST_DISPLAY_NAME })
-      const responsePromise = firstPage.waitForResponse(
-        (response) =>
-          apiPath(response.url()) === `/api/v1/review-cases/${processCase.id}/members/${firstUserId}` &&
-          response.request().method() === 'DELETE',
-      )
-      await lead.getByRole('button', { name: '移除' }).click()
-      return responsePromise
-    })()
-    expect((await finalManagerResponse).status()).toBe(409)
-    await expect(firstPage.getByText('团队状态发生冲突，请刷新后重试。')).toBeVisible()
+    const finalManagerResponse = await confirmRemoveMember(
+      firstPage,
+      processCase.id,
+      firstUserId,
+      FIRST_DISPLAY_NAME,
+    )
+    expect(finalManagerResponse.status()).toBe(409)
+    await expect(
+      firstPage.getByText('审查活动至少需要保留一名有效的审查组长，无法移除最后一名管理者。'),
+    ).toBeVisible()
     const activitiesAfterFinalManager = await fetchStatus(
       firstPage,
       `/api/v1/review-cases/${processCase.id}/activities`,
     )
     expect(activitiesAfterFinalManager.status).toBe(200)
     expect(activitiesAfterFinalManager.body).toBe(activitiesBeforeFinalManager.body)
-    await expect(firstPage.getByRole('region', { name: '团队管理' }).getByText(FIRST_DISPLAY_NAME)).toHaveCount(1)
+    await expect(teamRegion(firstPage).getByText(FIRST_DISPLAY_NAME)).toHaveCount(1)
     await addMember(firstPage, processCase.id, 'lead', SECOND_DISPLAY_NAME, SECOND_DISPLAY_NAME)
 
     await firstPage.getByRole('link', { name: '审查活动' }).click()
@@ -427,7 +398,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     expect(inactiveCandidate.status).toBe(200)
     expect(inactiveCandidate.body).not.toContain(INACTIVE_DISPLAY_NAME)
     await firstPage.goto(`/review-cases/${FOREIGN_CASE_ID}`)
-    await expect(firstPage.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
+    await expect(firstPage.getByText('内容不存在或无权访问')).toBeVisible()
     await expect(firstPage.locator('body')).not.toContainText('M5.5 Foreign Case Must Stay Hidden')
 
     const adminOnlyCase = await fetchStatus(page, `/api/v1/review-cases/${ADMIN_CASE_ID}`)
@@ -477,7 +448,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await expect(firstPage.getByRole('heading', { name: '需要修改密码' })).toBeVisible()
     await expect(firstPage.locator('body')).not.toContainText(FIRST_RESET_PASSWORD)
     await submitPasswordChange(firstPage, FIRST_RESET_PASSWORD, FIRST_RESET_CHANGED_PASSWORD)
-    await expect(firstPage.getByRole('heading', { name: '审查活动不可用' })).toBeVisible()
+    await expect(firstPage.getByText('内容不存在或无权访问')).toBeVisible()
   } finally {
     await secondContext.close()
     await firstContext.close()
