@@ -1,6 +1,6 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../../api/client'
 import { resetAdminUserCredential, updateAdminDepartment } from '../../api/admin'
@@ -102,6 +102,15 @@ function findStatusText(node: any): string | null {
   return null
 }
 
+function findAlertText(node: any): string | null {
+  if (node.getAttribute?.('role') === 'alert' || node.role === 'alert') return node.textContent
+  for (const child of node.children || []) {
+    const found = findAlertText(child)
+    if (found !== null) return found
+  }
+  return null
+}
+
 describe('M5.4 administrator contracts', () => {
   it('uses exact resource IDs and explicit null clears', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
@@ -162,261 +171,199 @@ describe('M5.4 administrator contracts', () => {
     )
     expect(scenarioVersionLabel('process_review', 1)).toBe('process_review@1')
   })
+})
 
-  it('retains credential reset success feedback across background data refresh', async () => {
-    const { doc } = setupDomMock()
 
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('/api/v1/admin/organization')) {
-        return new Response(JSON.stringify({ id: 'org-1', name: 'Test Org', is_active: true }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/departments')) {
-        return new Response(JSON.stringify([]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/users') && url.includes('/credential-reset')) {
-        return new Response(JSON.stringify({ id: 'user-1' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/users')) {
-        return new Response(
-          JSON.stringify([
-            {
-              id: 'user-1',
-              display_name: 'User 1',
-              platform_role: 'ordinary_user',
-              is_active: true,
-              primary_department_id: null,
-            },
-          ]),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        )
-      }
-      if (url.includes('/api/v1/admin/scenario-status')) {
-        return new Response(JSON.stringify({ items: [] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      return new Response('Not Found', { status: 404 })
-    })
-    vi.stubGlobal('fetch', fetchMock)
+const RESET_SUCCESS = '临时凭据已重置；目标用户下次登录必须修改密码。'
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
-    const rootEl = doc.createElement('div')
-    const root = createRoot(rootEl)
+type RefreshMode = 'ok' | { status: number }
 
-    await act(async () => {
-      root.render(<AdminPage />)
-    })
+// 第一轮 GET 立即返回；第二轮（写操作后的刷新）按 refresh 模式返回，并先等待 gate 放行。
+function createAdminHarness(options: { refresh?: RefreshMode } = {}) {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let organizationGets = 0
+  const refresh = options.refresh ?? 'ok'
+  const user = (name: string) => ({
+    id: 'user-1', display_name: name, platform_role: 'ordinary_user', is_active: true, primary_department_id: null,
+  })
 
-    // Wait for initial load
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20))
-    })
+  const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    if (method === 'POST' && url.includes('/credential-reset')) return jsonResponse({ id: 'user-1' })
+    if (method === 'POST' && url.includes('/api/v1/admin/departments')) {
+      return jsonResponse({ id: 'dept-1', name: 'New Dept', parent_id: null, is_active: true }, 201)
+    }
+    if (method !== 'GET') return new Response('Not Found', { status: 404 })
 
-    const forms = findNodesByTag(rootEl, 'FORM')
-    const resetForm = forms[2]
-    const selects = findNodesByTag(resetForm, 'SELECT')
-    const inputs = findNodesByTag(resetForm, 'INPUT')
+    const isRefresh = url.includes('/api/v1/admin/organization') ? ++organizationGets > 1 : organizationGets > 1
+    if (isRefresh) {
+      await gate
+      if (refresh !== 'ok') return jsonResponse({ detail: 'refresh failed' }, refresh.status)
+    }
+    const org = isRefresh ? 'Refreshed User' : 'Test Org'
+    if (url.includes('/api/v1/admin/organization')) return jsonResponse({ id: 'org-1', name: org, is_active: true })
+    if (url.includes('/api/v1/admin/departments')) return jsonResponse([])
+    if (url.includes('/api/v1/admin/users')) return jsonResponse([user(isRefresh ? 'Refreshed User' : 'User 1')])
+    if (url.includes('/api/v1/admin/scenario-status')) return jsonResponse({ items: [] })
+    return new Response('Not Found', { status: 404 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
 
-    // Select target user and fill temporary password
-    await act(async () => {
-      getReactProps(selects[0]).onChange({ target: { value: 'user-1' } })
-    })
-    await act(async () => {
-      getReactProps(inputs[0]).onChange({ target: { value: 'temporary-password-123' } })
-    })
+  return {
+    fetchMock,
+    release,
+    organizationGets: () => organizationGets,
+  }
+}
 
-    // Submit reset
-    await act(async () => {
-      await getReactProps(resetForm).onSubmit({ preventDefault: () => {} })
-    })
+async function waitInAct(assertion: () => void) {
+  await act(async () => {
+    await vi.waitFor(assertion)
+  })
+}
 
-    // Wait for reset API and subsequent data refresh to complete
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
-    })
+async function mountAdmin() {
+  const { doc } = setupDomMock()
+  const rootEl = doc.createElement('div')
+  const root = createRoot(rootEl)
+  await act(async () => {
+    root.render(<AdminPage />)
+  })
+  await waitInAct(() => expect(rootEl.textContent).toContain('Test Org'))
+  return { rootEl, forms: findNodesByTag(rootEl, 'FORM') }
+}
 
-    expect(findStatusText(rootEl)).toBe('临时凭据已重置；目标用户下次登录必须修改密码。')
-    expect(inputs[0].value).toBe('')
+async function submitCredentialReset(rootEl: any) {
+  const resetForm = findNodesByTag(rootEl, 'FORM')[2]
+  const select = findNodesByTag(resetForm, 'SELECT')[0]
+  const input = findNodesByTag(resetForm, 'INPUT')[0]
+  await act(async () => {
+    getReactProps(select).onChange({ target: { value: 'user-1' } })
+  })
+  await act(async () => {
+    getReactProps(input).onChange({ target: { value: 'temporary-password-123' } })
+  })
+  await act(async () => {
+    await getReactProps(resetForm).onSubmit({ preventDefault: () => {} })
+  })
+  return { input }
+}
 
+async function submitDepartmentCreate(rootEl: any) {
+  const deptForm = findNodesByTag(rootEl, 'FORM')[0]
+  const deptInput = findNodesByTag(deptForm, 'INPUT')[0]
+  await act(async () => {
+    getReactProps(deptInput).onChange({ target: { value: 'New Dept' } })
+  })
+  await act(async () => {
+    await getReactProps(deptForm).onSubmit({ preventDefault: () => {} })
+  })
+}
+
+async function releaseRefresh(harness: ReturnType<typeof createAdminHarness>) {
+  await act(async () => {
+    harness.release()
+  })
+}
+
+describe('admin action feedback across background refresh', () => {
+  afterEach(() => {
     vi.unstubAllGlobals()
   })
 
+  it('keeps credential reset feedback while refresh is pending and alongside refreshed data', async () => {
+    const harness = createAdminHarness()
+    const { rootEl } = await mountAdmin()
+    expect(harness.organizationGets()).toBe(1)
+
+    const { input } = await submitCredentialReset(rootEl)
+
+    // 刷新请求已发出但被拦住：提示已在，旧数据仍在
+    await waitInAct(() => expect(harness.organizationGets()).toBe(2))
+    expect(findStatusText(rootEl)).toBe(RESET_SUCCESS)
+    expect(rootEl.textContent).not.toContain('Refreshed User')
+    expect(input.value).toBe('')
+
+    await releaseRefresh(harness)
+    await waitInAct(() => expect(rootEl.textContent).toContain('Refreshed User'))
+    expect(rootEl.textContent).toContain('Refreshed User')
+    expect(findStatusText(rootEl)).toBe(RESET_SUCCESS)
+    expect(harness.organizationGets()).toBe(2)
+  })
+
+  it('keeps department creation feedback while refresh is pending and alongside refreshed data', async () => {
+    const harness = createAdminHarness()
+    const { rootEl } = await mountAdmin()
+
+    await submitDepartmentCreate(rootEl)
+
+    await waitInAct(() => expect(harness.organizationGets()).toBe(2))
+    expect(findStatusText(rootEl)).toBe('部门已由服务器创建。')
+
+    await releaseRefresh(harness)
+    await waitInAct(() => expect(rootEl.textContent).toContain('Refreshed User'))
+    expect(findStatusText(rootEl)).toBe('部门已由服务器创建。')
+  })
+
   it('clears or replaces feedback when a new operation or edit begins', async () => {
-    const { doc } = setupDomMock()
+    const harness = createAdminHarness()
+    const { rootEl } = await mountAdmin()
 
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('/api/v1/admin/organization')) {
-        return new Response(JSON.stringify({ id: 'org-1', name: 'Test Org', is_active: true }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/departments')) {
-        return new Response(JSON.stringify([]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/users') && url.includes('/credential-reset')) {
-        return new Response(JSON.stringify({ id: 'user-1' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/users')) {
-        return new Response(
-          JSON.stringify([
-            {
-              id: 'user-1',
-              display_name: 'User 1',
-              platform_role: 'ordinary_user',
-              is_active: true,
-              primary_department_id: null,
-            },
-          ]),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        )
-      }
-      if (url.includes('/api/v1/admin/scenario-status')) {
-        return new Response(JSON.stringify({ items: [] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      return new Response('Not Found', { status: 404 })
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    const rootEl = doc.createElement('div')
-    const root = createRoot(rootEl)
-
-    await act(async () => {
-      root.render(<AdminPage />)
-    })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20))
-    })
-
-    const forms = findNodesByTag(rootEl, 'FORM')
-    const departmentForm = forms[0]
-    const resetForm = forms[2]
-    const selects = findNodesByTag(resetForm, 'SELECT')
-    const inputs = findNodesByTag(resetForm, 'INPUT')
-
-    // Reset credential successfully
-    await act(async () => {
-      getReactProps(selects[0]).onChange({ target: { value: 'user-1' } })
-    })
-    await act(async () => {
-      getReactProps(inputs[0]).onChange({ target: { value: 'temporary-password-123' } })
-    })
-    await act(async () => {
-      await getReactProps(resetForm).onSubmit({ preventDefault: () => {} })
-    })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
-    })
-    expect(findStatusText(rootEl)).toBe('临时凭据已重置；目标用户下次登录必须修改密码。')
+    await submitCredentialReset(rootEl)
+    await releaseRefresh(harness)
+    await waitInAct(() => expect(rootEl.textContent).toContain('Refreshed User'))
+    expect(findStatusText(rootEl)).toBe(RESET_SUCCESS)
 
     // Submitting department form with empty name replaces feedback with new validation error
+    const departmentForm = findNodesByTag(rootEl, 'FORM')[0]
     await act(async () => {
       await getReactProps(departmentForm).onSubmit({ preventDefault: () => {} })
     })
     expect(findStatusText(rootEl)).toBe('请输入部门名称。')
 
     // Clicking edit on a user clears the feedback
-    const userButtons = findNodesByTag(rootEl, 'BUTTON')
-    const editUserButton = userButtons.find((b: any) => b.textContent === '编辑')
+    const editUserButton = findNodesByTag(rootEl, 'BUTTON').find((b: any) => b.textContent === '编辑')
     expect(editUserButton).toBeDefined()
     await act(async () => {
       getReactProps(editUserButton).onClick()
     })
     expect(findStatusText(rootEl)).toBeNull()
-
-    vi.unstubAllGlobals()
   })
 
-  it('retains department creation feedback across background data refresh', async () => {
-    const { doc } = setupDomMock()
+  it('drops the success message when the refresh fails with 500', async () => {
+    const status = 500
+    const harness = createAdminHarness({ refresh: { status } })
+    const { rootEl } = await mountAdmin()
 
-    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url.includes('/api/v1/admin/organization')) {
-        return new Response(JSON.stringify({ id: 'org-1', name: 'Test Org', is_active: true }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/departments') && init?.method === 'POST') {
-        return new Response(
-          JSON.stringify({ id: 'dept-1', name: 'New Dept', parent_id: null, is_active: true }),
-          { status: 201, headers: { 'Content-Type': 'application/json' } },
-        )
-      }
-      if (url.includes('/api/v1/admin/departments')) {
-        return new Response(JSON.stringify([]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/users')) {
-        return new Response(JSON.stringify([]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      if (url.includes('/api/v1/admin/scenario-status')) {
-        return new Response(JSON.stringify({ items: [] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      return new Response('Not Found', { status: 404 })
-    })
-    vi.stubGlobal('fetch', fetchMock)
+    await submitCredentialReset(rootEl)
+    await waitInAct(() => expect(harness.organizationGets()).toBe(2))
+    expect(findStatusText(rootEl)).toBe(RESET_SUCCESS)
 
-    const rootEl = doc.createElement('div')
-    const root = createRoot(rootEl)
+    await releaseRefresh(harness)
+    await waitInAct(() => expect(rootEl.textContent).not.toContain('Test Org'))
+    expect(findStatusText(rootEl)).toBeNull()
+    expect(rootEl.textContent).not.toContain(RESET_SUCCESS)
+    const alert = findAlertText(rootEl)
+    expect(alert).not.toBeNull()
+    expect(alert).toContain(adminErrorMessage(new ApiError(status, 'x'), '管理员数据读取失败。'))
+  })
 
-    await act(async () => {
-      root.render(<AdminPage />)
-    })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20))
-    })
+  it.each([401, 403])('removes protected content immediately when the refresh returns %s', async (status) => {
+    const harness = createAdminHarness({ refresh: { status } })
+    const { rootEl } = await mountAdmin()
 
-    const forms = findNodesByTag(rootEl, 'FORM')
-    const deptForm = forms[0]
-    const deptInput = findNodesByTag(deptForm, 'INPUT')[0]
+    await submitCredentialReset(rootEl)
+    await waitInAct(() => expect(harness.organizationGets()).toBe(2))
+    expect(rootEl.textContent).toContain('Test Org')
 
-    await act(async () => {
-      getReactProps(deptInput).onChange({ target: { value: 'New Dept' } })
-    })
-
-    await act(async () => {
-      await getReactProps(deptForm).onSubmit({ preventDefault: () => {} })
-    })
-
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
-    })
-
-    expect(findStatusText(rootEl)).toBe('部门已由服务器创建。')
-
-    vi.unstubAllGlobals()
+    await releaseRefresh(harness)
+    await waitInAct(() => expect(rootEl.textContent).not.toContain('Test Org'))
+    expect(rootEl.textContent).not.toContain('User 1')
+    expect(rootEl.textContent).not.toContain(RESET_SUCCESS)
+    expect(findStatusText(rootEl)).toBeNull()
+    expect(findAlertText(rootEl)).toContain(adminErrorMessage(new ApiError(status, 'x'), '管理员数据读取失败。'))
   })
 })
