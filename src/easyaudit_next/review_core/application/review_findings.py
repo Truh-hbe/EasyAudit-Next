@@ -176,6 +176,14 @@ class FindingLifecycleService:
             raise ReviewAuthorizationError(
                 "lead or auditor role required to manage FindingParticipant"
             )
+        review_case, context = self._lock_case_context(actor, review_case, finding)
+        if not policy.authorization.allows(
+            MANAGE_FINDING_PARTICIPANTS_PERMISSION,
+            context,
+        ):
+            raise ReviewAuthorizationError(
+                "lead or auditor role required to manage FindingParticipant"
+            )
         policy.finding_operations.validate_participant_management(
             self._finding_operation_context(review_case, finding)
         )
@@ -228,6 +236,9 @@ class FindingLifecycleService:
         occurred_at: datetime | None = None,
     ) -> Finding:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
+        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
+            raise ReviewAuthorizationError("Finding is not visible to this user")
+        review_case, context = self._lock_case_context(actor, review_case, finding)
         if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
             raise ReviewAuthorizationError("Finding is not visible to this user")
         operation_context = replace(
@@ -307,6 +318,26 @@ class FindingLifecycleService:
             finding_id=finding.id,
         )
         return finding, review_case, policy, context
+
+    def _lock_case_context(
+        self,
+        actor: User,
+        review_case: ReviewCase,
+        finding: Finding,
+    ) -> tuple[ReviewCase, AuthorizationContext]:
+        """Case lock, then grants as visible after it (see docs/architecture.md)."""
+        locked = self._repository.lock_case_for_team_management(
+            actor.organization_id,
+            review_case.id,
+        )
+        if locked is None:
+            raise LookupError("ReviewCase not found")
+        return locked, build_authorization_context(
+            self._repository,
+            actor,
+            locked.id,
+            finding_id=finding.id,
+        )
 
     def _finding_operation_context(
         self,

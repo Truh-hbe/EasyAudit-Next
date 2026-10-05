@@ -29,6 +29,7 @@ from easyaudit_next.review_core.application.review_planning import (
     ReviewAuthorizationError,
     ReviewPlanningService,
 )
+from easyaudit_next.review_core.domain.ids import ReviewCaseId
 from easyaudit_next.review_core.domain.models import (
     Activity,
     DepartmentActor,
@@ -36,6 +37,7 @@ from easyaudit_next.review_core.domain.models import (
     FindingActivitySubject,
     FindingLifecycle,
     FindingSeverity,
+    ReviewCase,
     ScenarioKey,
     ScenarioVersion,
     UserActor,
@@ -514,17 +516,13 @@ class _SynchronizedFindingRepository(SqlAlchemyReviewCoreRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def update_finding(
+    def lock_case_for_team_management(
         self,
-        finding: Finding,
-        *,
-        expected_lifecycle: FindingLifecycle,
-    ) -> bool:
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> ReviewCase | None:
         self._barrier.wait(timeout=10)
-        return super().update_finding(
-            finding,
-            expected_lifecycle=expected_lifecycle,
-        )
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def test_concurrent_finding_transition_allows_only_one_old_state_to_advance(

@@ -1,6 +1,6 @@
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.review_core.domain.ids import ActionItemId, FindingId, ReviewCaseId
-from easyaudit_next.review_core.domain.models import DepartmentActor, UserActor
+from easyaudit_next.review_core.domain.models import DepartmentActor, ReviewCase, UserActor
 from easyaudit_next.review_core.domain.repositories import (
     RectificationRepository,
     ReviewCoreRepository,
@@ -136,4 +136,31 @@ def build_rectification_authorization_context(
         case_role_grants=base.case_role_grants,
         finding_role_grants=base.finding_role_grants,
         action_role_grants=frozenset(action_grants),
+    )
+
+
+def lock_case_and_build_context(
+    repository: RectificationRepository,
+    actor: User,
+    case_id: ReviewCaseId,
+    *,
+    finding_id: FindingId | None = None,
+    action_item_id: ActionItemId | None = None,
+) -> tuple[ReviewCase, AuthorizationContext]:
+    """Take the Case lock, then derive grants from what is visible after it.
+
+    The pre-lock context is only a cheap refusal for callers that must not queue on the
+    lock. Case roles are revoked under this lock, so the decision that guards the write
+    must be made from the context returned here, never from the pre-lock one.
+    """
+
+    locked_case = repository.lock_case_for_team_management(actor.organization_id, case_id)
+    if locked_case is None:
+        raise LookupError("ReviewCase not found")
+    return locked_case, build_rectification_authorization_context(
+        repository,
+        actor,
+        case_id,
+        finding_id=finding_id,
+        action_item_id=action_item_id,
     )

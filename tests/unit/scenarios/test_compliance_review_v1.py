@@ -52,6 +52,13 @@ class Repository:
         ]
         self.activities: list[Activity] = []
 
+    def lock_case_for_team_management(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> ReviewCase | None:
+        return self.get_case(organization_id, case_id)
+
     def get_case(
         self,
         organization_id: OrganizationId,

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from easyaudit_next.composition import (
     build_case_team_coordinator,
     build_finding_lifecycle_service,
+    build_manual_nudge_service,
     build_review_planning_service,
     build_verification_closure_service,
 )
@@ -324,7 +325,9 @@ def test_revoked_reviewer_cannot_verify_finding(postgres_engine: Engine) -> None
     assert seed.activities("finding.approved") == 0
     with Session(postgres_engine) as session:
         assert (
-            session.scalar(select(FindingRecord.lifecycle).where(FindingRecord.id == seed.finding_id))
+            session.scalar(
+                select(FindingRecord.lifecycle).where(FindingRecord.id == seed.finding_id)
+            )
             == "verifying"
         )
 
@@ -369,3 +372,28 @@ def test_unrelated_member_removal_does_not_block_valid_transition(
     assert error is None
     assert seed.activities("review_case.transitioned") == 1
 
+
+
+def test_revoked_lead_cannot_nudge_finding(postgres_engine: Engine) -> None:
+    seed = Seed(postgres_engine, "in_progress", "rectifying")
+    with Session(postgres_engine) as session, session.begin():
+        session.add(
+            FindingParticipantRecord(
+                id=uuid4(),
+                organization_id=seed.organization_id,
+                finding_id=seed.finding_id,
+                user_id=seed.candidate,
+                role_key="owner",
+                assigned_at=NOW,
+            )
+        )
+
+    def write(session: Session, user: User) -> object:
+        return build_manual_nudge_service(session).nudge_finding(
+            user, seed.finding_id, occurred_at=NOW  # type: ignore[arg-type]
+        )
+
+    error = _run_race(seed, _remove_member(seed, seed.lead_u, "lead"), write, seed.lead_u)
+
+    assert isinstance(error, LookupError), repr(error)
+    assert seed.activities("finding.nudged") == 0

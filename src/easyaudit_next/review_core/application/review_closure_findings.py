@@ -5,6 +5,7 @@ from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import DepartmentRepository, UserRepository
 from easyaudit_next.review_core.application.authorization import (
     build_rectification_authorization_context,
+    lock_case_and_build_context,
 )
 from easyaudit_next.review_core.application.review_planning import (
     ConcurrentCaseTransitionError,
@@ -63,12 +64,13 @@ class ClosureAwareFindingLifecycleService(ActionAwareFindingLifecycleService):
         if not policy.authorization.allows(CREATE_FINDING_PERMISSION, context):
             raise ReviewAuthorizationError("lead or auditor role required to create Finding")
 
-        locked_case = self._closure_repository.lock_case_for_closure(
-            actor.organization_id,
+        locked_case, context = lock_case_and_build_context(
+            self._closure_repository,
+            actor,
             review_case.id,
         )
-        if locked_case is None:
-            raise LookupError("ReviewCase not found")
+        if not policy.authorization.allows(CREATE_FINDING_PERMISSION, context):
+            raise ReviewAuthorizationError("lead or auditor role required to create Finding")
         if locked_case.lifecycle is not review_case.lifecycle:
             raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
 

@@ -448,9 +448,11 @@ class _SynchronizedFindingGuardRepository(SqlAlchemyRectificationRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def lock_finding_for_rectification(self, organization_id, finding_id):
+    def lock_case_for_team_management(self, organization_id, case_id):
+        # The first lock of every write path: both sessions have read the old state
+        # before either takes it, then the Case lock serializes them.
         self._barrier.wait(timeout=10)
-        return super().lock_finding_for_rectification(organization_id, finding_id)
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def test_concurrent_action_transition_allows_only_one_old_state_to_advance(

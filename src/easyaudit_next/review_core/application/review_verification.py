@@ -6,6 +6,7 @@ from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import UserRepository
 from easyaudit_next.review_core.application.authorization import (
     build_rectification_authorization_context,
+    lock_case_and_build_context,
 )
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
@@ -79,12 +80,13 @@ class ClosureAwareReviewPlanningService(ActionAwareReviewPlanningService):
         if not policy.authorization.allows(TRANSITION_CASE_PERMISSION, context):
             raise ReviewAuthorizationError("lead role required to transition ReviewCase")
 
-        locked_case = self._closure_repository.lock_case_for_closure(
-            actor.organization_id,
+        locked_case, context = lock_case_and_build_context(
+            self._closure_repository,
+            actor,
             review_case.id,
         )
-        if locked_case is None:
-            raise LookupError("ReviewCase not found")
+        if not policy.authorization.allows(TRANSITION_CASE_PERMISSION, context):
+            raise ReviewAuthorizationError("lead role required to transition ReviewCase")
         if locked_case.lifecycle is not review_case.lifecycle:
             raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
 
@@ -171,7 +173,7 @@ class VerificationClosureService:
         if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
             raise ReviewAuthorizationError("Finding is not visible to this user")
 
-        locked_case = self._lock_expected_case(actor, review_case)
+        locked_case, context = self._lock_expected_case(actor, review_case, finding, policy)
         if locked_case.lifecycle is ReviewCaseLifecycle.CLOSED:
             raise ValueError("Closed ReviewCase cannot accept Finding verification")
         finding = self._lock_expected_finding(actor, finding)
@@ -241,7 +243,11 @@ class VerificationClosureService:
                 "lead, auditor, or reviewer role required to reopen Finding"
             )
 
-        locked_case = self._lock_expected_case(actor, review_case)
+        locked_case, context = self._lock_expected_case(actor, review_case, finding, policy)
+        if not policy.authorization.allows(REOPEN_FINDING_PERMISSION, context):
+            raise ReviewAuthorizationError(
+                "lead, auditor, or reviewer role required to reopen Finding"
+            )
         if locked_case.lifecycle is ReviewCaseLifecycle.CLOSED:
             raise ValueError("Finding cannot be reopened after ReviewCase closure")
         finding = self._lock_expected_finding(actor, finding)
@@ -304,16 +310,25 @@ class VerificationClosureService:
         )
         return finding, review_case, policy, context
 
-    def _lock_expected_case(self, actor: User, expected: ReviewCase) -> ReviewCase:
-        locked = self._repository.lock_case_for_closure(
-            actor.organization_id,
+    def _lock_expected_case(
+        self,
+        actor: User,
+        expected: ReviewCase,
+        finding: Finding,
+        policy: ScenarioPolicy,
+    ) -> tuple[ReviewCase, AuthorizationContext]:
+        """Case lock first, then authorize on post-lock grants, then check the lifecycle."""
+        locked, context = lock_case_and_build_context(
+            self._repository,
+            actor,
             expected.id,
+            finding_id=finding.id,
         )
-        if locked is None:
-            raise LookupError("ReviewCase not found")
+        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
+            raise ReviewAuthorizationError("Finding is not visible to this user")
         if locked.lifecycle is not expected.lifecycle:
             raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
-        return locked
+        return locked, context
 
     def _lock_expected_finding(self, actor: User, expected: Finding) -> Finding:
         locked = self._repository.lock_finding_for_verification(

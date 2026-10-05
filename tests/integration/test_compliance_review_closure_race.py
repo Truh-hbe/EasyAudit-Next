@@ -183,9 +183,9 @@ class _CloseBarrierRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def lock_case_for_closure(self, organization_id, case_id):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().lock_case_for_closure(organization_id, case_id)
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 class _AcceptBarrierRepository(SqlAlchemyVerificationClosureRepository):
@@ -193,12 +193,9 @@ class _AcceptBarrierRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def update_finding(self, finding, *, expected_lifecycle):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().update_finding(
-            finding,
-            expected_lifecycle=expected_lifecycle,
-        )
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def test_case_close_racing_accept_observation_preserves_committed_terminality(

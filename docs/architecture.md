@@ -112,6 +112,11 @@ src/easyaudit_next/
 ## 授权
 
 - 授权完全由 Case 固定的精确 Scenario 版本判断（`ScenarioPolicy.authorization.allows`），不能写成 `role_key == "lead"`，也不能给 `system_admin` 业务捷径。
+- **授权在锁内、基于锁后读取的数据判断。** Case 角色（`CaseMember`）在 Case 锁下被撤销，所以任何写路径都必须先取 Case 锁（`FOR NO KEY UPDATE`），再用锁后读到的成员关系重建 `AuthorizationContext` 并决定；锁前的上下文不能守护写入。统一入口是 `lock_case_and_build_context`（`review_core/application/authorization.py`）。
+  - 锁前可以保留一次便宜的拒绝（404/403 语义不变），这样未授权用户不会排队抢锁；通过后取锁，锁内**重复同一条**权限检查，并使用锁后的 Case（生命周期同样以锁后为准）。
+  - 加锁顺序不变：`Organization → Case → Finding → Action / Submission`。需要 Organization 锁的路径（成员增删、用户停用）先取它，其余路径不取。
+  - 新增写路径时，先取 Case 锁再授权；测试用双 Session：A 持 Case 锁撤销角色，B 在锁前通过检查并等待，A 提交后 B 必须被拒绝（`test_post_lock_authorization_race.py`）。
+  - 仍是请求开始时的快照、不在此规则内：actor 自身的 `is_active`、`primary_department_id`，以及 Finding/Action 级授权（目前没有删除这些授权的写路径）。
 - **上下文按目标构造。** Finding 只使用父 Case 的授权、自身的授权以及其下 Action 的授权；Action 只使用父 Case、父 Finding 和自身的授权。兄弟资源的授权不能扩大当前目标的权限。
 - **批量读取只是查询优化，不能放宽授权范围。** 先批量取出事实，在内存中按目标分组，再逐个目标判断。
 - 分页、计数、total 都基于已授权的结果集计算，不能先分页后过滤。
