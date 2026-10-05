@@ -86,8 +86,7 @@ export function AdminPage() {
     const controller = new AbortController()
     const sequence = requestSequence.current + 1
     requestSequence.current = sequence
-    setState({ status: 'loading' })
-    setActionMessage(null)
+    setState((previous) => (previous.status === 'ready' ? previous : { status: 'loading' }))
 
     void Promise.all([
       getAdminOrganization(controller.signal),
@@ -117,7 +116,7 @@ export function AdminPage() {
         <div className="page-heading"><div><h1 id="admin-title">管理设置</h1></div></div>
         <section className="surface-card" role="alert">
           <p>{state.message}</p>
-          <button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button>
+          <button type="button" onClick={() => { setActionMessage(null); setRevision((value) => value + 1) }}>重新加载</button>
         </section>
       </section>
     )
@@ -130,6 +129,7 @@ export function AdminPage() {
     setDepartmentNameInput('')
     setDepartmentParentId('')
     setDepartmentActive(true)
+    setActionMessage(null)
   }
 
   function editDepartment(department: DepartmentResponse) {
@@ -137,6 +137,7 @@ export function AdminPage() {
     setDepartmentNameInput(department.name)
     setDepartmentParentId(department.parent_id ?? '')
     setDepartmentActive(department.is_active)
+    setActionMessage(null)
   }
 
   function clearUserForm() {
@@ -147,6 +148,7 @@ export function AdminPage() {
     setUserRole('ordinary_user')
     setUserDepartmentId('')
     setUserActive(true)
+    setActionMessage(null)
   }
 
   function editUser(user: UserResponse) {
@@ -157,6 +159,7 @@ export function AdminPage() {
     setUserRole(user.platform_role)
     setUserDepartmentId(user.primary_department_id ?? '')
     setUserActive(user.is_active)
+    setActionMessage(null)
   }
 
   async function refreshAfter(action: () => Promise<unknown>, success: string) {
