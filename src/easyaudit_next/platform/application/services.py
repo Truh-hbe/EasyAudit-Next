@@ -73,6 +73,11 @@ class IdentityOrganizationService:
         department_id: DepartmentId,
         parent_id: DepartmentId | None,
     ) -> Department:
+        # Serialize hierarchy changes per organization: the ancestor check and the UPDATE must
+        # see each other's committed moves. The first read only discovers the organization;
+        # everything decisive is re-read after the lock (Department reads refresh ORM state).
+        organization_id = self._require_department(department_id).organization_id
+        self._organizations.lock_for_update(organization_id)
         department = self._require_department(department_id)
         if parent_id is not None:
             self._require_department_in_organization(parent_id, department.organization_id)

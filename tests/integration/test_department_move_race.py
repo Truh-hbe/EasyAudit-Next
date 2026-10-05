@@ -8,6 +8,7 @@ commits, and the second re-checks against the new tree and is rejected.
 """
 
 import threading
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from os import environ
@@ -77,21 +78,28 @@ def _seed(engine: Engine, department_count: int = 2) -> tuple[User, list[UUID]]:
 
 
 class _Rendezvous:
-    """Let the first writer wait (bounded) for the other one to reach its UPDATE."""
+    """Let each transaction's first UPDATE wait (bounded) for the other transaction's.
+
+    Only the first `update` per transaction counts (one admin move calls `update` twice), and
+    each `_move` runs in its own thread, so the thread id identifies the transaction.
+    """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, expected: int = 2) -> None:
         self.both_arrived = threading.Event()
-        self._arrived = 0
+        self._arrived: set[int] = set()
         self._lock = threading.Lock()
         self._expected = expected
         original = SqlAlchemyDepartmentRepository.update
 
         def update(repo: SqlAlchemyDepartmentRepository, department: Any) -> None:
+            transaction = threading.get_ident()
             with self._lock:
-                self._arrived += 1
-                if self._arrived >= self._expected:
+                first = transaction not in self._arrived
+                self._arrived.add(transaction)
+                if len(self._arrived) >= self._expected:
                     self.both_arrived.set()
-            self.both_arrived.wait(RENDEZVOUS_SECONDS)
+            if first:
+                self.both_arrived.wait(RENDEZVOUS_SECONDS)
             original(repo, department)
 
         monkeypatch.setattr(SqlAlchemyDepartmentRepository, "update", update)
@@ -164,10 +172,14 @@ def test_moves_in_different_organizations_do_not_block_each_other(
     admin_2, (a2, b2) = _seed(engine)
     rendezvous = _Rendezvous(monkeypatch)
 
+    started = time.monotonic()
     results = _race(
         [lambda: _move(engine, admin_1, a1, b1), lambda: _move(engine, admin_2, a2, b2)]
     )
+    elapsed = time.monotonic() - started
 
     assert results == ["moved", "moved"]
-    # Both reached their UPDATE together: neither waited on the other organization's lock.
+    # Two distinct transactions reached their UPDATE together and nobody sat out the rendezvous
+    # timeout: a global (cross-organization) lock would make one wait RENDEZVOUS_SECONDS.
     assert rendezvous.both_arrived.is_set()
+    assert elapsed < RENDEZVOUS_SECONDS * 0.6
