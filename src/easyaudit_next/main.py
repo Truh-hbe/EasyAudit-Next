@@ -2,7 +2,10 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from easyaudit_next.api.health import health_router
 from easyaudit_next.api.review_evidence_downloads import review_evidence_download_router
@@ -58,6 +61,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+async def _validation_error_without_input(_request: Request, exc: Exception) -> JSONResponse:
+    # Default 422 bodies echo the offending input, which would leak submitted passwords.
+    assert isinstance(exc, RequestValidationError)
+    errors = [
+        {key: value for key, value in error.items() if key not in {"input", "ctx", "url"}}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="EasyAudit-Next API",
@@ -66,6 +79,7 @@ def create_app() -> FastAPI:
         description="Scenario-extensible review and remediation platform",
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_exception_handler(RequestValidationError, _validation_error_without_input)
     app.include_router(health_router)
     app.include_router(api_router)
     app.include_router(review_planning_router)

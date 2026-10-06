@@ -208,8 +208,8 @@ export function AdminPage() {
     }
     const primaryDepartmentId = userDepartmentId.trim() === '' ? null : userDepartmentId
     if (userId === null) {
-      if (userLoginName.trim().length === 0 || userInitialPassword.length < 12) {
-        setActionMessage('新用户需要登录名和至少 12 个字符的初始密码。')
+      if (userLoginName.trim().length === 0 || userInitialPassword.length < 12 || userInitialPassword.length > 1000) {
+        setActionMessage('新用户需要登录名和12 至 1000 个字符的初始密码。')
         return
       }
       await refreshAfter(
@@ -244,8 +244,8 @@ export function AdminPage() {
     // The secret is intentionally removed before the request starts and is
     // never retained for an automatic retry.
     setResetPassword('')
-    if (targetUserId === '' || temporaryPassword.length < 12) {
-      setActionMessage('请选择用户并输入至少 12 个字符的临时密码。')
+    if (targetUserId === '' || temporaryPassword.length < 12 || temporaryPassword.length > 1000) {
+      setActionMessage('请选择用户并输入12 至 1000 个字符的临时密码。')
       return
     }
     setBusy(true)
