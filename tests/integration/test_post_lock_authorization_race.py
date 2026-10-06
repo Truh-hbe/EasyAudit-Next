@@ -14,13 +14,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine, func, select, text
+from sqlalchemy import Engine, create_engine, func, select, text, update
 from sqlalchemy.orm import Session
 
 from easyaudit_next.composition import (
     build_case_team_coordinator,
     build_finding_lifecycle_service,
     build_manual_nudge_service,
+    build_rectification_service,
     build_review_planning_service,
     build_scenario_registry,
     build_verification_closure_service,
@@ -262,7 +263,7 @@ def _run_race(
         transaction.commit()
         session_a.close()
         error = future.exception(timeout=15)
-        assert waited, "Session B never blocked on Session A's lock"
+        assert waited, f"Session B never blocked on Session A's lock: {error!r}"
         return error
     finally:
         pool.shutdown(wait=True)
@@ -595,6 +596,70 @@ def test_case_lifecycle_change_while_waiting_is_a_409_not_a_validation_error(
 
     assert isinstance(error, ConcurrentCaseTransitionError), repr(error)
     assert seed.count(FindingRecord) == 0
+
+
+def _close_case(seed: Seed) -> Callable[[Session, User], None]:
+    """A moves the Case to a lifecycle in which the waiting write is no longer valid."""
+
+    def close(session: Session, _lead: User) -> None:
+        session.execute(
+            update(ReviewCaseRecord)
+            .where(ReviewCaseRecord.id == seed.case_id)
+            .values(lifecycle="closed")
+        )
+
+    return close
+
+
+def test_transition_finding_waiting_while_case_closes_is_a_409(postgres_engine: Engine) -> None:
+    """The lifecycle is compared before authorize validates against the locked Case.
+
+    `void` is invalid in a closed Case; if the comparison came after `authorize`, the
+    waiting request would fail validation (422) instead of reporting the conflict (409).
+    """
+    seed = Seed(postgres_engine, "in_progress", "open")
+
+    def write(session: Session, user: User) -> object:
+        return build_finding_lifecycle_service(session).transition_finding(
+            user,
+            FindingId(seed.finding_id),  # type: ignore[arg-type]
+            "void",
+            reason="duplicate",
+            occurred_at=NOW,
+        )
+
+    error = _run_race(seed, _close_case(seed), write, seed.lead_u)
+
+    assert isinstance(error, ConcurrentCaseTransitionError), repr(error)
+    assert seed.activities("finding.transitioned") == 0
+
+
+def test_create_action_item_waiting_while_case_closes_is_a_409(postgres_engine: Engine) -> None:
+    seed = Seed(postgres_engine, "in_progress", "rectifying")
+    with Session(postgres_engine) as session, session.begin():
+        session.add(
+            FindingParticipantRecord(
+                id=uuid4(),
+                organization_id=seed.organization_id,
+                finding_id=seed.finding_id,
+                user_id=seed.lead_u,
+                role_key="owner",
+                assigned_at=NOW,
+            )
+        )
+
+    def write(session: Session, user: User) -> object:
+        return build_rectification_service(session).create_action_item(
+            user,
+            FindingId(seed.finding_id),  # type: ignore[arg-type]
+            "Fix it",
+            occurred_at=NOW,
+        )
+
+    error = _run_race(seed, _close_case(seed), write, seed.lead_u)
+
+    assert isinstance(error, ConcurrentCaseTransitionError), repr(error)
+    assert seed.activities("action_item.created") == 0
 
 
 class _LockCountingRepository(SqlAlchemyVerificationClosureRepository):

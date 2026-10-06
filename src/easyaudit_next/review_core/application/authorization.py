@@ -160,9 +160,12 @@ def lock_case_and_build_context[T](
 ) -> tuple[ReviewCase, AuthorizationContext, T]:
     """Take the Case lock, then authorize on what is visible after it.
 
-    Fixed order: Case lock -> re-read the actor -> `build_context(actor)` -> `authorize`
-    (raises; may return the decision it made) -> compare the Case lifecycle with
-    `expected_case` (409). Callers run the same `authorize` before the lock as a cheap
+    Fixed order: Case lock -> re-read the actor (must be active) -> compare the Case
+    lifecycle with `expected_case` (409) -> `build_context(actor)` -> `authorize` (raises;
+    may return the decision it made). The lifecycle comparison comes before `authorize`
+    because `authorize` may validate against the locked Case, and a lifecycle that moved
+    while we waited must surface as a conflict (409), not as a validation error (422).
+    Callers run the same `authorize` before the lock as a cheap
     refusal, so a user who may not do this never queues on the lock; the write is guarded
     by the decision made here, never by the pre-lock one.
     """
@@ -178,8 +181,8 @@ def lock_case_and_build_context[T](
     fresh = next(iter(users.lock_users_for_update(actor.organization_id, (actor.id,))), None)
     if fresh is None or not fresh.is_active:
         raise ReviewAuthorizationError("Active organization user required")
-    context = build_context(fresh)
-    decision = authorize(locked_case, context)
     if locked_case.lifecycle is not expected_case.lifecycle:
         raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
+    context = build_context(fresh)
+    decision = authorize(locked_case, context)
     return locked_case, context, decision

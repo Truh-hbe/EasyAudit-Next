@@ -57,13 +57,17 @@ from easyaudit_next.review_core.application.evidence_storage import (
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
 )
-from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
+from easyaudit_next.review_core.application.review_planning import (
+    ConcurrentCaseTransitionError,
+    ReviewAuthorizationError,
+)
 from easyaudit_next.review_core.domain.ids import ActionItemId
 from easyaudit_next.review_core.domain.models import Evidence
 
 review_evidence_upload_router = APIRouter(prefix="/api/v1", tags=["review-rectification"])
 
 _BUSINESS_ERRORS = (
+    ConcurrentCaseTransitionError,
     ConcurrentFindingTransitionError,
     ReviewAuthorizationError,
     LookupError,

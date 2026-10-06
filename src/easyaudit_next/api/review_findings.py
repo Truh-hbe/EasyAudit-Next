@@ -206,6 +206,7 @@ def add_finding_participant(
         )
         notifications.finding_participant_added(result)
     except (
+        ConcurrentCaseTransitionError,
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
         LookupError,
@@ -236,6 +237,7 @@ def transition_finding(
             reason=payload.reason,
         )
     except (
+        ConcurrentCaseTransitionError,
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
         LookupError,
