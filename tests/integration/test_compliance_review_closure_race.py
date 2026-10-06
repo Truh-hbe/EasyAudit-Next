@@ -48,6 +48,7 @@ from easyaudit_next.review_core.persistence.repositories import (
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 
 NOW = datetime(2026, 8, 29, 11, 0, tzinfo=UTC)
 
@@ -204,7 +205,7 @@ def test_case_close_racing_accept_observation_preserves_committed_terminality(
     organization_id, case_id, finding_id, lead_id, reviewer_id = (
         _seed_observation_case(postgres_engine)
     )
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_close() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -253,6 +254,7 @@ def test_case_close_racing_accept_observation_preserves_committed_terminality(
         accept_future = executor.submit(attempt_accept_observation)
         outcomes = {close_future.result(), accept_future.result()}
 
+    assert barrier.hits == 2
     assert outcomes in (
         {"close_success", "accept_success"},
         {"close_invalid", "accept_success"},

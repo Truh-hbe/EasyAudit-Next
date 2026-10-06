@@ -56,6 +56,7 @@ from easyaudit_next.review_core.persistence.models import (
 from easyaudit_next.review_core.persistence.rectification_repositories import (
     SqlAlchemyRectificationRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=UTC)
 
@@ -470,7 +471,7 @@ def test_concurrent_action_transition_allows_only_one_old_state_to_advance(
         action_id = action_item.id
         setup.commit()
 
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_start() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -497,6 +498,7 @@ def test_concurrent_action_transition_allows_only_one_old_state_to_advance(
             for future in [executor.submit(attempt_start) for _ in range(2)]
         )
 
+    assert barrier.hits == 2
     assert outcomes == ["conflict", "success"]
     with Session(postgres_engine) as verification:
         persisted = verification.scalar(
@@ -535,7 +537,7 @@ def test_concurrent_completion_submission_creates_one_snapshot_and_one_transitio
         finding_id = finding.id
         setup.commit()
 
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_completion() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -563,6 +565,7 @@ def test_concurrent_completion_submission_creates_one_snapshot_and_one_transitio
             for future in [executor.submit(attempt_completion) for _ in range(2)]
         )
 
+    assert barrier.hits == 2
     assert outcomes == ["conflict", "success"]
     with Session(postgres_engine) as verification:
         persisted = verification.scalar(
@@ -617,7 +620,7 @@ def test_completion_racing_done_action_reopen_cannot_break_verifying_invariant(
         action_id = action_item.id
         setup.commit()
 
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_completion() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -670,6 +673,7 @@ def test_completion_racing_done_action_reopen_cannot_break_verifying_invariant(
         reopen_future = executor.submit(attempt_reopen)
         outcomes = {completion_future.result(), reopen_future.result()}
 
+    assert barrier.hits == 2
     assert outcomes in (
         {"completion_success", "reopen_conflict"},
         {"completion_invalid", "reopen_success"},
@@ -722,7 +726,7 @@ def test_completion_racing_action_create_cannot_admit_new_todo_after_cutover(
         finding_id = finding.id
         setup.commit()
 
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_completion() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -775,6 +779,7 @@ def test_completion_racing_action_create_cannot_admit_new_todo_after_cutover(
         create_future = executor.submit(attempt_create)
         outcomes = {completion_future.result(), create_future.result()}
 
+    assert barrier.hits == 2
     assert outcomes in (
         {"completion_success", "create_conflict"},
         {"completion_invalid", "create_success"},

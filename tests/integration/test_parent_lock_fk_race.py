@@ -369,7 +369,6 @@ def test_parent_row_locks_compile_to_for_no_key_update(
             organization_id, case_id
         )
         verification = SqlAlchemyVerificationClosureRepository(session)
-        verification.lock_case_for_closure(organization_id, case_id)
         verification.lock_finding_for_verification(organization_id, fixture.finding_id)
         verification.lock_finding_for_rectification(organization_id, fixture.finding_id)
         # Private on purpose: the guard SELECTs are the only way to reach these two locks
@@ -378,6 +377,6 @@ def test_parent_row_locks_compile_to_for_no_key_update(
         evaluator._load_case(organization_id, case_id, guard=True)
         evaluator._load_action(organization_id, fixture.action_item_id, guard=True)
     locks = [statement for statement in captured if " FOR " in statement]
-    assert len(locks) == 8
+    assert len(locks) == 7
     for statement in locks:
         assert statement.rstrip().endswith("FOR NO KEY UPDATE"), statement

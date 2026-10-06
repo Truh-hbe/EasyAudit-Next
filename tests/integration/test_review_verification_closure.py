@@ -39,6 +39,7 @@ from easyaudit_next.review_core.persistence.repositories import (
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 
 NOW = datetime(2026, 8, 26, 15, 0, tzinfo=UTC)
 
@@ -168,9 +169,9 @@ class _SynchronizedCaseGuardRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def lock_case_for_closure(self, organization_id, case_id):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().lock_case_for_closure(organization_id, case_id)
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def _planning_service(
@@ -192,7 +193,7 @@ def test_close_racing_final_approve_never_persists_closed_case_with_verifying_fi
         postgres_engine,
         finding_lifecycle="verifying",
     )
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_close() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -236,6 +237,7 @@ def test_close_racing_final_approve_never_persists_closed_case_with_verifying_fi
         approve_future = executor.submit(attempt_approve)
         outcomes = {close_future.result(), approve_future.result()}
 
+    assert barrier.hits == 2
     assert outcomes in (
         {"close_success", "approve_success"},
         {"close_invalid", "approve_success"},
@@ -278,7 +280,7 @@ def test_close_racing_reopen_never_persists_closed_case_with_rectifying_finding(
         postgres_engine,
         finding_lifecycle="closed",
     )
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_close() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -324,6 +326,7 @@ def test_close_racing_reopen_never_persists_closed_case_with_rectifying_finding(
         reopen_future = executor.submit(attempt_reopen)
         outcomes = {close_future.result(), reopen_future.result()}
 
+    assert barrier.hits == 2
     assert outcomes in (
         {"close_success", "reopen_conflict"},
         {"close_invalid", "reopen_success"},

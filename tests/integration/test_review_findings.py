@@ -53,6 +53,7 @@ from easyaudit_next.review_core.persistence.repositories import (
     SqlAlchemyReviewCoreRepository,
     SqlAlchemyScenarioCatalogRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 
 NOW = datetime(2026, 8, 24, 9, 30, tzinfo=UTC)
 
@@ -544,7 +545,7 @@ def test_concurrent_finding_transition_allows_only_one_old_state_to_advance(
         finding_id = finding.id
         setup.commit()
 
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_issue() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -564,6 +565,7 @@ def test_concurrent_finding_transition_allows_only_one_old_state_to_advance(
         futures = [executor.submit(attempt_issue) for _ in range(2)]
         outcomes = sorted(future.result() for future in futures)
 
+    assert barrier.hits == 2
     assert outcomes == ["conflict", "success"]
     with Session(postgres_engine) as verification:
         persisted = verification.scalar(
