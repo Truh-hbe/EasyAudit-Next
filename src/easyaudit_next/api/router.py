@@ -31,6 +31,7 @@ from easyaudit_next.api.dependencies import (
     DatabaseSession,
     SystemAdminIdentity,
 )
+from easyaudit_next.api.errors import raise_database_conflict
 from easyaudit_next.application.case_team_coordination import UserDeactivationConflictError
 from easyaudit_next.composition import (
     build_case_team_coordinator,
@@ -372,7 +373,9 @@ def create_admin_department(
             payload.name,
             parent_id=DepartmentId(payload.parent_id) if payload.parent_id else None,
         )
-    except (LookupError, ValueError, IntegrityError) as exc:
+    except IntegrityError as exc:
+        raise_database_conflict(exc)
+    except (LookupError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _department_response(department)
 
@@ -400,7 +403,9 @@ def update_admin_department(
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except (ValueError, IntegrityError) as exc:
+    except IntegrityError as exc:
+        raise_database_conflict(exc)
+    except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _department_response(department)
 
@@ -445,7 +450,9 @@ def create_admin_user(
             platform_role=payload.platform_role,
             must_change_password=payload.must_change_password,
         )
-    except (ValueError, IntegrityError) as exc:
+    except IntegrityError as exc:
+        raise_database_conflict(exc)
+    except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _user_response(user)
 
@@ -499,7 +506,9 @@ def update_admin_user(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    except (ValueError, IntegrityError) as exc:
+    except IntegrityError as exc:
+        raise_database_conflict(exc)
+    except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _user_response(user)
 

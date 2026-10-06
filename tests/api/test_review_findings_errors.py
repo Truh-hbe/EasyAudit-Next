@@ -67,3 +67,31 @@ def test_create_finding_maps_stale_case_conflict_to_http_409(
 
     assert caught.value.status_code == 409
     assert caught.value.detail == "Concurrent ReviewCase transition"
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "review_planning",
+        "review_verification",
+        "review_rectification",
+        "review_findings",
+    ],
+)
+def test_review_api_integrity_error_never_leaks_sql_or_parameters(module_name: str) -> None:
+    import importlib
+
+    module = importlib.import_module(f"easyaudit_next.api.{module_name}")
+    exc = IntegrityError(
+        "INSERT INTO findings (password_hash) VALUES (%(password_hash)s)",
+        {"password_hash": "SYNTHETIC_HASH_MARKER"},
+        Exception("constraint"),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        module._raise_api_error(exc)
+
+    assert caught.value.status_code == 409
+    detail = str(caught.value.detail)
+    for marker in ("INSERT INTO", "SYNTHETIC_HASH_MARKER", "password_hash"):
+        assert marker not in detail

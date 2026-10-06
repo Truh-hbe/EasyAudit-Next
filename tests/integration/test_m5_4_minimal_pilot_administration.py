@@ -578,3 +578,25 @@ def _authentication_service_for_token(engine: Engine, token: str) -> bool:
         auth_session, user = auth.authenticate(token, now=NOW)
         assert auth_session.user_id == user.id
         return True
+
+
+def test_duplicate_login_name_returns_safe_409(postgres_engine: Engine) -> None:
+    fixture = _seed(postgres_engine)
+    admin = _client(postgres_engine)
+    assert admin.post(
+        "/api/v1/auth/login",
+        json={"login_name": fixture.admin_login, "password": ADMIN_PASSWORD},
+    ).status_code == 200
+
+    response = admin.post(
+        "/api/v1/admin/users",
+        json={
+            "display_name": "Duplicate login",
+            "login_name": fixture.target_login,
+            "initial_password": "m5-4-duplicate-password-000",
+        },
+    )
+
+    assert response.status_code == 409
+    for marker in ("INSERT", "SELECT", "password_hash", "$argon2", "parameters", "psycopg"):
+        assert marker not in response.text
