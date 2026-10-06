@@ -103,6 +103,12 @@ class SqlAlchemyDepartmentRepository:
             return None
         return self._to_domain(record)
 
+    def get_current(self, department_id: DepartmentId) -> Department | None:
+        record = self._session.get(DepartmentRecord, department_id, populate_existing=True)
+        if record is None:
+            return None
+        return self._to_domain(record)
+
     def update(self, department: Department) -> None:
         record = self._session.get(DepartmentRecord, department.id)
         if record is None:

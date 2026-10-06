@@ -73,9 +73,16 @@ class IdentityOrganizationService:
         department_id: DepartmentId,
         parent_id: DepartmentId | None,
     ) -> Department:
-        department = self._require_department(department_id)
+        # Serialize hierarchy changes per organization: the ancestor check and the UPDATE must
+        # see each other's committed moves. The first read only discovers the organization;
+        # everything decisive is re-read after the lock with `get_current`.
+        organization_id = self._require_department(department_id).organization_id
+        self._organizations.lock_for_update(organization_id)
+        department = self._require_department(department_id, current=True)
         if parent_id is not None:
-            self._require_department_in_organization(parent_id, department.organization_id)
+            self._require_department_in_organization(
+                parent_id, department.organization_id, current=True
+            )
             self._assert_no_department_cycle(department_id, parent_id)
         updated = replace(department, parent_id=parent_id)
         self._departments.update(updated)
@@ -121,8 +128,14 @@ class IdentityOrganizationService:
             raise PlatformEntityNotFoundError(f"Organization {organization_id} does not exist")
         return organization
 
-    def _require_department(self, department_id: DepartmentId) -> Department:
-        department = self._departments.get(department_id)
+    def _require_department(
+        self, department_id: DepartmentId, *, current: bool = False
+    ) -> Department:
+        department = (
+            self._departments.get_current(department_id)
+            if current
+            else self._departments.get(department_id)
+        )
         if department is None:
             raise PlatformEntityNotFoundError(f"Department {department_id} does not exist")
         return department
@@ -131,8 +144,10 @@ class IdentityOrganizationService:
         self,
         department_id: DepartmentId,
         organization_id: OrganizationId,
+        *,
+        current: bool = False,
     ) -> Department:
-        department = self._require_department(department_id)
+        department = self._require_department(department_id, current=current)
         if department.organization_id != organization_id:
             raise OrganizationBoundaryError(
                 f"Department {department_id} does not belong to organization {organization_id}"
@@ -158,4 +173,4 @@ class IdentityOrganizationService:
             if current_id in visited:
                 raise DepartmentCycleError("Existing department hierarchy contains a cycle")
             visited.add(current_id)
-            current_id = self._require_department(current_id).parent_id
+            current_id = self._require_department(current_id, current=True).parent_id
