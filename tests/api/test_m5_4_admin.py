@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from easyaudit_next.api import router as router_module
 from easyaudit_next.api.dependencies import (
@@ -11,6 +12,7 @@ from easyaudit_next.api.dependencies import (
     get_current_identity,
     get_database_session,
 )
+from easyaudit_next.api.errors import DATABASE_CONFLICT_DETAIL
 from easyaudit_next.main import create_app
 from easyaudit_next.platform.application.authentication import LocalCredentialUnavailableError
 from easyaudit_next.platform.application.password_policy import PasswordPolicyError
@@ -170,3 +172,61 @@ def test_m5_4_openapi_freezes_reset_and_scenario_status_shapes() -> None:
         "registry_present",
         "ready",
     }
+
+
+_LEAK_MARKERS = ("INSERT INTO", "SYNTHETIC_HASH_MARKER", "password_hash")
+
+
+def _synthetic_integrity_error() -> IntegrityError:
+    return IntegrityError(
+        "INSERT INTO local_credentials (user_id, password_hash) "
+        "VALUES (%(user_id)s, %(password_hash)s)",
+        {"user_id": "u", "password_hash": "SYNTHETIC_HASH_MARKER"},
+        Exception('duplicate key value violates unique constraint "uq_users_login_name"'),
+    )
+
+
+class _RaisingAdminService:
+    def __getattr__(self, _name: str) -> object:
+        def raise_integrity_error(*_args: object, **_kwargs: object) -> None:
+            raise _synthetic_integrity_error()
+
+        return raise_integrity_error
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        (
+            "post",
+            "/api/v1/admin/users",
+            {
+                "display_name": "Dup",
+                "login_name": "dup",
+                "initial_password": "a-valid-initial-password",
+            },
+        ),
+        ("patch", f"/api/v1/admin/users/{uuid4()}", {"display_name": "x"}),
+        ("post", "/api/v1/admin/departments", {"name": "Dup"}),
+        ("patch", f"/api/v1/admin/departments/{uuid4()}", {"name": "x"}),
+    ],
+)
+def test_admin_integrity_error_never_leaks_sql_or_parameters(
+    monkeypatch: pytest.MonkeyPatch, method: str, path: str, body: dict[str, object]
+) -> None:
+    app = create_app()
+    monkeypatch.setattr(
+        router_module, "_administration_service", lambda _session: _RaisingAdminService()
+    )
+    monkeypatch.setattr(
+        router_module, "build_case_team_coordinator", lambda _session: _RaisingAdminService()
+    )
+    app.dependency_overrides[get_current_identity] = lambda: _identity(PlatformRole.SYSTEM_ADMIN)
+    app.dependency_overrides[get_database_session] = lambda: _SessionStub()
+
+    response = TestClient(app).request(method, path, json=body)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": DATABASE_CONFLICT_DETAIL}
+    for marker in _LEAK_MARKERS:
+        assert marker not in response.text

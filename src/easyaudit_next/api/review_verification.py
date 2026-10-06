@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
+from easyaudit_next.api.errors import raise_database_conflict
 from easyaudit_next.api.review_contracts import FindingResponse, SubmissionResponse
 from easyaudit_next.api.review_verification_contracts import (
     FindingReopenRequest,
@@ -54,13 +55,15 @@ def _submission_response(submission: Submission) -> SubmissionResponse:
 
 
 def _raise_api_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, IntegrityError):
+        raise_database_conflict(exc)
     if isinstance(exc, ReviewAuthorizationError):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if isinstance(
         exc,
-        (ConcurrentCaseTransitionError, ConcurrentFindingTransitionError, IntegrityError),
+        (ConcurrentCaseTransitionError, ConcurrentFindingTransitionError),
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
