@@ -50,6 +50,7 @@ def test_two_verification_approvals_from_same_old_state_yield_one_conflict(
             service = VerificationClosureService(
                 _SynchronizedCaseGuardRepository(session, barrier),
                 build_scenario_registry(),
+                SqlAlchemyUserRepository(session),
             )
             try:
                 service.submit_verification(

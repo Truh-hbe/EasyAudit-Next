@@ -201,6 +201,7 @@ def test_verification_reject_is_atomic_submission_and_activity(postgres_engine: 
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         submission, finding = service.submit_verification(
             reviewer,
@@ -301,6 +302,7 @@ def test_verification_persistence_failure_rolls_back_finding_submission_and_acti
         service = VerificationClosureService(
             _FailAfterSubmissionRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(IntegrityError, match="forced verification persistence failure"):
             service.submit_verification(
@@ -350,6 +352,7 @@ def test_unrelated_user_fails_authorization_before_verification_validation(
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(ReviewAuthorizationError, match="not visible"):
             service.submit_verification(

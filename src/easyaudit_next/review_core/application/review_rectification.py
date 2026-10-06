@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from string import hexdigits
@@ -59,6 +60,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     FindingTransitionContext,
     PermissionSource,
     RoleGrant,
+    SubmissionDecision,
     SubmissionRequest,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, ScenarioRegistry
@@ -156,13 +158,13 @@ class ActionAwareFindingLifecycleService(FindingLifecycleService):
         )
         return finding, review_case, policy, context
 
-    def _lock_case_context(
+    def _grants(
         self,
         actor: User,
         review_case: ReviewCase,
         finding: Finding,
-    ) -> tuple[ReviewCase, AuthorizationContext]:
-        return lock_case_and_build_context(
+    ) -> AuthorizationContext:
+        return build_rectification_authorization_context(
             self._rectification_repository,
             actor,
             review_case.id,
@@ -237,11 +239,13 @@ class RectificationService:
         occurred_at: datetime | None = None,
     ) -> ActionItem:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
-        if not policy.authorization.allows(CREATE_ACTION_PERMISSION, context):
-            raise ReviewAuthorizationError("Finding owner role required to create ActionItem")
-        review_case, context = self._lock_case_context(actor, review_case, finding)
-        if not policy.authorization.allows(CREATE_ACTION_PERMISSION, context):
-            raise ReviewAuthorizationError("Finding owner role required to create ActionItem")
+
+        def authorize(_case: ReviewCase, current: AuthorizationContext) -> None:
+            if not policy.authorization.allows(CREATE_ACTION_PERMISSION, current):
+                raise ReviewAuthorizationError("Finding owner role required to create ActionItem")
+
+        authorize(review_case, context)
+        review_case, context, _ = self._lock_case_context(actor, review_case, finding, authorize)
         finding = self._lock_expected_finding(actor, finding)
         policy.action_operations.validate_create(
             self._action_operation_context(review_case, finding)
@@ -318,11 +322,17 @@ class RectificationService:
             actor,
             action_item_id,
         )
-        if not policy.authorization.allows(MANAGE_ACTION_ASSIGNEES_PERMISSION, context):
-            raise ReviewAuthorizationError("Finding owner role required to manage ActionAssignee")
-        review_case, context = self._lock_case_context(actor, review_case, finding, action_item)
-        if not policy.authorization.allows(MANAGE_ACTION_ASSIGNEES_PERMISSION, context):
-            raise ReviewAuthorizationError("Finding owner role required to manage ActionAssignee")
+
+        def authorize(_case: ReviewCase, current: AuthorizationContext) -> None:
+            if not policy.authorization.allows(MANAGE_ACTION_ASSIGNEES_PERMISSION, current):
+                raise ReviewAuthorizationError(
+                    "Finding owner role required to manage ActionAssignee"
+                )
+
+        authorize(review_case, context)
+        review_case, context, _ = self._lock_case_context(
+            actor, review_case, finding, authorize, action_item
+        )
         finding = self._lock_expected_finding(actor, finding)
         action_item = self._reload_action(actor, action_item.id, finding.id)
         policy.action_operations.validate_assignee_management(
@@ -393,11 +403,17 @@ class RectificationService:
             actor,
             action_item_id,
         )
-        if not policy.authorization.allows(UPDATE_ASSIGNED_ACTION_PERMISSION, context):
-            raise ReviewAuthorizationError("Action assignee role required to transition ActionItem")
-        review_case, context = self._lock_case_context(actor, review_case, finding, action_item)
-        if not policy.authorization.allows(UPDATE_ASSIGNED_ACTION_PERMISSION, context):
-            raise ReviewAuthorizationError("Action assignee role required to transition ActionItem")
+
+        def authorize(_case: ReviewCase, current: AuthorizationContext) -> None:
+            if not policy.authorization.allows(UPDATE_ASSIGNED_ACTION_PERMISSION, current):
+                raise ReviewAuthorizationError(
+                    "Action assignee role required to transition ActionItem"
+                )
+
+        authorize(review_case, context)
+        review_case, context, _ = self._lock_case_context(
+            actor, review_case, finding, authorize, action_item
+        )
         finding = self._lock_expected_finding(actor, finding)
         operation_context = self._action_operation_context(
             review_case,
@@ -488,9 +504,14 @@ class RectificationService:
             actor,
             action_item_id,
         )
-        self._require_evidence_permission(policy, context)
-        review_case, context = self._lock_case_context(actor, review_case, finding, action_item)
-        self._require_evidence_permission(policy, context)
+
+        def authorize(_case: ReviewCase, current: AuthorizationContext) -> None:
+            self._require_evidence_permission(policy, current)
+
+        authorize(review_case, context)
+        review_case, context, _ = self._lock_case_context(
+            actor, review_case, finding, authorize, action_item
+        )
         finding = self._lock_expected_finding(actor, finding)
         action_item = self._reload_action(actor, action_item.id, finding.id)
         policy.action_operations.validate_evidence_registration(
@@ -591,42 +612,54 @@ class RectificationService:
         occurred_at: datetime | None = None,
     ) -> RectificationSubmissionResult:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
-        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
-            raise ReviewAuthorizationError("Finding is not visible to this user")
-        review_case, context = self._lock_case_context(actor, review_case, finding)
-        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
-            raise ReviewAuthorizationError("Finding is not visible to this user")
-        finding = self._lock_expected_finding(actor, finding)
-        active_actions = tuple(
-            action_item
-            for action_item in self._repository.list_action_items(
-                actor.organization_id,
-                finding.id,
+
+        def authorize_view(_case: ReviewCase, current: AuthorizationContext) -> None:
+            if not policy.authorization.allows(VIEW_FINDING_PERMISSION, current):
+                raise ReviewAuthorizationError("Finding is not visible to this user")
+
+        def decide(current_finding: Finding, current: AuthorizationContext) -> SubmissionDecision:
+            active_actions = tuple(
+                action_item
+                for action_item in self._repository.list_action_items(
+                    actor.organization_id,
+                    current_finding.id,
+                )
+                if action_item.lifecycle is not ActionItemLifecycle.CANCELLED
             )
-            if action_item.lifecycle is not ActionItemLifecycle.CANCELLED
-        )
-        decision = policy.submission_policy.decide(
-            SubmissionRequest(
-                current_lifecycle=finding.lifecycle,
-                action=action,
-                purpose=SubmissionPurpose.RECTIFICATION,
-                payload=dict(payload),
-                transition_context=FindingTransitionContext(
-                    non_cancelled_action_count=len(active_actions),
-                    all_non_cancelled_actions_done=(
-                        bool(active_actions)
-                        and all(
-                            action_item.lifecycle is ActionItemLifecycle.DONE
-                            for action_item in active_actions
-                        )
+            decision = policy.submission_policy.decide(
+                SubmissionRequest(
+                    current_lifecycle=current_finding.lifecycle,
+                    action=action,
+                    purpose=SubmissionPurpose.RECTIFICATION,
+                    payload=dict(payload),
+                    transition_context=FindingTransitionContext(
+                        non_cancelled_action_count=len(active_actions),
+                        all_non_cancelled_actions_done=(
+                            bool(active_actions)
+                            and all(
+                                action_item.lifecycle is ActionItemLifecycle.DONE
+                                for action_item in active_actions
+                            )
+                        ),
                     ),
-                ),
+                )
             )
+            if not policy.authorization.allows(decision.required_permission, current):
+                raise ReviewAuthorizationError(
+                    "Scenario permission required for rectification Submission"
+                )
+            return decision
+
+        # Pre-lock refusal with the same rules as below: visibility, business validation,
+        # permission. A user who may not submit never queues on the Case lock.
+        authorize_view(review_case, context)
+        decide(finding, context)
+
+        review_case, context, _ = self._lock_case_context(
+            actor, review_case, finding, authorize_view
         )
-        if not policy.authorization.allows(decision.required_permission, context):
-            raise ReviewAuthorizationError(
-                "Scenario permission required for rectification Submission"
-            )
+        finding = self._lock_expected_finding(actor, finding)
+        decision = decide(finding, context)
 
         now = occurred_at or datetime.now(UTC)
         updated_finding = finding
@@ -735,20 +768,28 @@ class RectificationService:
         )
         return action_item, finding, review_case, policy, context
 
-    def _lock_case_context(
+    def _lock_case_context[T](
         self,
         actor: User,
         review_case: ReviewCase,
         finding: Finding,
+        authorize: Callable[[ReviewCase, AuthorizationContext], T],
         action_item: ActionItem | None = None,
-    ) -> tuple[ReviewCase, AuthorizationContext]:
+    ) -> tuple[ReviewCase, AuthorizationContext, T]:
         """Case lock, then grants as visible after it (see docs/architecture.md)."""
         return lock_case_and_build_context(
             self._repository,
+            self._users,
             actor,
-            review_case.id,
-            finding_id=finding.id,
-            action_item_id=action_item.id if action_item is not None else None,
+            review_case,
+            lambda fresh: build_rectification_authorization_context(
+                self._repository,
+                fresh,
+                review_case.id,
+                finding_id=finding.id,
+                action_item_id=action_item.id if action_item is not None else None,
+            ),
+            authorize,
         )
 
     def _lock_expected_finding(self, actor: User, expected: Finding) -> Finding:

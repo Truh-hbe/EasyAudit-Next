@@ -217,7 +217,11 @@ def test_close_racing_final_approve_never_persists_closed_case_with_verifying_fi
             reviewer = SqlAlchemyUserRepository(session).get(reviewer_id)
             assert reviewer is not None
             repository = _SynchronizedCaseGuardRepository(session, barrier)
-            service = VerificationClosureService(repository, build_scenario_registry())
+            service = VerificationClosureService(
+                repository,
+                build_scenario_registry(),
+                SqlAlchemyUserRepository(session),
+            )
             try:
                 service.submit_verification(
                     reviewer,
@@ -304,7 +308,11 @@ def test_close_racing_reopen_never_persists_closed_case_with_rectifying_finding(
             lead = SqlAlchemyUserRepository(session).get(lead_id)
             assert lead is not None
             repository = _SynchronizedCaseGuardRepository(session, barrier)
-            service = VerificationClosureService(repository, build_scenario_registry())
+            service = VerificationClosureService(
+                repository,
+                build_scenario_registry(),
+                SqlAlchemyUserRepository(session),
+            )
             try:
                 service.reopen_finding(
                     lead,

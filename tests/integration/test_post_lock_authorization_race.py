@@ -22,16 +22,30 @@ from easyaudit_next.composition import (
     build_finding_lifecycle_service,
     build_manual_nudge_service,
     build_review_planning_service,
+    build_scenario_registry,
     build_verification_closure_service,
 )
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
-from easyaudit_next.platform.domain.models import User
+from easyaudit_next.platform.domain.models import PlatformRole, User
 from easyaudit_next.platform.persistence.models import OrganizationRecord, UserRecord
-from easyaudit_next.platform.persistence.repositories import SqlAlchemyUserRepository
-from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
+from easyaudit_next.platform.persistence.repositories import (
+    SqlAlchemyDepartmentRepository,
+    SqlAlchemyUserRepository,
+)
+from easyaudit_next.review_core.application.authorization import (
+    ConcurrentCaseTransitionError,
+    ReviewAuthorizationError,
+)
+from easyaudit_next.review_core.application.review_closure_findings import (
+    ClosureAwareFindingLifecycleService,
+)
+from easyaudit_next.review_core.application.review_rectification import RectificationService
+from easyaudit_next.review_core.application.review_verification import VerificationClosureService
 from easyaudit_next.review_core.domain.ids import FindingId, ReviewCaseId
 from easyaudit_next.review_core.domain.models import FindingSeverity, UserActor
 from easyaudit_next.review_core.persistence.models import (
+    ActionAssigneeRecord,
+    ActionItemRecord,
     ActivityRecord,
     CaseMemberRecord,
     FindingParticipantRecord,
@@ -39,6 +53,9 @@ from easyaudit_next.review_core.persistence.models import (
     ReviewCaseRecord,
     ScenarioRecord,
     ScenarioVersionRecord,
+)
+from easyaudit_next.review_core.persistence.verification_repositories import (
+    SqlAlchemyVerificationClosureRepository,
 )
 
 NOW = datetime(2026, 10, 3, 9, 0, tzinfo=UTC)
@@ -54,7 +71,15 @@ def postgres_engine() -> Iterator[Engine]:
 
 
 class Seed:
-    def __init__(self, engine: Engine, case_lifecycle: str, finding_lifecycle: str | None):
+    def __init__(
+        self,
+        engine: Engine,
+        case_lifecycle: str,
+        finding_lifecycle: str | None,
+        *,
+        lead_v_is_admin: bool = False,
+        also_observer: str | None = None,
+    ):
         self.engine = engine
         self.organization_id = OrganizationId(uuid4())
         self.lead_u, self.lead_v, self.reviewer, self.observer, self.candidate = (
@@ -71,7 +96,11 @@ class Seed:
                     id=user_id,
                     organization_id=org,
                     display_name=name,
-                    platform_role="ordinary_user",
+                    platform_role=(
+                        PlatformRole.SYSTEM_ADMIN.value
+                        if lead_v_is_admin and user_id == self.lead_v
+                        else PlatformRole.ORDINARY_USER.value
+                    ),
                 )
                 for user_id, name in (
                     (self.lead_u, "Lead U"),
@@ -132,6 +161,16 @@ class Seed:
                     (self.observer, "observer"),
                 )
             )
+            if also_observer is not None:
+                session.add(
+                    CaseMemberRecord(
+                        organization_id=org,
+                        case_id=self.case_id,
+                        user_id=getattr(self, also_observer),
+                        role_key="observer",
+                        joined_at=NOW,
+                    )
+                )
             if self.finding_id is not None:
                 assert finding_lifecycle is not None
                 session.add(
@@ -167,14 +206,19 @@ class Seed:
         return self.count(ActivityRecord, ActivityRecord.event_type == event_type)
 
 
-def _someone_waits_on_a_lock(engine: Engine) -> bool:
+WAITER = "b2_post_lock_waiter"
+
+
+def _waiter_is_blocked(engine: Engine) -> bool:
     with engine.connect() as connection:
         return bool(
             connection.scalar(
                 text(
                     "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
-                )
+                    "WHERE datname = current_database() AND application_name = :name "
+                    "AND wait_event_type = 'Lock' AND cardinality(pg_blocking_pids(pid)) > 0"
+                ),
+                {"name": WAITER},
             )
         )
 
@@ -184,9 +228,18 @@ def _run_race(
     revoke: Callable[[Session, User], None],
     stale_write: Callable[[Session, User], object],
     stale_user: UserId,
+    *,
+    revoke_actor: UserId | None = None,
 ) -> BaseException | None:
+    """Session A revokes and holds the lock; Session B (the stale user) waits on it.
+
+    Returns what B raised (None on success) after A committed. Fails if B never blocked,
+    so a race that did not actually interleave cannot pass.
+    """
+
     def session_b() -> None:
         with Session(seed.engine) as session, session.begin():
+            session.execute(text(f"SET LOCAL application_name = '{WAITER}'"))
             user = SqlAlchemyUserRepository(session).get(stale_user)
             assert user is not None
             stale_write(session, user)
@@ -195,18 +248,22 @@ def _run_race(
     try:
         session_a = Session(seed.engine)
         transaction = session_a.begin()
-        lead = SqlAlchemyUserRepository(session_a).get(seed.lead_v)
+        lead = SqlAlchemyUserRepository(session_a).get(revoke_actor or seed.lead_v)
         assert lead is not None
         revoke(session_a, lead)
         future = pool.submit(session_b)
+        waited = False
         deadline = time.monotonic() + 10
         while not future.done() and time.monotonic() < deadline:
-            if _someone_waits_on_a_lock(seed.engine):
+            if _waiter_is_blocked(seed.engine):
+                waited = True
                 break
             time.sleep(0.05)
         transaction.commit()
         session_a.close()
-        return future.exception(timeout=15)
+        error = future.exception(timeout=15)
+        assert waited, "Session B never blocked on Session A's lock"
+        return error
     finally:
         pool.shutdown(wait=True)
 
@@ -397,3 +454,192 @@ def test_revoked_lead_cannot_nudge_finding(postgres_engine: Engine) -> None:
 
     assert isinstance(error, LookupError), repr(error)
     assert seed.activities("finding.nudged") == 0
+
+
+def test_revoked_lead_cannot_void_finding_even_while_still_observer(
+    postgres_engine: Engine,
+) -> None:
+    """transition_finding: view survives (observer), the decision permission (lead) does not."""
+    seed = Seed(postgres_engine, "in_progress", "open", also_observer="lead_u")
+
+    def write(session: Session, user: User) -> object:
+        return build_finding_lifecycle_service(session).transition_finding(
+            user,
+            FindingId(seed.finding_id),  # type: ignore[arg-type]
+            "void",
+            reason="duplicate",
+            occurred_at=NOW,
+        )
+
+    error = _run_race(seed, _remove_member(seed, seed.lead_u, "lead"), write, seed.lead_u)
+
+    _assert_refused(error)
+    assert seed.activities("finding.transitioned") == 0
+    with Session(postgres_engine) as session:
+        assert (
+            session.scalar(
+                select(FindingRecord.lifecycle).where(FindingRecord.id == seed.finding_id)
+            )
+            == "open"
+        )
+
+
+def test_revoked_reviewer_cannot_reopen_finding(postgres_engine: Engine) -> None:
+    seed = Seed(postgres_engine, "in_progress", "closed", also_observer="reviewer")
+
+    def write(session: Session, user: User) -> object:
+        return build_verification_closure_service(session).reopen_finding(
+            user,
+            FindingId(seed.finding_id),  # type: ignore[arg-type]
+            reason="Later evidence contradicts the result",
+            occurred_at=NOW,
+        )
+
+    error = _run_race(seed, _remove_member(seed, seed.reviewer, "reviewer"), write, seed.reviewer)
+
+    _assert_refused(error)
+    assert seed.activities("finding.reopened") == 0
+    with Session(postgres_engine) as session:
+        assert (
+            session.scalar(
+                select(FindingRecord.lifecycle).where(FindingRecord.id == seed.finding_id)
+            )
+            == "closed"
+        )
+
+
+def test_revoked_lead_cannot_nudge_action_item(postgres_engine: Engine) -> None:
+    seed = Seed(postgres_engine, "in_progress", "rectifying")
+    action_id = uuid4()
+    with Session(postgres_engine) as session, session.begin():
+        session.add(
+            ActionItemRecord(
+                id=action_id,
+                organization_id=seed.organization_id,
+                finding_id=seed.finding_id,
+                title="Fix it",
+                lifecycle="todo",
+                due_at=None,
+                completed_at=None,
+            )
+        )
+        session.flush()
+        session.add(
+            ActionAssigneeRecord(
+                id=uuid4(),
+                organization_id=seed.organization_id,
+                action_item_id=action_id,
+                user_id=seed.candidate,
+                role="primary",
+                assigned_at=NOW,
+            )
+        )
+
+    def write(session: Session, user: User) -> object:
+        return build_manual_nudge_service(session).nudge_action_item(
+            user, action_id, occurred_at=NOW
+        )
+
+    error = _run_race(seed, _remove_member(seed, seed.lead_u, "lead"), write, seed.lead_u)
+
+    assert isinstance(error, LookupError), repr(error)
+    assert seed.activities("action_item.nudged") == 0
+
+
+def test_deactivated_user_waiting_on_case_lock_is_refused(postgres_engine: Engine) -> None:
+    """The actor row is re-read after the lock: a committed deactivation is seen."""
+    seed = Seed(postgres_engine, "in_progress", None, lead_v_is_admin=True)
+
+    def deactivate(session: Session, admin: User) -> None:
+        build_case_team_coordinator(session).update_user(
+            admin, seed.lead_u, is_active=False, now=NOW
+        )
+
+    def write(session: Session, user: User) -> object:
+        return build_finding_lifecycle_service(session).create_finding(
+            user,
+            ReviewCaseId(seed.case_id),
+            "Finding by a deactivated lead",
+            FindingSeverity.HIGH,
+            {"issue_type": "control_gap", "project_category": "assembly"},
+            occurred_at=NOW,
+        )
+
+    error = _run_race(seed, deactivate, write, seed.lead_u)
+
+    _assert_refused(error)
+    assert seed.count(FindingRecord) == 0
+
+
+def test_case_lifecycle_change_while_waiting_is_a_409_not_a_validation_error(
+    postgres_engine: Engine,
+) -> None:
+    seed = Seed(postgres_engine, "in_progress", None)
+
+    def finish_fieldwork(session: Session, lead: User) -> None:
+        build_review_planning_service(session).transition_case(
+            lead, ReviewCaseId(seed.case_id), "finish_fieldwork", occurred_at=NOW
+        )
+
+    def write(session: Session, user: User) -> object:
+        return build_finding_lifecycle_service(session).create_finding(
+            user,
+            ReviewCaseId(seed.case_id),
+            "Raced against fieldwork cutover",
+            FindingSeverity.HIGH,
+            {"issue_type": "control_gap", "project_category": "assembly"},
+            occurred_at=NOW,
+        )
+
+    error = _run_race(seed, finish_fieldwork, write, seed.lead_u)
+
+    assert isinstance(error, ConcurrentCaseTransitionError), repr(error)
+    assert seed.count(FindingRecord) == 0
+
+
+class _LockCountingRepository(SqlAlchemyVerificationClosureRepository):
+    def __init__(self, session: Session) -> None:
+        super().__init__(session)
+        self.case_locks = 0
+
+    def lock_case_for_team_management(self, organization_id, case_id):  # type: ignore[no-untyped-def]
+        self.case_locks += 1
+        return super().lock_case_for_team_management(organization_id, case_id)
+
+
+@pytest.mark.parametrize("finding_lifecycle", ["open", "rectifying", "verifying"])
+def test_read_only_user_is_refused_before_queueing_on_the_case_lock(
+    postgres_engine: Engine,
+    finding_lifecycle: str,
+) -> None:
+    """Pre-lock refusal uses the same decision rules: no Case lock for a refused request."""
+    seed = Seed(postgres_engine, "in_progress", finding_lifecycle)
+    finding_id = FindingId(seed.finding_id)  # type: ignore[arg-type]
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        observer = SqlAlchemyUserRepository(session).get(seed.observer)
+        assert observer is not None
+        repository = _LockCountingRepository(session)
+        users = SqlAlchemyUserRepository(session)
+        departments = SqlAlchemyDepartmentRepository(session)
+        registry = build_scenario_registry()
+        with pytest.raises(ReviewAuthorizationError):
+            if finding_lifecycle == "open":
+                ClosureAwareFindingLifecycleService(
+                    repository, users, departments, registry
+                ).transition_finding(observer, finding_id, "void", reason="dup", occurred_at=NOW)
+            elif finding_lifecycle == "rectifying":
+                RectificationService(
+                    repository, users, departments, registry
+                ).submit_rectification(
+                    observer,
+                    finding_id,
+                    "submit_plan",
+                    {"stage": "plan", "root_cause": "x"},
+                    occurred_at=NOW,
+                )
+            else:
+                VerificationClosureService(repository, registry, users).submit_verification(
+                    observer, finding_id, "approve", {"result": "approved"}, occurred_at=NOW
+                )
+        session.rollback()
+        assert repository.case_locks == 0

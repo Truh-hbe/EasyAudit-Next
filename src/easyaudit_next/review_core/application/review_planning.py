@@ -5,6 +5,12 @@ from uuid import uuid4
 from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.platform.domain.models import PlatformRole, User
 from easyaudit_next.platform.domain.repositories import UserRepository
+from easyaudit_next.review_core.application.authorization import (
+    ConcurrentCaseTransitionError as ConcurrentCaseTransitionError,
+)
+from easyaudit_next.review_core.application.authorization import (
+    ReviewAuthorizationError as ReviewAuthorizationError,
+)
 from easyaudit_next.review_core.application.authorization import build_authorization_context
 from easyaudit_next.review_core.application.mutation_results import (
     CaseMemberAddedResult,
@@ -46,14 +52,6 @@ from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, 
 VIEW_CASE_PERMISSION = "view_case"
 MANAGE_CASE_MEMBERS_PERMISSION = "manage_case_members"
 TRANSITION_CASE_PERMISSION = "transition_case"
-
-
-class ReviewAuthorizationError(PermissionError):
-    """The authenticated user lacks the required business relationship."""
-
-
-class ConcurrentCaseTransitionError(RuntimeError):
-    """The persisted lifecycle no longer matches the workflow input."""
 
 
 class CaseManagerConflictError(RuntimeError):

@@ -17,6 +17,7 @@ from easyaudit_next.notifications.models import (
 )
 from easyaudit_next.notifications.service import NotificationService
 from easyaudit_next.platform.domain.models import User
+from easyaudit_next.platform.persistence.models import UserRecord
 from easyaudit_next.review_core.domain.ids import ActionItemId, ActivityId, FindingId, ReviewCaseId
 from easyaudit_next.review_core.domain.models import (
     ActionItemActivitySubject,
@@ -185,6 +186,14 @@ class ManualNudgeService:
             )
             is None
         ):
+            raise LookupError("ReviewCase not found")
+        # Deactivation commits under this Case lock, so a fresh read now sees it.
+        fresh = self._session.scalar(
+            select(UserRecord)
+            .where(UserRecord.organization_id == actor.organization_id, UserRecord.id == actor.id)
+            .execution_options(populate_existing=True)
+        )
+        if fresh is None or not fresh.is_active:
             raise LookupError("ReviewCase not found")
         snapshot = self._recipients.load(actor.organization_id, case_id)
         self._authorize_sender(actor, snapshot, finding_id)

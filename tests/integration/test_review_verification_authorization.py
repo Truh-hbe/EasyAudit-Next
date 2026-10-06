@@ -43,6 +43,7 @@ def test_system_admin_without_scenario_relationship_is_not_a_reviewer(
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(ReviewAuthorizationError, match="not visible"):
             service.submit_verification(
@@ -88,6 +89,7 @@ def test_cross_organization_user_cannot_resolve_verification_target(
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(LookupError, match="Finding not found"):
             service.submit_verification(

@@ -144,6 +144,11 @@ class Users:
     def get(self, user_id: UserId) -> User | None:
         return self.users.get(user_id)
 
+    def lock_users_for_update(
+        self, organization_id: OrganizationId, user_ids: tuple[UserId, ...]
+    ) -> tuple[User, ...]:
+        return tuple(self.users[user_id] for user_id in user_ids if user_id in self.users)
+
 
 class Departments:
     def __init__(self, *departments: Department) -> None:
