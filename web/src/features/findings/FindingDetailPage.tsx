@@ -57,6 +57,9 @@ export function FindingDetailPage() {
   const { message } = App.useApp()
   const currentFindingIdRef = useRef(findingId)
   currentFindingIdRef.current = findingId
+  // 每次进入（或回到）一个发现项都换一个代次：按 ID 比较会让 A→B→A 之后 A 的旧命令误释放新命令的锁。
+  const generationRef = useRef(0)
+  const deniedRef = useRef(false)
   const busyRef = useRef(false)
   const nudgeBusyRef = useRef(false)
   const [revision, setRevision] = useState(0)
@@ -70,6 +73,8 @@ export function FindingDetailPage() {
 
   // 切换发现项时丢弃上一个发现项的弹层、提示与进行中状态。
   useEffect(() => {
+    generationRef.current += 1
+    deniedRef.current = false
     busyRef.current = false
     nudgeBusyRef.current = false
     setCommandBusy(false)
@@ -78,6 +83,10 @@ export function FindingDetailPage() {
     setNudgeNotice(null)
     setParticipantDrawerOpen(false)
     setActionDrawerOpen(false)
+    // 卸载（含路由切换后重新挂载）也换代次：旧实例里仍在途的命令之后不能再提示或刷新。
+    return () => {
+      generationRef.current += 1
+    }
   }, [findingId])
 
   const primary = useScopedResource(
@@ -87,6 +96,8 @@ export function FindingDetailPage() {
     '发现项请求失败',
   )
   const finding = primary.status === 'ready' ? primary.data : null
+  // 主资源 403/404 之后拒绝状态保持：在途命令结束时不再刷新、提示成功。
+  deniedRef.current = deniedRef.current || primary.status === 'unavailable'
   // 主资源授权通过之后才读取从属资源。
   const scope = finding?.id ?? null
   const caseId = finding?.case_id ?? ''
@@ -111,6 +122,13 @@ export function FindingDetailPage() {
     '操作记录请求失败',
   )
 
+  // 从属资源 403/404 与主授权同语义：重新校验主资源（它若返回 403/404，保护内容立即移除）。
+  const dependentDenied = [caseState, participants, actions, submissions, activities].some((state) => state.status === 'unavailable')
+  const primaryReady = primary.status === 'ready'
+  useEffect(() => {
+    if (dependentDenied && primaryReady) refresh()
+  }, [dependentDenied, primaryReady])
+
   const participantData = participants.status === 'ready' ? participants.data : null
   const names = useMemo(() => {
     const map = new Map<string, string>()
@@ -125,10 +143,10 @@ export function FindingDetailPage() {
     targetId: string,
     label: string,
     command: () => Promise<unknown>,
-    options: ScenarioCommandOptions = {},
+    options: ScenarioCommandOptions & { unknownResultMessage?: string } = {},
   ): Promise<CommandResult> {
     if (currentFindingIdRef.current !== targetId || busyRef.current) return { ok: false, failure: BUSY_FAILURE }
-    const commandFindingId = targetId
+    const generation = generationRef.current
     busyRef.current = true
     setCommandBusy(true)
     setNotice(null)
@@ -137,11 +155,19 @@ export function FindingDetailPage() {
       await command()
       result = { ok: true }
     } catch (error) {
-      result = { ok: false, failure: classifyCommandFailure(error, { label, fields: options.fields }) }
+      const failure = classifyCommandFailure(error, { label, fields: options.fields })
+      result = {
+        ok: false,
+        failure:
+          failure.kind === 'unknown-result' && options.unknownResultMessage !== undefined
+            ? { ...failure, message: options.unknownResultMessage }
+            : failure,
+      }
     }
-    if (currentFindingIdRef.current !== commandFindingId) return result
+    if (generationRef.current !== generation) return result
     busyRef.current = false
     setCommandBusy(false)
+    if (deniedRef.current) return result
     if (result.ok) {
       void message.success(`已完成：${label}`)
       refresh()
@@ -155,13 +181,13 @@ export function FindingDetailPage() {
 
   async function runNudge(currentFindingId: string) {
     if (currentFindingIdRef.current !== currentFindingId || nudgeBusyRef.current) return
-    const commandFindingId = findingId
+    const generation = generationRef.current
     nudgeBusyRef.current = true
     setNudgeBusy(true)
     setNudgeNotice(null)
     try {
       const result = await nudgeFinding(currentFindingId)
-      if (currentFindingIdRef.current !== commandFindingId) return
+      if (generationRef.current !== generation || deniedRef.current) return
       setNudgeNotice({
         findingId: currentFindingId,
         type: 'success',
@@ -169,12 +195,12 @@ export function FindingDetailPage() {
       })
       refresh()
     } catch (error) {
-      if (currentFindingIdRef.current !== commandFindingId) return
+      if (generationRef.current !== generation || deniedRef.current) return
       const failure = classifyCommandFailure(error, { label: '催办' })
       setNudgeNotice({ findingId: currentFindingId, type: 'failure', failure })
       if (failureNeedsRefresh(failure)) refresh()
     } finally {
-      if (currentFindingIdRef.current === commandFindingId) {
+      if (generationRef.current === generation) {
         nudgeBusyRef.current = false
         setNudgeBusy(false)
       }
@@ -251,13 +277,16 @@ export function FindingDetailPage() {
           .join('；') || '尚未指定'
 
   const targetId = finding.id
-  const run = (label: string, command: () => Promise<unknown>, options?: ScenarioCommandOptions) =>
+  const run = (label: string, command: () => Promise<unknown>, options?: ScenarioCommandOptions & { unknownResultMessage?: string }) =>
     runCommand(targetId, label, command, options)
 
   async function createAction(input: ActionCreateInput): Promise<CommandResult> {
     return run('新建整改项', () => createActionItem(targetId, input), {
       fields: ['title', 'due_at'],
       notify: false,
+      // 创建请求没有幂等键：结果未知时不能直接重试，先核对列表以免重复创建。
+      unknownResultMessage:
+        '未确认整改项是否已创建。请先刷新页面，在整改项列表中核对后再决定是否重新创建；本弹层内容已保留。',
     })
   }
 
@@ -521,7 +550,7 @@ export function FindingDetailPage() {
             }
             onAccessLost={refresh}
           />
-          <ActionCreateDrawer open={actionDrawerOpen} onClose={() => setActionDrawerOpen(false)} create={createAction} />
+          <ActionCreateDrawer key={finding.id} open={actionDrawerOpen} onClose={() => setActionDrawerOpen(false)} create={createAction} />
         </>
       )}
     </Flex>

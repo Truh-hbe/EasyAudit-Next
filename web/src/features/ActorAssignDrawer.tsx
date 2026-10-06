@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
 import type { ActorKind, AssignmentCandidateResponse } from '../api/product'
-import { classifyCommandFailure, failureAlertType } from '../product/commandFailure'
+import { FORBIDDEN_WRITE_TEXT, classifyCommandFailure, failureAlertType } from '../product/commandFailure'
 import type { CommandFailure, CommandResult } from '../product/commandFailure'
 
 const SEARCH_DEBOUNCE_MS = 300
@@ -135,6 +135,8 @@ export function ActorAssignDrawer({
           selectedRef.current = null
           form.setFieldValue('actor', undefined)
           if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+            // 不显示后端 detail；用户可能仍有读权限，所以在抽屉里给出中性提示，并让页面重新确认主授权。
+            setSearchError(FORBIDDEN_WRITE_TEXT)
             onAccessLost()
             return
           }

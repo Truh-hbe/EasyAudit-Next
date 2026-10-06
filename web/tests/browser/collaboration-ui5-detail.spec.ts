@@ -133,7 +133,8 @@ test('compliance_review@1 observation closes directly after an explicit confirma
 
   await page.getByRole('button', { name: '接受观察项' }).click()
   const confirm = page.getByRole('dialog', { name: '接受观察项' })
-  await expect(confirm).toContainText('不能重新打开')
+  await expect(confirm).toContainText('不需要整改项')
+  await expect(confirm).not.toContainText('不能重新打开') // 领域规则允许 closed → reopen
   expect(world.posts).toHaveLength(0) // 确认前不发请求
   await confirm.getByRole('button', { name: '确认接受并关闭' }).click()
 
@@ -579,4 +580,170 @@ test('a refreshing section keeps its old content and says it is refreshing', asy
   await expect(participants.getByText('正在刷新')).toBeVisible()
   await expect(participants.getByText('Kept Participant')).toBeVisible()
   await expect(participants.getByText('正在刷新')).toHaveCount(0)
+})
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function stubActionB(page: Page) {
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5-b', (route) =>
+    fulfillJson(route, 200, { ...actionResponse('todo'), id: 'action-ui5-b', title: 'UI5 Action B' }),
+  )
+  for (const child of ['assignee-views', 'activities', 'evidences']) {
+    await page.route((url) => url.pathname === `/api/v1/action-items/action-ui5-b/${child}`, (route) =>
+      fulfillJson(route, 200, []),
+    )
+  }
+}
+
+const navigateTo = (page: Page, path: string) =>
+  page.evaluate(`history.pushState({}, '', ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent('popstate'))`)
+
+test('a reopen confirmation is destroyed when the Action becomes unavailable and can no longer write', async ({ page }) => {
+  const state = { lifecycle: 'done', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  let gone = false
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5', (route) =>
+    gone ? fulfillJson(route, 403, { detail: 'Forbidden' }) : fulfillJson(route, 200, actionResponse('done')),
+  )
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/nudge', async (route) => {
+    await sleep(500)
+    gone = true
+    return fulfillJson(route, 200, { activity_id: 'a-1', recipient_count: 1 })
+  })
+  await page.goto('/action-items/action-ui5')
+  await page.getByRole('button', { name: '催办', exact: true }).click() // 在途请求结束后会重读主资源
+  await page.getByRole('button', { name: '重新打开整改项', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '重新打开整改项' })).toBeVisible()
+
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(state.posts).toEqual([])
+})
+
+test('once the Action is unavailable, a command that finishes later neither refreshes nor reports success', async ({ page }) => {
+  const state = { lifecycle: 'todo', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  let gone = false
+  let primaryReads = 0
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5', (route) => {
+    primaryReads += 1
+    return gone ? fulfillJson(route, 403, { detail: 'Forbidden' }) : fulfillJson(route, 200, actionResponse('todo'))
+  })
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/nudge', (route) => {
+    gone = true
+    return fulfillJson(route, 200, { activity_id: 'a-1', recipient_count: 1 })
+  })
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/transitions', async (route) => {
+    await sleep(2500)
+    return fulfillJson(route, 200, actionResponse('in_progress'))
+  })
+  await page.goto('/action-items/action-ui5')
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
+  await page.getByRole('button', { name: '催办', exact: true }).click()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  const readsAtDenial = primaryReads
+  await sleep(3000) // 开始整改项的响应在拒绝之后才到
+  expect(await page.getByText('已完成：开始整改项').count()).toBe(0) // 一次性检查：toHaveCount 会等提示自行消失而通过
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  expect(primaryReads).toBe(readsAtDenial)
+})
+
+test('a 403 on a dependent resource re-checks the primary resource, and its 403 removes the content', async ({ page }) => {
+  const state = { lifecycle: 'todo', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  let activitiesDenied = false
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/activities', (route) => {
+    activitiesDenied = true
+    return fulfillJson(route, 403, { detail: 'Forbidden' })
+  })
+  let primaryReads = 0
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5', (route) => {
+    primaryReads += 1
+    return activitiesDenied ? fulfillJson(route, 403, { detail: 'Forbidden' }) : fulfillJson(route, 200, actionResponse('todo'))
+  })
+  await page.goto('/action-items/action-ui5')
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '执行操作' })).toHaveCount(0)
+  expect(primaryReads).toBeGreaterThanOrEqual(2)
+})
+
+test('a command still in flight after leaving Action A and coming back (A → B → A) is dropped and cannot release the lock of the new command', async ({ page }) => {
+  const state = { lifecycle: 'todo', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  await stubActionB(page)
+  let transitions = 0
+  let firstDone = false
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/transitions', async (route) => {
+    transitions += 1
+    const first = transitions === 1
+    await sleep(first ? 2500 : 8000)
+    if (first) setTimeout(() => (firstDone = true), 300) // 留出前端处理第一次响应的时间
+    return fulfillJson(route, 200, actionResponse('todo'))
+  })
+  await page.goto('/action-items/action-ui5')
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
+  await expect.poll(() => transitions).toBe(1)
+  await navigateTo(page, '/action-items/action-ui5-b')
+  await expect(page.getByRole('heading', { level: 1, name: 'UI5 Action B' })).toBeVisible()
+  await navigateTo(page, '/action-items/action-ui5')
+  await expect(page.getByRole('heading', { level: 1, name: 'UI5 Action' })).toBeVisible()
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
+  await expect.poll(() => transitions).toBe(2)
+
+  await expect.poll(() => firstDone).toBe(true)
+  await expect(page.getByRole('button', { name: '开始整改项', exact: true })).toBeDisabled()
+  expect(await page.getByText('已完成：开始整改项').count()).toBe(0) // 一次性检查：第二次命令稍后返回时才会合法地出现提示
+})
+
+test('a candidate search 403 with a still-readable Action shows a neutral prompt instead of a stale hint', async ({ page }) => {
+  const state = { lifecycle: 'todo', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  let primaryReads = 0
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5', (route) => {
+    primaryReads += 1
+    return fulfillJson(route, 200, actionResponse('todo'))
+  })
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/assignee-candidates', (route) =>
+    fulfillJson(route, 403, { detail: 'candidate role detail' }),
+  )
+  await page.goto('/action-items/action-ui5')
+  const drawer = await openAssignDrawer(page, '添加执行人', '添加执行人')
+  await drawer.getByRole('combobox', { name: '执行人' }).fill('Candidate')
+  await expect(drawer.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('candidate role detail')).toHaveCount(0)
+  await expect.poll(() => primaryReads).toBeGreaterThanOrEqual(2) // 重新校验主资源，仍可读
+  await expect(drawer).toBeVisible()
+})
+
+test('creating an Action with an unknown outcome says to check the list first and does not replay', async ({ page }) => {
+  const world: FindingWorld = { scenarioKey: 'process_review', findingType: '', lifecycle: 'rectifying', posts: [] }
+  await stubFindingWorld(page, world)
+  let creates = 0
+  await page.route((url) => url.pathname === '/api/v1/findings/finding-ui5/actions', (route) => {
+    if (route.request().method() !== 'POST') return fulfillJson(route, 200, [])
+    creates += 1
+    return route.abort('connectionreset')
+  })
+  await page.goto('/findings/finding-ui5')
+  await page.getByRole('button', { name: '新建整改项' }).click()
+  const drawer = page.getByRole('dialog', { name: '新建整改项' })
+  await drawer.getByLabel('标题').fill('Maybe duplicated')
+  await drawer.getByRole('button', { name: '创建整改项' }).click()
+  await expect(drawer.getByRole('alert')).toContainText('请先刷新页面，在整改项列表中核对')
+  await expect(drawer.getByRole('alert')).not.toContainText('可再次操作')
+  await expect(drawer.getByLabel('标题')).toHaveValue('Maybe duplicated')
+  await sleep(400)
+  expect(creates).toBe(1)
+})
+
+test('a non-422 4xx on a command shows neutral text, never the backend detail', async ({ page }) => {
+  const state = { lifecycle: 'todo', posts: [] as unknown[] }
+  await stubActionWorld(page, state)
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/transitions', (route) =>
+    fulfillJson(route, 405, { detail: 'Method internals leaked' }),
+  )
+  await page.goto('/action-items/action-ui5')
+  await page.getByRole('button', { name: '开始整改项', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('开始整改项未被服务器接受')
+  await expect(page.getByText('Method internals leaked')).toHaveCount(0)
 })

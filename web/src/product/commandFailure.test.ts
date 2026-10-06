@@ -64,6 +64,16 @@ describe('classifyCommandFailure', () => {
     expect(classify(new ApiError(415, 'type')).kind).toBe('type-not-allowed')
   })
 
+  it('shows backend detail only for 422; other 4xx get a neutral message', () => {
+    for (const status of [400, 405, 418]) {
+      const failure = classify(new ApiError(status, 'internal role detail'))
+      expect(failure.kind).toBe('rejected')
+      expect(failure.message).not.toContain('internal role detail')
+      expect(failure.message).toContain('开始整改项')
+    }
+    expect(classify(new ApiError(422, 'title is required'), ['title']).fieldErrors.title).toBe('title is required')
+  })
+
   it('refreshes only when server truth may have changed', () => {
     expect(failureNeedsRefresh(classify(new ApiError(409, 'x')))).toBe(true)
     expect(failureNeedsRefresh(classify(new ApiError(429, 'x')))).toBe(false)

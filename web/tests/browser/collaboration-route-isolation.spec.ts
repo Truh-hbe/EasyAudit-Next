@@ -260,3 +260,55 @@ test('a confirmation left open on Finding A is destroyed on route change and nev
   await page.waitForTimeout(300)
   expect(writes).toEqual([])
 })
+
+test('a late cancel-reason result from Action A does not close or clear the cancel dialog opened on Action B', async ({ page }) => {
+  await stubReadySession(page)
+  await stubActionRoutes(page)
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-route-a/transitions', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    return fulfillJson(route, 200, { ...action('action-route-a', 'finding-action-route-a'), lifecycle: 'cancelled' })
+  })
+
+  await page.goto('/action-items/action-route-a')
+  await page.getByRole('button', { name: '取消整改项' }).click()
+  const dialogA = page.getByRole('dialog', { name: '取消整改项' })
+  await dialogA.getByLabel('取消原因').fill('Reason A')
+  await dialogA.getByRole('button', { name: '确认取消' }).click()
+
+  await switchRoute(page, '/action-items/action-route-b')
+  await expect(page.getByRole('heading', { name: 'Route Action action-route-b' })).toBeVisible()
+  await page.getByRole('button', { name: '取消整改项' }).click()
+  const dialogB = page.getByRole('dialog', { name: '取消整改项' })
+  await dialogB.getByLabel('取消原因').fill('Draft B')
+
+  await new Promise((resolve) => setTimeout(resolve, 800))
+  await expect(dialogB).toBeVisible()
+  await expect(dialogB.getByLabel('取消原因')).toHaveValue('Draft B')
+  await expect(dialogB.getByRole('button', { name: '确认取消' })).toBeEnabled()
+})
+
+test('a late create-Action result from Finding A does not close or clear the drawer opened on Finding B', async ({ page }) => {
+  await stubReadySession(page)
+  await stubFindingRoutes(page, 'rectifying')
+  await page.route((url) => url.pathname === '/api/v1/findings/finding-route-a/actions', async (route) => {
+    if (route.request().method() !== 'POST') return fulfillJson(route, 200, [])
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    return fulfillJson(route, 201, action('late-action', 'finding-route-a'))
+  })
+
+  await page.goto('/findings/finding-route-a')
+  await page.getByRole('button', { name: '新建整改项', exact: true }).click()
+  const drawerA = page.getByRole('dialog', { name: '新建整改项' })
+  await drawerA.getByLabel('标题').fill('Action A')
+  await drawerA.getByRole('button', { name: '创建整改项' }).click()
+
+  await switchRoute(page, '/findings/finding-route-b')
+  await expect(page.getByRole('heading', { name: 'Route Finding finding-route-b' })).toBeVisible()
+  await page.getByRole('button', { name: '新建整改项', exact: true }).click()
+  const drawerB = page.getByRole('dialog', { name: '新建整改项' })
+  await drawerB.getByLabel('标题').fill('Draft B')
+
+  await new Promise((resolve) => setTimeout(resolve, 800))
+  await expect(drawerB).toBeVisible()
+  await expect(drawerB.getByLabel('标题')).toHaveValue('Draft B')
+})

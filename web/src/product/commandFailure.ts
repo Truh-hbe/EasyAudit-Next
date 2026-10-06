@@ -113,7 +113,8 @@ export function classifyCommandFailure(error: unknown, options: ClassifyOptions)
           fieldErrors: {},
         }
       default:
-        if (error.status < 500) return { kind: 'rejected', message: detail, fieldErrors: {} }
+        // 只有 422 可以显示服务端 detail；其余 4xx（400、405 等）用中性文案，不泄露后端原文。
+        if (error.status < 500) return { kind: 'rejected', message: `${label}未被服务器接受，请刷新后确认当前状态再试。`, fieldErrors: {} }
     }
   }
   return {

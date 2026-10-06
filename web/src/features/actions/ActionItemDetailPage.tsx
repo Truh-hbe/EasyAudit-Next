@@ -53,11 +53,38 @@ function completionRequirement(lifecycle: string, completedAt: string | null): s
   return '完成整改并可上传证据；发现项提交验证前，所有未取消的整改项都必须已完成。'
 }
 
+// 确认框由本组件持有：整改项失去访问权限、页面改为 Result 时随组件卸载而销毁，不会留下可提交的浮层。
+function ReopenActionButton({ disabled, run }: { disabled: boolean; run: () => Promise<CommandResult> }) {
+  const { confirm } = useConfirm()
+  return (
+    <Button
+      icon={<RollbackOutlined aria-hidden />}
+      disabled={disabled}
+      onClick={() =>
+        confirm({
+          title: '重新打开整改项',
+          content: '重新打开后整改项回到执行中，已完成状态与完成时间将被清除，需要重新完成。',
+          okText: '确认重新打开',
+          cancelText: '取消',
+          onOk: async () => {
+            await run()
+          },
+        })
+      }
+    >
+      重新打开整改项
+    </Button>
+  )
+}
+
 export function ActionItemDetailPage() {
   const { actionItemId } = useParams()
   const { message } = App.useApp()
   const currentActionItemIdRef = useRef(actionItemId)
   currentActionItemIdRef.current = actionItemId
+  // 每次进入（或回到）一个整改项都换一个代次：按 ID 比较会让 A→B→A 之后 A 的旧命令误释放新命令的锁。
+  const generationRef = useRef(0)
+  const deniedRef = useRef(false)
   const busyRef = useRef(false)
   const nudgeBusyRef = useRef(false)
   const [revision, setRevision] = useState(0)
@@ -68,10 +95,11 @@ export function ActionItemDetailPage() {
   const [assignDrawerOpen, setAssignDrawerOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const refresh = () => setRevision((value) => value + 1)
-  const { confirm, destroy: destroyConfirm } = useConfirm()
 
   // 切换整改项时丢弃上一个整改项的弹层、提示与进行中状态。
   useEffect(() => {
+    generationRef.current += 1
+    deniedRef.current = false
     busyRef.current = false
     nudgeBusyRef.current = false
     setCommandBusy(false)
@@ -80,8 +108,11 @@ export function ActionItemDetailPage() {
     setNudgeNotice(null)
     setAssignDrawerOpen(false)
     setCancelOpen(false)
-    destroyConfirm()
-  }, [actionItemId, destroyConfirm])
+    // 卸载（含路由切换后重新挂载）也换代次：旧实例里仍在途的命令之后不能再提示或刷新。
+    return () => {
+      generationRef.current += 1
+    }
+  }, [actionItemId])
 
   const primary = useScopedResource(
     actionItemId ?? null,
@@ -90,6 +121,8 @@ export function ActionItemDetailPage() {
     '整改项请求失败',
   )
   const action = primary.status === 'ready' ? primary.data : null
+  // 主资源 403/404 之后拒绝状态保持：在途命令结束时不再刷新、提示成功，弹层随页面内容一起移除。
+  deniedRef.current = deniedRef.current || primary.status === 'unavailable'
   // 主资源授权通过之后才读取从属资源。
   const scope = action?.id ?? null
   const findingId = action?.finding_id ?? ''
@@ -111,6 +144,13 @@ export function ActionItemDetailPage() {
     '操作记录请求失败',
   )
 
+  // 从属资源 403/404 与主授权同语义：重新校验主资源（它若返回 403/404，保护内容立即移除）。
+  const dependentDenied = [findingState, caseState, assignees, evidences, activities].some((state) => state.status === 'unavailable')
+  const primaryReady = primary.status === 'ready'
+  useEffect(() => {
+    if (dependentDenied && primaryReady) refresh()
+  }, [dependentDenied, primaryReady])
+
   const assigneeData = assignees.status === 'ready' ? assignees.data : null
   const names = useMemo(() => {
     const map = new Map<string, string>()
@@ -128,7 +168,7 @@ export function ActionItemDetailPage() {
     options: { fields?: readonly string[]; notify?: boolean } = {},
   ): Promise<CommandResult> {
     if (currentActionItemIdRef.current !== targetId || busyRef.current) return { ok: false, failure: BUSY_FAILURE }
-    const commandActionItemId = targetId
+    const generation = generationRef.current
     busyRef.current = true
     setCommandBusy(true)
     setNotice(null)
@@ -139,9 +179,10 @@ export function ActionItemDetailPage() {
     } catch (error) {
       result = { ok: false, failure: classifyCommandFailure(error, { label, fields: options.fields }) }
     }
-    if (currentActionItemIdRef.current !== commandActionItemId) return result
+    if (generationRef.current !== generation) return result
     busyRef.current = false
     setCommandBusy(false)
+    if (deniedRef.current) return result
     if (result.ok) {
       void message.success(`已完成：${label}`)
       refresh()
@@ -155,13 +196,13 @@ export function ActionItemDetailPage() {
 
   async function runNudge(currentActionId: string) {
     if (currentActionItemIdRef.current !== currentActionId || nudgeBusyRef.current) return
-    const commandActionItemId = actionItemId
+    const generation = generationRef.current
     nudgeBusyRef.current = true
     setNudgeBusy(true)
     setNudgeNotice(null)
     try {
       const result = await nudgeActionItem(currentActionId)
-      if (currentActionItemIdRef.current !== commandActionItemId) return
+      if (generationRef.current !== generation || deniedRef.current) return
       setNudgeNotice({
         actionItemId: currentActionId,
         type: 'success',
@@ -169,12 +210,12 @@ export function ActionItemDetailPage() {
       })
       refresh()
     } catch (error) {
-      if (currentActionItemIdRef.current !== commandActionItemId) return
+      if (generationRef.current !== generation || deniedRef.current) return
       const failure = classifyCommandFailure(error, { label: '催办' })
       setNudgeNotice({ actionItemId: currentActionId, type: 'failure', failure })
       if (failureNeedsRefresh(failure)) refresh()
     } finally {
-      if (currentActionItemIdRef.current === commandActionItemId) {
+      if (generationRef.current === generation) {
         nudgeBusyRef.current = false
         setNudgeBusy(false)
       }
@@ -360,23 +401,11 @@ export function ActionItemDetailPage() {
                         </Button>
                       ) : null}
                       {action.lifecycle === 'done' ? (
-                        <Button
-                          icon={<RollbackOutlined aria-hidden />}
+                        <ReopenActionButton
+                          key={action.id}
                           disabled={commandBusy}
-                          onClick={() =>
-                            confirm({
-                              title: '重新打开整改项',
-                              content: '重新打开后整改项回到执行中，已完成状态与完成时间将被清除，需要重新完成。',
-                              okText: '确认重新打开',
-                              cancelText: '取消',
-                              onOk: async () => {
-                                await run('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))
-                              },
-                            })
-                          }
-                        >
-                          重新打开整改项
-                        </Button>
+                          run={() => run('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))}
+                        />
                       ) : null}
                       {action.lifecycle === 'todo' || action.lifecycle === 'in_progress' ? (
                         <Button danger icon={<StopOutlined aria-hidden />} disabled={commandBusy} onClick={() => setCancelOpen(true)}>
@@ -469,6 +498,7 @@ export function ActionItemDetailPage() {
             onAccessLost={refresh}
           />
           <CommandTextDialog
+            key={action.id}
             container="modal"
             open={cancelOpen}
             onClose={() => setCancelOpen(false)}

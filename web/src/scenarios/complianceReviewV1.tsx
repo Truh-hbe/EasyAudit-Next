@@ -133,7 +133,7 @@ export function ComplianceReviewV1FindingInteraction(props: ScenarioFindingInter
             label="接受观察项"
             buttonText="接受观察项"
             confirmTitle="接受观察项"
-            confirmContent="接受后观察项直接关闭，不需要整改项，且不能重新打开。"
+            confirmContent="接受后观察项直接关闭，不需要整改项。"
             confirmOkText="确认接受并关闭"
             run={() => commands.transition('accept_observation')}
           />

@@ -27,7 +27,9 @@ interface Stored<T> {
 // 按作用域（资源 ID）读取一个资源：
 // - scope 为 null 时不读取（主资源尚未授权，不发从属请求）；
 // - 切换 scope 立即回到 loading，不显示上一个资源的内容；
-// - 同一 scope 下 revision 变化只在后台刷新，保留旧内容；403/404 立即移除内容，其他失败保留旧内容并标记。
+// - 同一 scope 下 revision 变化只在后台刷新，保留旧内容；403/404 立即移除内容，其他失败保留旧内容并标记；
+// - 403/404 在同一 scope 内是粘性的：之后的 revision 变化不再读取，晚到的成功响应也不能恢复内容，
+//   页面不会在“不可用”和“加载中”之间闪烁；切换 scope 才重置。
 export function useScopedResource<T>(
   scope: string | null,
   revision: number,
@@ -37,9 +39,12 @@ export function useScopedResource<T>(
   const [stored, setStored] = useState<Stored<T> | null>(null)
   const loadRef = useRef(load)
   loadRef.current = load
+  const deniedRef = useRef<string | null>(null)
 
   useEffect(() => {
+    if (deniedRef.current !== scope) deniedRef.current = null
     if (scope === null) return undefined
+    if (deniedRef.current === scope) return undefined
     const controller = new AbortController()
     setStored((current) =>
       current !== null && current.scope === scope && current.state.status === 'ready'
@@ -49,11 +54,12 @@ export function useScopedResource<T>(
     void loadRef
       .current(controller.signal)
       .then((data) => {
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || deniedRef.current === scope) return
         setStored({ scope, state: { status: 'ready', data, refreshing: false, refreshError: null } })
       })
       .catch((error: unknown) => {
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || deniedRef.current === scope) return
+        if (isUnavailable(error)) deniedRef.current = scope
         setStored((current) => {
           if (isUnavailable(error)) return { scope, state: { status: 'unavailable' } }
           if (current !== null && current.scope === scope && current.state.status === 'ready') {

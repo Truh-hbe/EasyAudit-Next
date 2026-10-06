@@ -42,8 +42,14 @@ export function ActionCreateDrawer({ open, onClose, create }: ActionCreateDrawer
   const titleError = failure?.fieldErrors.title
   const dueError = failure?.fieldErrors.due_at
 
+  // 每次打开、关闭或卸载都换一个编辑会话：晚到的结果只影响发起它的会话，不能关闭或污染后来打开的弹层。
+  const sessionRef = useRef(0)
   useEffect(() => {
+    sessionRef.current += 1
     if (open) setFailure(null)
+    return () => {
+      sessionRef.current += 1
+    }
   }, [open])
 
   useEffect(() => {
@@ -56,6 +62,7 @@ export function ActionCreateDrawer({ open, onClose, create }: ActionCreateDrawer
     // 无效文本已由字段规则拦截；这里只是为类型收窄。
     if (!due.valid) return
     submittingRef.current = true
+    const session = sessionRef.current
     setSubmitting(true)
     setFailure(null)
     let result: CommandResult
@@ -65,6 +72,7 @@ export function ActionCreateDrawer({ open, onClose, create }: ActionCreateDrawer
       submittingRef.current = false
       setSubmitting(false)
     }
+    if (sessionRef.current !== session) return
     if (result.ok) onClose()
     else if (result.failure.kind !== 'busy' && result.failure.kind !== 'session') setFailure(result.failure)
   }

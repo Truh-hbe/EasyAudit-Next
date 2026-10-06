@@ -492,11 +492,11 @@ export function ReviewCaseDetailPage() {
           </Card>
         </section>
       ) : (
-        <div className="surface-page"><ScenarioSection reviewCase={reviewCase} /></div>
+        <ScenarioSection reviewCase={reviewCase} />
       )}
 
       <ManagementProgressSection state={managementState} />
-      <div className="surface-page"><FindingCreatePanel reviewCase={reviewCase} /></div>
+      <FindingCreatePanel reviewCase={reviewCase} />
       <FindingSection state={findingState} />
       <ReviewCaseTeamPanel
         reviewCase={reviewCase}
