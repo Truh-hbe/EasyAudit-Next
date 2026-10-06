@@ -39,7 +39,8 @@ src/easyaudit_next/
 - 单行状态变更使用 CAS：`UPDATE ... WHERE id = :id AND lifecycle = :expected`。无匹配行时返回 409，且不写 Activity。
 - 跨行不变量使用父行 `SELECT ... FOR NO KEY UPDATE`，固定加锁顺序，**禁止反向加锁**（见下方“父行锁强度”）：
   - 创建幂等：`IdempotencyKey → Organization → …`。带 `Idempotency-Key` 的创建请求在事务**第一条语句**抢占幂等键，之后才进入下面任何一条锁顺序（见"创建幂等"）。
-  - 整改（Action 增改、指派、证据、整改提交）：`Finding → Action / Assignee / Evidence / Submission`
+  - 整改（Action 增改、指派、证据、整改提交）：`ReviewCase → Finding → Action / Assignee / Evidence / Submission`（Case 锁用于锁内授权，见“授权”）
+  - Finding 创建、参与人、直接流转、手动催办：先取 `ReviewCase`（催办此后只写 Activity / Notification）；Finding 的参与人与流转随后用 CAS 串行化
   - 验证、重开、Case 关闭：`ReviewCase → Finding → Submission / Activity`
   - Case 成员增删、用户停用：`Organization → Case（按 ID 排序）→ User（按 ID 排序）`
   - 部门父节点变更：`IdentityOrganizationService.move_department` 自己先取 `Organization`（`FOR NO KEY UPDATE`），再用 `DepartmentRepository.get_current`（`populate_existing`，绕过 identity map 的旧快照；生产 Session 是 `autoflush=False`，所以只在锁后的决定性读取里用，普通 `get` 不刷新）重读被移动的部门、校验父部门并遍历祖先，最后 UPDATE。锁在服务层而不是 API 入口，所以任何调用 `move_department` 的代码（目前只有管理 API）自动获得保护。**约束：已经持有 Case、User 等其他行锁之后，不得再调用 `move_department`**，否则 `Organization` 会排到它们后面，锁顺序反向。成环抛 `DepartmentCycleError`，API 返回 409。同组织的部门结构变更串行，跨组织互不影响。`tests/integration/test_department_move_race.py` 固定双 Session 竞争，以及“锁后刷新”的确定性顺序用例。数据库触发器 `reject_department_cycle` 只是兜底（读事务快照，拦不住写偏差；对已损坏的环会无限递归，修改需要迁移，另行处理）。
@@ -114,9 +115,10 @@ src/easyaudit_next/
 - 授权完全由 Case 固定的精确 Scenario 版本判断（`ScenarioPolicy.authorization.allows`），不能写成 `role_key == "lead"`，也不能给 `system_admin` 业务捷径。
 - **授权在锁内、基于锁后读取的数据判断。** Case 角色（`CaseMember`）在 Case 锁下被撤销，所以任何写路径都必须先取 Case 锁（`FOR NO KEY UPDATE`），再用锁后读到的成员关系重建 `AuthorizationContext` 并决定；锁前的上下文不能守护写入。统一入口是 `lock_case_and_build_context`（`review_core/application/authorization.py`）。
   - 锁前可以保留一次便宜的拒绝（404/403 语义不变），这样未授权用户不会排队抢锁；通过后取锁，锁内**重复同一条**权限检查，并使用锁后的 Case（生命周期同样以锁后为准）。
-  - 加锁顺序不变：`Organization → Case → Finding → Action / Submission`。需要 Organization 锁的路径（成员增删、用户停用）先取它，其余路径不取。
+  - 全局锁序是 `Organization → Case → User → Finding → Action / Submission`：需要 Organization 锁的路径（成员增删、用户停用）先取 Organization；整改、参与人、催办等路径过去不取 Case 锁，现在**新增**了 Case 锁，且排在 Finding 之前，与验证路径一致，没有反向加锁。锁内重读 actor 时按 `Case → User` 取 User 行锁，与成员增删/停用的顺序相同。
   - 新增写路径时，先取 Case 锁再授权；测试用双 Session：A 持 Case 锁撤销角色，B 在锁前通过检查并等待，A 提交后 B 必须被拒绝（`test_post_lock_authorization_race.py`）。
-  - 仍是请求开始时的快照、不在此规则内：actor 自身的 `is_active`、`primary_department_id`，以及 Finding/Action 级授权（目前没有删除这些授权的写路径）。
+  - 锁内顺序固定（`lock_case_and_build_context`）：Case 锁 → 重新读取 actor（停用在 Case 锁下提交，所以拿到锁后能看到；已停用则拒绝）→ 重建授权上下文 → 授权 → 比较 Case 生命周期（变化即 409，不是 422）。锁前的拒绝必须和锁内是**同一个** `authorize` 函数，包括由业务决策得到的 `required_permission`，只读用户因此不会排队抢 Case 锁。
+  - 不在此规则内：`primary_department_id`（`update_user` 改部门时不取 Case 锁，仍有残留窗口，部门授权只影响 Finding/Action 级部门授权），以及 Finding/Action 级授权本身（目前没有删除这些授权的写路径）。
 - **上下文按目标构造。** Finding 只使用父 Case 的授权、自身的授权以及其下 Action 的授权；Action 只使用父 Case、父 Finding 和自身的授权。兄弟资源的授权不能扩大当前目标的权限。
 - **批量读取只是查询优化，不能放宽授权范围。** 先批量取出事实，在内存中按目标分组，再逐个目标判断。
 - 分页、计数、total 都基于已授权的结果集计算，不能先分页后过滤。
@@ -226,7 +228,7 @@ Evidence 元数据（`evidences` 表、`register_evidence`）早已存在；文�
 - **三段事务**（`api/review_evidence_uploads.py`）：
   1. 认证后在短事务里**预授权**（`authorize_evidence_registration`：与 `register_evidence` 相同的权限与 Action 校验，不加锁），随即 `commit()` + `expunge_all()`。此后到响应前，这个请求不持有任何事务，也不占着池里的连接——否则大文件上传会被 `idle_in_transaction_session_timeout`（30s）杀掉连接。`tests/integration/test_evidence_upload_api.py` 在对象存储的 `put_stream` 里查 `pg_stat_activity` 断言这一点（含真实 Cookie 认证链路）。
   2. 流式写对象：`request.stream()` 逐块读取，边读边算 SHA-256 和大小，满 8 MiB 就作为一个 part 上传（小于一个 part 的文件用单次 `PutObject`）。内存上限是约一个 part 加一个输入块，与文件大小无关；不先读进内存，也不先落盘。key 由服务端生成：`org/{organization_id}/evidence/{uuid4}`，只写一次，不覆盖（备份一致性模型的前提）。
-  3. 新的短事务调用 `register_evidence`，传入**服务端计算的** key、size、sha256。它重新取用户（上传期间可能已被停用）、重新授权、按 `Finding → Action` 加锁、写元数据和 Activity，然后提交。
+  3. 新的短事务调用 `register_evidence`，传入**服务端计算的** key、size、sha256。它重新取用户（上传期间可能已被停用）、重新授权、按 `ReviewCase → Finding → Action` 加锁（Case 锁内重新授权）、写元数据和 Activity，然后提交。
 - **对象只在登记确定回滚时才删除**：登记在工作线程里跑，线程无法停止，请求被取消不等于登记没发生。所以登记线程**自己持有 Session**（线程内创建、提交或回滚、关闭，不碰请求作用域的 Session），`_register_and_settle` 用 task 包住它：已提交 → 保留对象；确定回滚 → 删除；**`COMMIT` 报错一律视为结果未知 → 保留对象**（之后的 `rollback` 只是尽力清理，它自己报错也只记日志，不能改变这个结论），记 `evidence_registration_outcome_unknown`。请求被取消后等待登记结果的时间**有上限**：`DB_STATEMENT_TIMEOUT_MS + DB_LOCK_TIMEOUT_MS + 5s`；超时同样按结果未知处理——保留对象，记 `evidence_registration_unsettled`（只有 `storage_key`），重新抛出取消，线程留在后台自己跑完。永远不会出现"有元数据、没对象"，最坏是没有元数据的孤儿对象，由孤儿清理处理。后台线程的寿命受"数据库黑洞下业务请求没有客户端截止时间"这一已接受风险（见"数据库预算"）约束，不另加机制。
 - **失败清理**：写对象失败或中途超限，适配器 abort multipart，什么都不留；第 3 段失败（授权变化 403/404、生命周期变化 409/422、DB 错误），**尽力删除**刚写的对象，再返回原来的错误。删除也失败时对象成为孤儿，记 WARNING `evidence_object_orphaned`，字段只有 `storage_key`（日志白名单为此新增了 `storage_key`；key 里没有文件名和用户输入），由孤儿清理处理（见下）。进程崩溃遗留的未完成 multipart 同样如此。
 - **限制**：`EVIDENCE_MAX_BYTES`（默认 25 MiB）。`Content-Length` 超限在读 body 之前就 413；没有 `Content-Length`（chunked）时累计到超限立即中止并 413。网关 Caddy 对 `/api/v1/*` 设 `request_body max_size`（26 MiB，略大于应用上限，纵深防御：它在上游读取 body 时才生效，所以不替代应用自己的 `Content-Length` 检查；改应用上限时同步改 `deploy/Caddyfile`，`tests/unit/test_deploy_compose.py` 检查两者关系，`smoke.sh` 用登录接口验证它真的生效）。类型白名单 `EVIDENCE_ALLOWED_CONTENT_TYPES`（默认 pdf、png、jpeg、docx、xlsx、pptx、txt、csv；只能是代码里有扩展名映射的类型，启动时校验）；不在白名单或扩展名与类型不一致 → 415；文件名为空或编码非法、空文件 → 422。
