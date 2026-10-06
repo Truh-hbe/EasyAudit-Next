@@ -56,16 +56,14 @@ cd web && npm run test:browser:real     # 需要真实 FastAPI + PostgreSQL，�
 | 总指挥 | Claude Opus 5.5 / high | auto | 任务分解、分派、进度跟踪、最终决策。不直接写代码 |
 | 主力实现 | Claude Sonnet 5.5 / medium | auto | 功能实现、测试编写、bug 修复。大多数开发任务 |
 | 辅助实现 | Gemini 3.8 Flash High (pi) / high | default | 批量重命名、样板代码、迁移脚本初稿、简单修复。跨厂商 |
-| 代码审查 | Codex（GPT）/ high | 只读 | 审 PR diff，重点是并发、授权、跨组织隔离、事务锁。跨厂商 |
+| 代码审查 | Gemini 3.8 Flash High (pi) / high | 只读（pi 无只读模式，靠提示约束） | 审 PR diff，重点是并发、授权、跨组织隔离、事务锁。跨厂商 |
 | 难题委员会-Fable | Claude Fable 5.1 / xhigh | plan（只读） | 复杂架构设计、疑难 bug 根因分析 |
 | 难题委员会-Opus | Claude Opus 5.5 / xhigh | plan（只读） | 与 Fable 组成双人委员会，提供第二视角 |
 | 探索 | Claude Haiku 4.5 | plan（只读） | 代码搜索、定位引用、CI 初筛、日志检查、定时任务 |
 
-GPT 系列只用于代码审查，不写代码。
-
 要点：
 
-- 写代码的和 review 的用不同厂商的模型，避免同源的盲点。
+- 写代码的和 review 的用不同厂商的模型，避免同源的盲点。辅助实现（Gemini）写的改动由 Claude 审查。
 - review 结论只是建议。P0/P1 问题要么在 PR 中修复，要么由维护者明确接受风险。
 - 换模型或压缩上下文后，重新读取 `git status` 和 PR 状态，不要依赖对话记忆。
 - 只有总指挥给子 Agent 派活或唤醒子 Agent。外部编排（定时唤醒、合并工具等）只联系总指挥，不向子 Agent 广播。
