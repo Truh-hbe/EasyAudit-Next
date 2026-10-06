@@ -428,7 +428,7 @@ test('historical Notification does not grant current Finding access', async ({ p
   await page.goto('/me/notifications')
   await expect(page.getByText('Historical receipt remains visible', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: '打开当前目标' }).click()
-  await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   await expect(page.getByText('Historical receipt remains visible', { exact: true })).toHaveCount(0)
 })
 

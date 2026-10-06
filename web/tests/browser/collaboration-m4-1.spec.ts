@@ -104,7 +104,7 @@ test('409 refetch switches compliance interaction from persisted observation to 
       transitionActions.push(payload.action)
       if (payload.action === 'accept_observation') {
         findingType = 'nonconformity'
-        return fulfillJson(route, 409, { detail: 'Finding classification changed' })
+        return fulfillJson(route, 409, { detail: 'Concurrent Finding transition' })
       }
       expect(payload.action).toBe('issue')
       lifecycle = 'rectifying'
@@ -122,13 +122,14 @@ test('409 refetch switches compliance interaction from persisted observation to 
   await expect(page.getByRole('button', { name: '签发不符合项' })).toHaveCount(0)
 
   await page.getByRole('button', { name: '接受观察项' }).click()
-  await expect(page.getByRole('status')).toContainText('Finding classification changed')
+  await page.getByRole('dialog', { name: '接受观察项' }).getByRole('button', { name: '确认接受并关闭' }).click()
+  await expect(page.getByRole('alert')).toContainText('数据已变化，正在获取最新状态')
   await expect(page.getByRole('button', { name: '接受观察项' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '签发不符合项' })).toBeVisible()
 
   await page.getByRole('button', { name: '签发不符合项' }).click()
-  await expect(page.getByRole('status')).toContainText('签发不符合项已由服务器确认')
+  await expect(page.getByText('已完成：签发不符合项')).toBeVisible()
   await expect(page.getByRole('button', { name: '签发不符合项' })).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: '整改计划' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '填写整改计划' })).toBeVisible()
   expect(transitionActions).toEqual(['accept_observation', 'issue'])
 })

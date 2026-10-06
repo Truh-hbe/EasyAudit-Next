@@ -1,49 +1,87 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { PlusOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Flex, Form, Input, Radio, Typography } from 'antd'
+import type { InputRef } from 'antd'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { createFinding } from '../../api/product'
 import type { FindingSeverity, ReviewCaseResponse } from '../../api/product'
+import { classifyCommandFailure, failureAlertType } from '../../product/commandFailure'
+import type { CommandFailure } from '../../product/commandFailure'
 import { scenarioName, scenarioVersionText } from '../../product/terms'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
+import { findingCreateFieldId } from '../../scenarios/FindingCreateFields'
 import type { ScenarioFormValues } from '../../scenarios/registry'
+import { FieldError } from '../../ui/FieldError'
 import { statusLabel } from '../../ui/StatusTag'
 
 interface FindingCreatePanelProps {
   reviewCase: ReviewCaseResponse
 }
 
+const SEVERITIES: readonly FindingSeverity[] = ['low', 'medium', 'high', 'critical']
+const BASE_FIELDS = ['title', 'description', 'severity'] as const
+
+function fieldError(errors: Record<string, string>, name: string) {
+  const text = errors[name]
+  return text === undefined
+    ? {}
+    : { validateStatus: 'error' as const, help: <FieldError>{text}</FieldError> }
+}
+
 export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
   const navigate = useNavigate()
-  const adapter = resolveFindingScenarioAdapter(
-    reviewCase.scenario_key,
-    reviewCase.scenario_version,
-  )
+  const adapter = resolveFindingScenarioAdapter(reviewCase.scenario_key, reviewCase.scenario_version)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [severity, setSeverity] = useState<FindingSeverity>('medium')
   const [scenarioValues, setScenarioValues] = useState<ScenarioFormValues>({})
   const [submitting, setSubmitting] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [failure, setFailure] = useState<CommandFailure | null>(null)
+  const submittingRef = useRef(false)
+  const titleRef = useRef<InputRef>(null)
 
   if (adapter === undefined) {
     return (
-      <section className="surface-card" aria-labelledby="create-finding-title">
-        <h2 id="create-finding-title">新建发现项</h2>
-        <p className="empty-note">
-          当前审查场景的界面暂不支持创建发现项（{scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}）。
-        </p>
+      <section aria-labelledby="create-finding-title">
+        <Card title={<h2 id="create-finding-title">新建发现项</h2>}>
+          <Alert
+            type="warning"
+            showIcon
+            title={`当前审查场景的界面暂不支持创建发现项（${scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}）。`}
+          />
+        </Card>
       </section>
     )
   }
 
   const scenarioAdapter = adapter
   const ScenarioFields = scenarioAdapter.FindingCreateFields
+  const scenarioFieldNames = Object.keys(scenarioAdapter.buildFindingScenarioData({}))
+  const fieldErrors = failure?.fieldErrors ?? {}
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function clearFieldError(name: string) {
+    setFailure((current) => {
+      if (current === null || !(name in current.fieldErrors)) return current
+      return {
+        ...current,
+        fieldErrors: Object.fromEntries(Object.entries(current.fieldErrors).filter(([field]) => field !== name)),
+      }
+    })
+  }
+
+  function focusFirstError(errors: Record<string, string>) {
+    const first = [...BASE_FIELDS, ...scenarioFieldNames].find((name) => name in errors)
+    if (first === undefined) return
+    if (first === 'title') titleRef.current?.focus()
+    else document.getElementById(findingCreateFieldId(first))?.focus()
+  }
+
+  async function submit() {
+    if (submittingRef.current) return
+    submittingRef.current = true
     setSubmitting(true)
-    setMessage(null)
+    setFailure(null)
     try {
       const finding = await createFinding(reviewCase.id, {
         title,
@@ -53,62 +91,84 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
       })
       navigate(`/findings/${finding.id}`)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '发现项创建失败')
+      const classified = classifyCommandFailure(error, {
+        label: '创建发现项',
+        fields: [...BASE_FIELDS, ...scenarioFieldNames],
+      })
+      // 创建请求没有幂等键：结果未知时不能直接重试，先核对列表以免重复创建。
+      const next =
+        classified.kind === 'unknown-result'
+          ? { ...classified, message: '未确认发现项是否已创建。请先刷新页面，在发现项列表中核对后再决定是否重新创建；本页内容已保留。' }
+          : classified
+      setFailure(next)
+      window.setTimeout(() => focusFirstError(next.fieldErrors), 0)
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
 
   return (
-    <section className="surface-card" aria-labelledby="create-finding-title">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">{scenarioName(reviewCase.scenario_key)}</p>
-          <h2 id="create-finding-title">新建发现项</h2>
-        </div>
-      </div>
-      <form className="command-form" onSubmit={(event) => void submit(event)}>
-        <div className="form-grid">
-          <label>
-            标题
-            <input value={title} onChange={(event) => setTitle(event.target.value)} disabled={submitting} />
-          </label>
-          <label>
-            严重度
-            <select
+    <section aria-labelledby="create-finding-title">
+      <Card
+        title={<h2 id="create-finding-title">新建发现项</h2>}
+        extra={<Typography.Text type="secondary">{scenarioName(reviewCase.scenario_key)}</Typography.Text>}
+      >
+        <Form layout="vertical" requiredMark={false} disabled={submitting} onFinish={() => void submit()}>
+          {failure === null || failure.message === '' || failure.kind === 'session' ? null : (
+            <Alert type={failureAlertType(failure)} showIcon title={failure.message} style={{ marginBottom: 16 }} />
+          )}
+          <Form.Item label="标题" htmlFor={findingCreateFieldId('title')} {...fieldError(fieldErrors, 'title')}>
+            <Input
+              id={findingCreateFieldId('title')}
+              ref={titleRef}
+              value={title}
+              onChange={(event) => {
+                setTitle(event.target.value)
+                clearFieldError('title')
+              }}
+              autoComplete="off"
+            />
+          </Form.Item>
+          <Form.Item label="严重度" {...fieldError(fieldErrors, 'severity')}>
+            <Radio.Group
+              aria-label="严重度"
               value={severity}
-              onChange={(event) => setSeverity(event.target.value as FindingSeverity)}
-              disabled={submitting}
-            >
-              <option value="low">{statusLabel('severity', 'low')}</option>
-              <option value="medium">{statusLabel('severity', 'medium')}</option>
-              <option value="high">{statusLabel('severity', 'high')}</option>
-              <option value="critical">{statusLabel('severity', 'critical')}</option>
-            </select>
-          </label>
-        </div>
-        <label>
-          描述
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
+              onChange={(event) => {
+                setSeverity(event.target.value as FindingSeverity)
+                clearFieldError('severity')
+              }}
+              options={SEVERITIES.map((value) => ({ value, label: statusLabel('severity', value) ?? value }))}
+            />
+          </Form.Item>
+          <Form.Item label="描述" htmlFor={findingCreateFieldId('description')} {...fieldError(fieldErrors, 'description')}>
+            <Input.TextArea
+              id={findingCreateFieldId('description')}
+              value={description}
+              onChange={(event) => {
+                setDescription(event.target.value)
+                clearFieldError('description')
+              }}
+              rows={3}
+            />
+          </Form.Item>
+          <ScenarioFields
+            values={scenarioValues}
+            onChange={(name, value) => {
+              setScenarioValues((current) => ({ ...current, [name]: value }))
+              clearFieldError(name)
+            }}
             disabled={submitting}
-            rows={3}
+            fieldErrors={fieldErrors}
           />
-        </label>
-        <ScenarioFields
-          values={scenarioValues}
-          onChange={(name, value) =>
-            setScenarioValues((current) => ({ ...current, [name]: value }))
-          }
-          disabled={submitting}
-        />
-        {message === null ? null : <p role="alert">{message}</p>}
-        <div className="command-row">
-          <button type="submit" disabled={submitting}>{submitting ? '正在提交…' : '新建发现项'}</button>
-          <span className="empty-note">服务器校验通过后才会保存发现项。</span>
-        </div>
-      </form>
+          <Flex justify="flex-end" align="center" wrap gap={12}>
+            <Typography.Text type="secondary">服务器校验通过后才会保存发现项。</Typography.Text>
+            <Button type="primary" htmlType="submit" icon={<PlusOutlined aria-hidden />} loading={submitting}>
+              新建发现项
+            </Button>
+          </Flex>
+        </Form>
+      </Card>
     </section>
   )
 }

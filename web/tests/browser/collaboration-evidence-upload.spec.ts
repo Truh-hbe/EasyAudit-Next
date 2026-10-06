@@ -134,7 +134,7 @@ test('uploading a file sends the raw bytes and shows the server-confirmed metada
 const failures = [
   { status: 413, detail: 'Evidence exceeds the maximum size of 26214400 bytes', text: '文件超过大小上限，未上传。' },
   { status: 415, detail: 'Content type is not allowed for Evidence', text: '文件类型不被允许，或扩展名与类型不一致。' },
-  { status: 409, detail: 'Concurrent Finding transition', text: '数据已过期，已刷新。' },
+  { status: 409, detail: 'Concurrent Finding transition', text: '数据已变化，正在获取最新状态。' },
   { status: 422, detail: 'Evidence cannot be registered for a cancelled ActionItem', text: '无法登记证据：Evidence cannot be registered for a cancelled ActionItem' },
 ]
 

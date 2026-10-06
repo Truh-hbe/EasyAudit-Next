@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+import { openAssignDrawer, pickCandidate } from './assignmentDrawer.js'
+
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
   organization_id: '22222222-2222-2222-2222-222222222222',
@@ -115,7 +117,8 @@ test('Finding primary refusal prevents all subordinate reads and protected stale
   )
 
   await page.goto('/findings/blocked')
-  await expect(page.getByRole('heading', { name: '发现项不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '发现项' })).toBeVisible()
   await expect(page.getByText('Calibration evidence gap')).toHaveCount(0)
   expect(subordinateRequests).toBe(0)
 })
@@ -135,7 +138,8 @@ test('Action primary refusal prevents assignee evidence activity and parent read
   )
 
   await page.goto('/action-items/blocked')
-  await expect(page.getByRole('heading', { name: '整改项不可用' })).toBeVisible()
+  await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: '整改项' })).toBeVisible()
   await expect(page.getByText('Restore calibration record')).toHaveCount(0)
   expect(subordinateRequests).toBe(0)
 })
@@ -195,12 +199,11 @@ test('stale participant add 409 refetches terminal Finding and never persists a 
   )
 
   await page.goto('/findings/finding-1')
-  await expect(page.getByRole('heading', { name: '添加参与人' })).toBeVisible()
-  await page.getByLabel('搜索').fill('Quality')
-  await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByText('Quality Department')).toBeVisible()
-  await page.getByRole('button', { name: '添加', exact: true }).click()
+  const drawer = await openAssignDrawer(page, '添加参与人', '添加参与人')
+  await pickCandidate(drawer, '参与人', 'Quality', 'Quality Department')
+  await drawer.getByRole('button', { name: '添加参与人' }).click()
 
+  await expect(drawer.getByRole('alert')).toContainText('数据已变化，正在获取最新状态')
   await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
   await expect(page.getByText('暂无参与关系。')).toBeVisible()
   await expect(page.getByText('Quality Department')).toHaveCount(0)
@@ -245,7 +248,7 @@ test('Action stale transition 409 refetches server lifecycle and Evidence stays 
     (url) => url.pathname === '/api/v1/action-items/action-1/transitions',
     (route) => {
       lifecycle = 'in_progress'
-      return fulfillJson(route, 409, { detail: 'stale Action lifecycle' })
+      return fulfillJson(route, 409, { detail: 'Concurrent ActionItem transition' })
     },
   )
 
@@ -256,7 +259,8 @@ test('Action stale transition 409 refetches server lifecycle and Evidence stays 
   await page.getByRole('button', { name: '开始整改项', exact: true }).click()
 
   await expect(page.getByRole('article').locator('header').getByText('执行中', { exact: true })).toBeVisible()
-  await expect(page.getByRole('status')).toContainText('stale Action lifecycle')
+  await expect(page.getByRole('alert')).not.toContainText('Concurrent ActionItem')
+  await expect(page.getByRole('alert')).toContainText('数据已变化，正在获取最新状态')
 })
 
 test('Finding creation uses server response as truth and validation failure creates no local row', async ({ page }) => {

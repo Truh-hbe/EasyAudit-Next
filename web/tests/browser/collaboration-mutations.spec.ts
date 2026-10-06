@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+import { openAssignDrawer, pickCandidate } from './assignmentDrawer.js'
+
 const user = {
   id: '11111111-1111-1111-1111-111111111111',
   organization_id: '22222222-2222-2222-2222-222222222222',
@@ -140,15 +142,19 @@ test('Action creation refuses fake local state then refreshes persisted server A
   )
 
   await page.goto(`/findings/${findingId}`)
-  await page.getByLabel('标题').fill('Client draft title')
   await page.getByRole('button', { name: '新建整改项', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('Finding lifecycle changed')
-  await expect(page.getByText('Client draft title')).toHaveCount(0)
+  const drawer = page.getByRole('dialog', { name: '新建整改项' })
+  await drawer.getByLabel('标题').fill('Client draft title')
+  await drawer.getByRole('button', { name: '创建整改项' }).click()
+  await expect(drawer.getByRole('alert')).toContainText('Finding lifecycle changed')
+  await expect(page.getByRole('link', { name: 'Client draft title' })).toHaveCount(0)
   await expect(page.getByText('暂无整改项。')).toBeVisible()
+  await expect(drawer.getByLabel('标题')).toHaveValue('Client draft title') // 失败后保留已填内容
 
   allowCreate = true
-  await page.getByRole('button', { name: '新建整改项', exact: true }).click()
+  await drawer.getByRole('button', { name: '创建整改项' }).click()
   await expect(page.getByRole('link', { name: 'Server persisted Action' })).toBeVisible()
+  await expect(drawer).toHaveCount(0)
   await expect(page.getByText('Client draft title')).toHaveCount(0)
 })
 
@@ -210,20 +216,18 @@ test('assignee refusal invalidates stale candidates and success refreshes persis
   )
 
   await page.goto(`/action-items/${actionId}`)
-  await page.getByLabel('搜索').fill('Candidate')
-  await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByText('Candidate User')).toBeVisible()
-  await page.getByRole('button', { name: '添加', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('assignment authority changed')
-  await expect(page.getByText('Candidate User')).toHaveCount(0)
+  const drawer = await openAssignDrawer(page, '添加执行人', '添加执行人')
+  await pickCandidate(drawer, '执行人', 'Candidate', 'Candidate User')
+  await drawer.getByRole('button', { name: '添加执行人' }).click()
+  await expect(drawer.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('assignment authority changed')).toHaveCount(0)
+  await expect(page.getByText('Candidate User')).toHaveCount(0) // 过期候选被清空
   await expect(page.getByText('Persisted Assignee')).toHaveCount(0)
   await expect(page.getByText('暂无执行人。')).toBeVisible()
 
   allowAssign = true
-  await page.getByLabel('搜索').fill('Candidate')
-  await page.getByRole('button', { name: '搜索候选' }).click()
-  await expect(page.getByText('Candidate User')).toBeVisible()
-  await page.getByRole('button', { name: '添加', exact: true }).click()
+  await pickCandidate(drawer, '执行人', 'Candidate', 'Candidate User')
+  await drawer.getByRole('button', { name: '添加执行人' }).click()
   await expect(page.getByText('Persisted Assignee')).toBeVisible()
   await expect(page.getByText('Candidate User')).toHaveCount(0)
 })
@@ -261,26 +265,32 @@ test('rectification plan and completion stay server-owned, including reopened-Ac
   )
 
   await page.goto(`/findings/${findingId}`)
-  await page.getByRole('button', { name: '提交整改计划' }).click()
-  await expect(page.getByRole('status')).toContainText('root_cause is required')
+  await page.getByRole('button', { name: '填写整改计划' }).click()
+  const planDrawer = page.getByRole('dialog', { name: '整改计划' })
+  await planDrawer.getByRole('button', { name: '提交整改计划' }).click()
+  await expect(planDrawer.getByText('root_cause is required')).toBeVisible() // 422 挂在字段上
+  await expect(planDrawer.getByLabel('根本原因')).toBeFocused()
   await expect(page.getByText('暂无提交记录。')).toBeVisible()
 
-  await page.getByLabel('根本原因').fill('training gap')
+  await planDrawer.getByLabel('根本原因').fill('training gap')
   planAllowed = true
-  await page.getByRole('button', { name: '提交整改计划' }).click()
+  await planDrawer.getByRole('button', { name: '提交整改计划' }).click()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
   await expect(submissionHistory.getByText('整改提交', { exact: true })).toHaveCount(1)
   await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
 
-  await page.getByLabel('整改完成说明').fill('all actions completed')
-  await page.getByRole('button', { name: '提交验证' }).click()
-  await expect(page.getByRole('status')).toContainText('all non-cancelled Actions must be done')
+  await page.getByRole('button', { name: '提交整改完成' }).click()
+  const completionDrawer = page.getByRole('dialog', { name: '整改完成' })
+  await completionDrawer.getByLabel('整改完成说明').fill('all actions completed')
+  await completionDrawer.getByRole('button', { name: '提交验证' }).click()
+  await expect(completionDrawer.getByRole('alert')).toContainText('all non-cancelled Actions must be done')
   await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Reopened by another actor' })).toBeVisible()
+  await expect(completionDrawer.getByLabel('整改完成说明')).toHaveValue('all actions completed')
 
   actions.splice(0, actions.length, actionResponse('action-done', findingId, 'done', 'Completed again'))
   completionAllowed = true
-  await page.getByRole('button', { name: '提交验证' }).click()
+  await completionDrawer.getByRole('button', { name: '提交验证' }).click()
   await expect(page.getByRole('article').locator('header').getByText('待验证', { exact: true })).toBeVisible()
   await expect(submissionHistory.getByText('整改提交', { exact: true })).toHaveCount(2)
 })
@@ -317,26 +327,32 @@ test('verification refusal, reject success, and reopen validation preserve autho
 
   await page.goto(`/findings/${findingId}`)
   await page.getByRole('button', { name: '通过验证' }).click()
-  await expect(page.getByRole('status')).toContainText('review authority revoked')
+  await page.getByRole('dialog', { name: '通过验证' }).getByRole('button', { name: '确认通过' }).click()
+  await expect(page.getByRole('alert')).toContainText('当前账号没有执行此操作的权限。')
+  await expect(page.getByText('review authority revoked')).toHaveCount(0)
   await expect(page.getByRole('article').locator('header').getByText('待验证', { exact: true })).toBeVisible()
   await expect(page.getByText('暂无提交记录。')).toBeVisible()
 
   verificationMode = 'reject'
-  await page.getByLabel('驳回原因').fill('evidence incomplete')
   await page.getByRole('button', { name: '驳回验证' }).click()
+  const rejectDialog = page.getByRole('dialog', { name: '驳回验证' })
+  await rejectDialog.getByLabel('驳回原因').fill('evidence incomplete')
+  await rejectDialog.getByRole('button', { name: '确认驳回' }).click()
   await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
   await expect(submissionHistory.getByText('验证结论', { exact: true })).toBeVisible()
 
   lifecycle = 'closed'
   await page.reload()
-  await page.getByRole('button', { name: '重新打开' }).click()
-  await expect(page.getByRole('status')).toContainText('reopen reason required')
+  await page.getByRole('button', { name: '重新打开', exact: true }).click()
+  const reopenDialog = page.getByRole('dialog', { name: '重新打开发现项' })
+  await reopenDialog.getByRole('button', { name: '确认重新打开' }).click()
+  await expect(reopenDialog.getByText('reopen reason required')).toBeVisible()
   await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
 
-  await page.getByLabel('重新打开原因').fill('follow-up review')
+  await reopenDialog.getByLabel('重新打开原因').fill('follow-up review')
   reopenAllowed = true
-  await page.getByRole('button', { name: '重新打开' }).click()
+  await reopenDialog.getByRole('button', { name: '确认重新打开' }).click()
   await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
 })
 
@@ -360,19 +376,23 @@ test.describe('device time zone differs from the display time zone', () => {
     )
 
     await page.goto(`/findings/${findingId}`)
-    const dueAt = page.getByLabel('到期时间')
-    await page.getByLabel('标题').fill('Invalid Due Action')
-    await dueAt.fill('1986-05-04T02:30')
     await page.getByRole('button', { name: '新建整改项', exact: true }).click()
-    await expect(page.getByRole('status')).toHaveText(
-      '到期时间无效：请填写存在的上海时间（Asia/Shanghai）。',
-    )
-    await expect(dueAt).toHaveValue('1986-05-04T02:30')
-    await expect(page.getByLabel('标题')).toHaveValue('Invalid Due Action')
+    const drawer = page.getByRole('dialog', { name: '新建整改项' })
+    const dueAt = drawer.getByLabel('到期时间')
+    await drawer.getByLabel('标题').fill('Invalid Due Action')
+    await dueAt.fill('1986/05/04 02:30')
+    await dueAt.press('Enter')
+    await drawer.getByLabel('标题').click() // 点到面板外，关闭日期面板
+    await drawer.getByRole('button', { name: '创建整改项' }).click()
+    await expect(drawer.getByText('到期时间无效：请填写存在的上海时间（Asia/Shanghai）。')).toBeVisible()
+    await expect(dueAt).toHaveValue('1986/05/04 02:30')
+    await expect(drawer.getByLabel('标题')).toHaveValue('Invalid Due Action')
     expect(createBodies).toHaveLength(0)
 
     await dueAt.fill('')
-    await page.getByRole('button', { name: '新建整改项', exact: true }).click()
+    await dueAt.press('Enter')
+    await drawer.getByLabel('标题').click()
+    await drawer.getByRole('button', { name: '创建整改项' }).click()
     await expect.poll(() => createBodies.length).toBe(1)
     expect(createBodies[0]).toMatchObject({ title: 'Invalid Due Action', due_at: null })
   })
@@ -394,11 +414,15 @@ test.describe('device time zone differs from the display time zone', () => {
     )
 
     await page.goto(`/findings/${findingId}`)
-    const dueAt = page.getByLabel('到期时间')
-    await expect(dueAt).toHaveAccessibleDescription('以下时间均按上海时间（Asia/Shanghai）填写和显示。')
-    await page.getByLabel('标题').fill('Zone Action')
-    await dueAt.fill('2026-08-28T18:00')
     await page.getByRole('button', { name: '新建整改项', exact: true }).click()
+    const drawer = page.getByRole('dialog', { name: '新建整改项' })
+    const dueAt = drawer.getByLabel('到期时间')
+    await expect(dueAt).toHaveAccessibleDescription('以下时间均按上海时间（Asia/Shanghai）填写和显示。')
+    await drawer.getByLabel('标题').fill('Zone Action')
+    await dueAt.fill('2026/08/28 18:00')
+    await dueAt.press('Enter')
+    await drawer.getByLabel('标题').click()
+    await drawer.getByRole('button', { name: '创建整改项' }).click()
 
     await expect.poll(() => createBody).not.toBeNull()
     expect(createBody).toMatchObject({ title: 'Zone Action', due_at: '2026-08-28T10:00:00.000Z' })

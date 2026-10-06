@@ -106,6 +106,7 @@ test('real compliance observation closes through shared Product routes and exact
       response.request().method() === 'POST',
   )
   await page.getByRole('button', { name: '接受观察项' }).click()
+  await page.getByRole('dialog', { name: '接受观察项' }).getByRole('button', { name: '确认接受并关闭' }).click()
 
   const transitionRequest = await transitionRequestPromise
   const requestPayload = transitionRequest.postDataJSON() as {

@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 
+import type { CommandResult } from '../product/commandFailure'
 import type {
   ActorKind,
   AssignmentRole,
@@ -13,8 +14,11 @@ export interface ScenarioCaseSectionProps {
   reviewCase: ReviewCaseResponse
 }
 
-export interface ScenarioFindingSectionProps {
-  finding: FindingResponse
+// 场景字段的展示项：由适配器给出标签和文本，核心页面用 Descriptions 统一渲染。
+export interface ScenarioDescriptionItem {
+  key: string
+  label: string
+  value: string
 }
 
 export interface ScenarioFormFieldsProps {
@@ -63,15 +67,29 @@ export interface ScenarioFindingCommandPorts {
   reopen: (reason: string) => Promise<unknown>
 }
 
+export interface ScenarioCommandOptions {
+  // 调用方能在表单字段上显示的服务端 422 字段名。
+  fields?: readonly string[]
+  // 页面是否同时显示失败提示；弹层自己显示失败时传 false。默认 true。
+  notify?: boolean
+}
+
 export interface ScenarioFindingInteractionProps {
   finding: FindingResponse
   disabled?: boolean
   commands: ScenarioFindingCommandPorts
-  execute: (label: string, command: () => Promise<unknown>) => Promise<void>
+  execute: (
+    label: string,
+    command: () => Promise<unknown>,
+    options?: ScenarioCommandOptions,
+  ) => Promise<CommandResult>
 }
 
 export interface ScenarioFindingAdapter {
-  FindingScenarioSection: ComponentType<ScenarioFindingSectionProps>
+  // 概览里的场景字段（如问题类型、条款）。
+  findingScenarioItems: (finding: FindingResponse) => readonly ScenarioDescriptionItem[]
+  // 首屏展示的场景内分类（如观察项、不符合项）；没有则返回 null。
+  findingKindLabel: (finding: FindingResponse) => string | null
   FindingCreateFields: ComponentType<ScenarioFormFieldsProps>
   buildFindingScenarioData: (values: ScenarioFormValues) => Record<string, unknown>
   participantOptions: readonly ScenarioParticipantOption[]

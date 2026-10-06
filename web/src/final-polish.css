@@ -10,7 +10,6 @@
 .surface-list li,
 .activity-list li,
 .subsurface,
-.command-row,
 .command-stack,
 .form-grid > *,
 .fact-grid > * {
@@ -40,17 +39,6 @@ canvas {
   .surface-card,
   .subsurface {
     padding: 18px;
-  }
-
-  .command-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .command-row > button,
-  .command-row > a,
-  .candidate-list button {
-    width: 100%;
   }
 }
 
