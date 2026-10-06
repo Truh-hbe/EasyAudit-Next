@@ -39,6 +39,9 @@ class FakeDepartmentRepository:
     def get(self, department_id: DepartmentId) -> Department | None:
         return self.items.get(department_id)
 
+    def get_current(self, department_id: DepartmentId) -> Department | None:
+        return self.items.get(department_id)
+
     def update(self, department: Department) -> None:
         self.items[department.id] = department
 

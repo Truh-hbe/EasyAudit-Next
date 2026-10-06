@@ -8,7 +8,6 @@ commits, and the second re-checks against the new tree and is rejected.
 """
 
 import threading
-import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from os import environ
@@ -20,6 +19,7 @@ from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
 from easyaudit_next.composition import build_platform_administration_service
+from easyaudit_next.infrastructure.database import create_session_factory
 from easyaudit_next.platform.application.services import DepartmentCycleError
 from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
 from easyaudit_next.platform.domain.models import PlatformRole, User
@@ -80,26 +80,27 @@ def _seed(engine: Engine, department_count: int = 2) -> tuple[User, list[UUID]]:
 class _Rendezvous:
     """Let each transaction's first UPDATE wait (bounded) for the other transaction's.
 
-    Only the first `update` per transaction counts (one admin move calls `update` twice), and
-    each `_move` runs in its own thread, so the thread id identifies the transaction.
+    Only the first `update` per transaction counts (one admin move calls `update` twice); the
+    transaction is identified by its Session.
     """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, expected: int = 2) -> None:
         self.both_arrived = threading.Event()
+        self.timed_out = False
         self._arrived: set[int] = set()
         self._lock = threading.Lock()
         self._expected = expected
         original = SqlAlchemyDepartmentRepository.update
 
         def update(repo: SqlAlchemyDepartmentRepository, department: Any) -> None:
-            transaction = threading.get_ident()
+            transaction = id(repo._session)  # one Session == one transaction
             with self._lock:
                 first = transaction not in self._arrived
                 self._arrived.add(transaction)
                 if len(self._arrived) >= self._expected:
                     self.both_arrived.set()
-            if first:
-                self.both_arrived.wait(RENDEZVOUS_SECONDS)
+            if first and not self.both_arrived.wait(RENDEZVOUS_SECONDS):
+                self.timed_out = True
             original(repo, department)
 
         monkeypatch.setattr(SqlAlchemyDepartmentRepository, "update", update)
@@ -172,14 +173,41 @@ def test_moves_in_different_organizations_do_not_block_each_other(
     admin_2, (a2, b2) = _seed(engine)
     rendezvous = _Rendezvous(monkeypatch)
 
-    started = time.monotonic()
     results = _race(
         [lambda: _move(engine, admin_1, a1, b1), lambda: _move(engine, admin_2, a2, b2)]
     )
-    elapsed = time.monotonic() - started
 
     assert results == ["moved", "moved"]
-    # Two distinct transactions reached their UPDATE together and nobody sat out the rendezvous
-    # timeout: a global (cross-organization) lock would make one wait RENDEZVOUS_SECONDS.
+    # Two distinct transactions reached their UPDATE together: a global (cross-organization)
+    # lock would leave the first one waiting out the rendezvous timeout.
     assert rendezvous.both_arrived.is_set()
-    assert elapsed < RENDEZVOUS_SECONDS * 0.6
+    assert not rendezvous.timed_out
+
+
+def test_move_rereads_the_tree_after_taking_the_lock(engine: Engine) -> None:
+    """Session A has a stale identity map; B commits a -> b; A's b -> a must see the cycle."""
+
+    admin, (a, b) = _seed(engine)
+    factory = create_session_factory(engine)  # autoflush=False, like production
+
+    with factory() as session_a:
+        # Keep strong references: the identity map only holds records weakly.
+        cached = session_a.scalars(
+            select(DepartmentRecord).where(
+                DepartmentRecord.organization_id == admin.organization_id
+            )
+        ).all()
+        assert {record.id for record in cached} == {a, b}
+        with factory() as session_b:
+            build_platform_administration_service(session_b).update_department(
+                admin, DepartmentId(a), parent_id=DepartmentId(b), set_parent=True
+            )
+            session_b.commit()
+
+        with pytest.raises(DepartmentCycleError):
+            build_platform_administration_service(session_a).update_department(
+                admin, DepartmentId(b), parent_id=DepartmentId(a), set_parent=True
+            )
+        session_a.rollback()
+
+    assert _parents(engine, [a, b]) == {a: b, b: None}

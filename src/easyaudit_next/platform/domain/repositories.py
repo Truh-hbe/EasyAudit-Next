@@ -27,6 +27,10 @@ class DepartmentRepository(Protocol):
 
     def get(self, department_id: DepartmentId) -> Department | None: ...
 
+    def get_current(self, department_id: DepartmentId) -> Department | None:
+        """Like `get`, but re-read the row instead of the cached ORM state (use after a lock)."""
+        ...
+
     def update(self, department: Department) -> None: ...
 
     def list_for_organization(self, organization_id: OrganizationId) -> tuple[Department, ...]: ...
@@ -98,9 +102,7 @@ class PlatformAuditRepository(Protocol):
 
 
 class LoginThrottleRepository(Protocol):
-    def increment(
-        self, scope: str, key_hash: str, window_start: datetime, now: datetime
-    ) -> int:
+    def increment(self, scope: str, key_hash: str, window_start: datetime, now: datetime) -> int:
         """Atomically add one attempt to the window's counter and return the new count."""
         ...
 
