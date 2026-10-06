@@ -115,7 +115,7 @@ src/easyaudit_next/
 - 授权完全由 Case 固定的精确 Scenario 版本判断（`ScenarioPolicy.authorization.allows`），不能写成 `role_key == "lead"`，也不能给 `system_admin` 业务捷径。
 - **授权在锁内、基于锁后读取的数据判断。** Case 角色（`CaseMember`）在 Case 锁下被撤销，所以任何写路径都必须先取 Case 锁（`FOR NO KEY UPDATE`），再用锁后读到的成员关系重建 `AuthorizationContext` 并决定；锁前的上下文不能守护写入。统一入口是 `lock_case_and_build_context`（`review_core/application/authorization.py`）。
   - 锁前可以保留一次便宜的拒绝（404/403 语义不变），这样未授权用户不会排队抢锁；通过后取锁，锁内**重复同一条**权限检查，并使用锁后的 Case（生命周期同样以锁后为准）。
-  - 全局锁序是 `Organization → Case → User → Finding → Action / Submission`：需要 Organization 锁的路径（成员增删、用户停用）先取 Organization；整改、参与人、催办等路径过去不取 Case 锁，现在**新增**了 Case 锁，且排在 Finding 之前，与验证路径一致，没有反向加锁。锁内重读 actor 时按 `Case → User` 取 User 行锁，与成员增删/停用的顺序相同。
+  - 全局锁序是 `Organization → Case → User → Finding → Action / Submission`：需要 Organization 锁的路径（成员增删、用户停用、`move_department`）先取 Organization，且持有 Case/User 锁后不得再取；整改、参与人、催办等路径过去不取 Case 锁，现在**新增**了 Case 锁，且排在 Finding 之前，与验证路径一致，没有反向加锁。锁内重读 actor 时按 `Case → User` 取 User 行锁，与成员增删/停用的顺序相同。
   - 新增写路径时，先取 Case 锁再授权；测试用双 Session：A 持 Case 锁撤销角色，B 在锁前通过检查并等待，A 提交后 B 必须被拒绝（`test_post_lock_authorization_race.py`）。
   - 锁内顺序固定（`lock_case_and_build_context`）：Case 锁 → 重新读取 actor（停用在 Case 锁下提交，所以拿到锁后能看到；已停用则拒绝）→ 重建授权上下文 → 授权 → 比较 Case 生命周期（变化即 409，不是 422）。锁前的拒绝必须和锁内是**同一个** `authorize` 函数，包括由业务决策得到的 `required_permission`，只读用户因此不会排队抢 Case 锁。
   - 不在此规则内：`primary_department_id`（`update_user` 改部门时不取 Case 锁，仍有残留窗口，部门授权只影响 Finding/Action 级部门授权），以及 Finding/Action 级授权本身（目前没有删除这些授权的写路径）。
