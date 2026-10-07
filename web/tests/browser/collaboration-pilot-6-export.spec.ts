@@ -50,8 +50,9 @@ test('管理页面导出 CSV 携带当前筛选并触发下载', async ({ page }
   })
 
   await page.goto('/management')
-  await page.getByLabel('截止情况').selectOption('overdue')
-  await page.getByLabel('审查活动状态').selectOption('in_progress')
+  await page.getByRole('radio', { name: '已逾期' }).click()
+  await page.getByLabel('审查活动状态').click()
+  await page.getByTitle('审查中', { exact: true }).click()
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出 CSV' }).click()

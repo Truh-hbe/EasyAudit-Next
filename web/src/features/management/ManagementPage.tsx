@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { DownloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Empty, Flex, Form, Input, Radio, Result, Select, Table, Typography } from 'antd'
+import type { TableColumnsType } from 'antd'
+import { cloneElement, useEffect, useRef, useState } from 'react'
+import type { ReactElement } from 'react'
 import { Link } from 'react-router'
 
 import {
@@ -10,17 +14,43 @@ import type {
   ManagementDeadlineFilter,
   ManagementExportFormat,
 } from '../../api/management'
-import type { DeadlineBucket, ReviewCaseLifecycle } from '../../api/product'
+import type { DeadlineBucket, ManagementCaseSummary, ReviewCaseLifecycle } from '../../api/product'
 import { formatDateTime } from '../../product/format'
+import { NOT_AVAILABLE_TEXT } from '../../product/commandFailure'
 import { scenarioName, scenarioVersionText } from '../../product/terms'
+import { InitialLoading } from '../../ui/InitialLoading'
+import { PageHeader } from '../../ui/PageHeader'
 import { isDeadlineStatus, StatusTag, statusLabel } from '../../ui/StatusTag'
+import { isUnavailable } from '../useScopedResource'
 
-type ManagementState =
-  | { status: 'loading'; key: string }
-  | { status: 'error'; key: string; message: string }
-  | { status: 'ready'; key: string; data: ManagementCaseCollectionResponse }
+interface ManagementState {
+  // 仅保留最近一次成功的结果；请求失败时清空，不用旧数据兜底。
+  data: ManagementCaseCollectionResponse | null
+  loading: boolean
+  error: string | null
+}
 
 const PAGE_SIZE = 20
+
+const LIFECYCLES: ReviewCaseLifecycle[] = [
+  'draft',
+  'scheduled',
+  'in_progress',
+  'awaiting_closure',
+  'closed',
+  'cancelled',
+]
+
+const lifecycleOptions = [
+  { value: '', label: '全部' },
+  ...LIFECYCLES.map((value) => ({ value, label: statusLabel('reviewCase', value) })),
+]
+
+const deadlineOptions: Array<{ value: ManagementDeadlineFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'due_soon', label: '即将到期' },
+  { value: 'overdue', label: '已逾期' },
+]
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
@@ -39,8 +69,62 @@ function saveFile(file: { blob: Blob; filename: string }): void {
 
 function DeadlineBucketText({ bucket }: { bucket: DeadlineBucket }) {
   if (isDeadlineStatus(bucket)) return <StatusTag kind="deadline" value={bucket} />
-  return <>{bucket === 'later' ? '稍后到期' : '无当前期限'}</>
+  return <Typography.Text type="secondary">{bucket === 'later' ? '稍后到期' : '无当前期限'}</Typography.Text>
 }
+
+const columns: TableColumnsType<ManagementCaseSummary> = [
+  {
+    title: '审查活动',
+    key: 'title',
+    render: (_value: unknown, item) => (
+      <Flex vertical>
+        <strong>{item.title}</strong>
+        <Typography.Text type="secondary">
+          {scenarioName(item.scenario_key)} · {scenarioVersionText(item.scenario_key, item.scenario_version)}
+        </Typography.Text>
+      </Flex>
+    ),
+  },
+  {
+    title: '状态',
+    key: 'status',
+    render: (_value: unknown, item) => (
+      <Flex wrap gap={4}>
+        <StatusTag kind="reviewCase" value={item.lifecycle} />
+        <DeadlineBucketText bucket={item.deadline_bucket} />
+      </Flex>
+    ),
+  },
+  {
+    title: '计划结束',
+    key: 'planned_end_at',
+    render: (_value: unknown, item) => formatDateTime(item.planned_end_at),
+  },
+  {
+    title: '发现项',
+    key: 'findings',
+    width: 200,
+    render: (_value: unknown, item) =>
+      `共 ${item.findings.total} / 待处理 ${item.findings.open} / 整改中 ${item.findings.rectifying} / 待验证 ${item.findings.verifying} / 已关闭 ${item.findings.closed} / 已作废 ${item.findings.voided}`,
+  },
+  {
+    title: '整改项',
+    key: 'actions',
+    width: 200,
+    render: (_value: unknown, item) =>
+      `共 ${item.actions.total} / 待开始 ${item.actions.todo} / 执行中 ${item.actions.in_progress} / 已完成 ${item.actions.done} / 已取消 ${item.actions.cancelled} / 已逾期 ${item.actions.overdue} / 即将到期 ${item.actions.due_soon}`,
+  },
+  {
+    title: '操作',
+    key: 'operations',
+    render: (_value: unknown, item) => (
+      <Flex vertical>
+        <Link to={`/management/review-cases/${item.id}`}>查看管理进度</Link>
+        <Link to={`/review-cases/${item.id}`}>打开审查活动</Link>
+      </Flex>
+    ),
+  },
+]
 
 export function ManagementPage() {
   const [lifecycle, setLifecycle] = useState<ReviewCaseLifecycle | ''>('')
@@ -52,16 +136,16 @@ export function ManagementPage() {
   const requestSequenceRef = useRef(0)
   const [exporting, setExporting] = useState<ManagementExportFormat | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
-
-  const queryKey = `${reviewPlanId}:${lifecycle}:${deadlineStatus}:${offset}`
-  const [state, setState] = useState<ManagementState>({ status: 'loading', key: queryKey })
+  // 403 之后保护内容整体移除；后端撤销授权不会因换筛选条件而恢复。
+  const [denied, setDenied] = useState(false)
+  const [state, setState] = useState<ManagementState>({ data: null, loading: true, error: null })
 
   useEffect(() => {
+    if (denied) return undefined
     const controller = new AbortController()
     const sequence = requestSequenceRef.current + 1
     requestSequenceRef.current = sequence
-    const requestedKey = queryKey
-    setState({ status: 'loading', key: requestedKey })
+    setState((previous) => ({ ...previous, loading: true, error: null }))
 
     void listManagedReviewCases(
       {
@@ -75,19 +159,19 @@ export function ManagementPage() {
     )
       .then((data) => {
         if (controller.signal.aborted || requestSequenceRef.current !== sequence) return
-        setState({ status: 'ready', key: requestedKey, data })
+        setState({ data, loading: false, error: null })
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || requestSequenceRef.current !== sequence) return
-        setState({
-          status: 'error',
-          key: requestedKey,
-          message: errorMessage(error, '管理视图请求失败'),
-        })
+        if (isUnavailable(error)) {
+          setDenied(true)
+          return
+        }
+        setState({ data: null, loading: false, error: errorMessage(error, '管理视图请求失败') })
       })
 
     return () => controller.abort()
-  }, [deadlineStatus, lifecycle, offset, queryKey, reviewPlanId, revision])
+  }, [denied, deadlineStatus, lifecycle, offset, reviewPlanId, revision])
 
   function exportCases(format: ManagementExportFormat) {
     setExporting(format)
@@ -99,170 +183,169 @@ export function ManagementPage() {
       deadlineStatus,
     })
       .then(saveFile)
-      .catch((error: unknown) => setExportError(errorMessage(error, '导出失败')))
+      .catch((error: unknown) => {
+        if (isUnavailable(error)) {
+          setDenied(true)
+          return
+        }
+        setExportError(errorMessage(error, '导出失败'))
+      })
       .finally(() => setExporting(null))
   }
 
-  const currentState = state.key === queryKey ? state : { status: 'loading', key: queryKey } as const
-  const data = currentState.status === 'ready' ? currentState.data : null
-  const canPrevious = offset > 0
-  const canNext = data !== null && data.offset + data.items.length < data.total
+  if (denied) {
+    return (
+      <Flex vertical gap={16}>
+        <PageHeader title="管理视图" titleId="management-title" />
+        <Card>
+          <Result status="404" title={NOT_AVAILABLE_TEXT} />
+        </Card>
+      </Flex>
+    )
+  }
+
+  const { data } = state
+  const initialLoading = state.loading && data === null
 
   return (
-    <section className="surface-page" aria-labelledby="management-title">
-      <div className="page-heading">
-        <div>
-          <h1 id="management-title">管理视图</h1>
-        </div>
-        <p>数据时间 {formatDateTime(data?.as_of ?? null)}</p>
-      </div>
+    <Flex vertical gap={16} aria-busy={initialLoading}>
+      <PageHeader
+        title="管理视图"
+        titleId="management-title"
+        meta={
+          data === null ? undefined : (
+            <Typography.Text type="secondary">{`数据时间 ${formatDateTime(data.as_of)}`}</Typography.Text>
+          )
+        }
+        extra={
+          <>
+            <Button
+              icon={<DownloadOutlined aria-hidden />}
+              disabled={exporting !== null}
+              loading={exporting === 'csv'}
+              onClick={() => exportCases('csv')}
+            >导出 CSV</Button>
+            <Button
+              icon={<DownloadOutlined aria-hidden />}
+              disabled={exporting !== null}
+              loading={exporting === 'xlsx'}
+              onClick={() => exportCases('xlsx')}
+            >导出 XLSX</Button>
+          </>
+        }
+      />
 
-      <section className="surface-card" aria-labelledby="management-filters-title">
-        <h2 id="management-filters-title">筛选条件</h2>
-        <div className="form-grid">
-          <label>
-            审查活动状态
-            <select
+      {exportError === null ? null : <Alert type="error" showIcon title={exportError} />}
+
+      <Card>
+        <Form
+          layout="inline"
+          aria-label="筛选条件"
+          onFinish={() => {
+            setReviewPlanId(reviewPlanInput.trim())
+            setOffset(0)
+          }}
+        >
+          <Form.Item label="审查活动状态" htmlFor="management-lifecycle">
+            <Select
+              id="management-lifecycle"
+              style={{ width: 160 }}
               value={lifecycle}
-              onChange={(event) => {
-                setLifecycle(event.target.value as ReviewCaseLifecycle | '')
+              options={lifecycleOptions}
+              onChange={(value: ReviewCaseLifecycle | '') => {
+                setLifecycle(value)
                 setOffset(0)
               }}
-            >
-              <option value="">全部</option>
-              <option value="draft">{statusLabel('reviewCase', 'draft')}</option>
-              <option value="scheduled">{statusLabel('reviewCase', 'scheduled')}</option>
-              <option value="in_progress">{statusLabel('reviewCase', 'in_progress')}</option>
-              <option value="awaiting_closure">{statusLabel('reviewCase', 'awaiting_closure')}</option>
-              <option value="closed">{statusLabel('reviewCase', 'closed')}</option>
-              <option value="cancelled">{statusLabel('reviewCase', 'cancelled')}</option>
-            </select>
-          </label>
-          <label>
-            截止情况
-            <select
+            />
+          </Form.Item>
+          <Form.Item label="截止情况" style={{ maxWidth: '100%' }}>
+            <Radio.Group
+              aria-label="截止情况"
+              style={{ display: 'flex', flexWrap: 'wrap' }}
               value={deadlineStatus}
+              options={deadlineOptions}
               onChange={(event) => {
                 setDeadlineStatus(event.target.value as ManagementDeadlineFilter)
                 setOffset(0)
               }}
-            >
-              <option value="all">全部</option>
-              <option value="due_soon">即将到期</option>
-              <option value="overdue">已逾期</option>
-            </select>
-          </label>
-          <label>
-            审查计划 ID
-            <input
+            />
+          </Form.Item>
+          <Form.Item label="审查计划 ID" htmlFor="management-plan-id">
+            <Input
+              id="management-plan-id"
               value={reviewPlanInput}
               onChange={(event) => setReviewPlanInput(event.target.value)}
               placeholder="可选，填写审查计划 ID"
             />
-          </label>
-        </div>
-        <div className="command-stack">
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              setReviewPlanId(reviewPlanInput.trim())
-              setOffset(0)
+          </Form.Item>
+          <Form.Item>
+            <Flex gap={8}>
+              <Button htmlType="submit" icon={<SearchOutlined aria-hidden />}>按审查计划筛选</Button>
+              <Button
+                onClick={() => {
+                  setReviewPlanInput('')
+                  setReviewPlanId('')
+                  setLifecycle('')
+                  setDeadlineStatus('all')
+                  setOffset(0)
+                }}
+              >清除筛选</Button>
+            </Flex>
+          </Form.Item>
+        </Form>
+        <Typography.Text type="secondary">筛选、授权、截止分组、汇总与分页均以服务器结果为准。</Typography.Text>
+      </Card>
+
+      {state.error === null ? null : (
+        <Alert
+          type="error"
+          showIcon
+          title={state.error}
+          action={<Button size="small" onClick={() => setRevision((value) => value + 1)}>重新加载</Button>}
+        />
+      )}
+
+      {initialLoading ? <Card><InitialLoading label="正在读取管理视图" rows={6} /></Card> : null}
+
+      {data === null ? null : (
+        <Card
+          title={<h2>我可管理的审查活动</h2>}
+          extra={<Typography.Text type="secondary">{`共 ${data.total} 项`}</Typography.Text>}
+        >
+          <Table<ManagementCaseSummary>
+            size="middle"
+            rowKey="id"
+            columns={columns}
+            dataSource={data.items}
+            loading={state.loading}
+            scroll={{ x: 'max-content' }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={data.total > 0 ? '当前页没有审查活动。' : '当前筛选下没有可管理的审查活动。'}
+                />
+              ),
             }}
-          >按审查计划筛选</button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              setReviewPlanInput('')
-              setReviewPlanId('')
-              setLifecycle('')
-              setDeadlineStatus('all')
-              setOffset(0)
+            pagination={{
+              current: Math.floor(data.offset / PAGE_SIZE) + 1,
+              pageSize: PAGE_SIZE,
+              total: data.total,
+              showSizeChanger: false,
+              hideOnSinglePage: true,
+              showTotal: (total, range) => `${range[0]}–${range[1]} / ${total}`,
+              onChange: (page) => setOffset((page - 1) * PAGE_SIZE),
+              // 翻页按钮内只有英文名的图标（"left"/"right"），补上中文可访问名称。
+              itemRender: (_page, type, element) =>
+                type === 'prev' || type === 'next'
+                  ? cloneElement(element as ReactElement<{ 'aria-label'?: string }>, {
+                      'aria-label': type === 'prev' ? '上一页' : '下一页',
+                    })
+                  : element,
             }}
-          >清除筛选</button>
-        </div>
-        <div className="command-stack">
-          <button
-            type="button"
-            className="secondary"
-            disabled={exporting !== null}
-            onClick={() => exportCases('csv')}
-          >{exporting === 'csv' ? '正在导出…' : '导出 CSV'}</button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={exporting !== null}
-            onClick={() => exportCases('xlsx')}
-          >{exporting === 'xlsx' ? '正在导出…' : '导出 XLSX'}</button>
-        </div>
-        {exportError !== null ? <p role="alert">{exportError}</p> : null}
-        <p className="empty-note">筛选、授权、截止分组、汇总与分页均以服务器结果为准。</p>
-      </section>
-
-      {currentState.status === 'loading' ? (
-        <section className="surface-card"><p>正在读取管理视图…</p></section>
-      ) : null}
-
-      {currentState.status === 'error' ? (
-        <section className="surface-card" role="alert">
-          <p>{currentState.message}</p>
-          <button type="button" onClick={() => setRevision((value) => value + 1)}>重新加载</button>
-        </section>
-      ) : null}
-
-      {data !== null ? (
-        <section className="surface-card" aria-labelledby="management-results-title">
-          <div className="section-heading">
-            <h2 id="management-results-title">我可管理的审查活动</h2>
-            <span>共 {data.total} 项</span>
-          </div>
-          {data.items.length === 0 ? <p className="empty-note">当前筛选下没有可管理的审查活动。</p> : (
-            <ul className="surface-list">
-              {data.items.map((item) => (
-                <li key={item.id}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <p>{scenarioName(item.scenario_key)} · {scenarioVersionText(item.scenario_key, item.scenario_version)}</p>
-                  </div>
-                  <span><StatusTag kind="reviewCase" value={item.lifecycle} /> <DeadlineBucketText bucket={item.deadline_bucket} /></span>
-                  <span>计划结束 {formatDateTime(item.planned_end_at)}</span>
-                  <span>
-                    发现项：共 {item.findings.total} / 待处理 {item.findings.open} / 整改中 {item.findings.rectifying} / 待验证 {item.findings.verifying} / 已关闭 {item.findings.closed} / 已作废 {item.findings.voided}
-                  </span>
-                  <span>
-                    整改项：共 {item.actions.total} / 待开始 {item.actions.todo} / 执行中 {item.actions.in_progress} / 已完成 {item.actions.done} / 已取消 {item.actions.cancelled} / 已逾期 {item.actions.overdue} / 即将到期 {item.actions.due_soon}
-                  </span>
-                  <div className="command-stack">
-                    <Link to={`/management/review-cases/${item.id}`}>查看管理进度</Link>
-                    <Link to={`/review-cases/${item.id}`}>打开审查活动</Link>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ) : null}
-
-      {data !== null ? (
-        <section className="surface-card" aria-label="管理视图分页">
-          <p>第 {data.total === 0 ? 0 : data.offset + 1}–{data.offset + data.items.length} 项 · 共 {data.total} 项</p>
-          <div className="command-stack">
-            <button
-              type="button"
-              className="secondary"
-              disabled={!canPrevious}
-              onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
-            >上一页</button>
-            <button
-              type="button"
-              className="secondary"
-              disabled={!canNext}
-              onClick={() => setOffset((value) => value + PAGE_SIZE)}
-            >下一页</button>
-          </div>
-        </section>
-      ) : null}
-    </section>
+          />
+        </Card>
+      )}
+    </Flex>
   )
 }

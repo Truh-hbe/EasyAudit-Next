@@ -279,7 +279,7 @@ test('M3.5.5 narrow product route matrix keeps essential controls inside the doc
   await page.goto('/me/notifications')
   await expect(notificationViewLabel(page, /未读/)).toBeVisible()
   await page.goto('/management')
-  await expect(page.getByLabel('截止情况')).toBeVisible()
+  await expect(page.getByRole('radiogroup', { name: '截止情况' })).toBeVisible()
 })
 
 test('M3.5.5 320px smoke keeps Workbench and dense Management progress free of document overflow', async ({ page }) => {

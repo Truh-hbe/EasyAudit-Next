@@ -459,7 +459,7 @@ test('late Management response cannot overwrite a newer server filter result', a
   })
 
   await page.goto('/management')
-  await page.getByLabel('截止情况').selectOption('overdue')
+  await page.getByRole('radio', { name: '已逾期' }).click()
   await expect(page.getByText('Current overdue result')).toBeVisible()
   slowAll.release()
   await page.waitForTimeout(50)
