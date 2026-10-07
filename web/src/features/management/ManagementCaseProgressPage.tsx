@@ -12,22 +12,24 @@ import type {
   ManagementActionDeadlineItem,
   ManagementFindingProgress,
 } from '../../api/product'
-import { NOT_AVAILABLE_TEXT } from '../../product/commandFailure'
+import {
+  classifyCommandFailure,
+  failureAlertType,
+  failureNeedsRefresh,
+  NOT_AVAILABLE_TEXT,
+} from '../../product/commandFailure'
 import { formatDateTime } from '../../product/format'
 import { ButtonLink } from '../../ui/ButtonLink'
 import { InitialLoading } from '../../ui/InitialLoading'
 import { PageHeader } from '../../ui/PageHeader'
 import { isDeadlineStatus, StatusTag } from '../../ui/StatusTag'
-import { isUnavailable, useScopedResource } from '../useScopedResource'
+import { useScopedResource } from '../useScopedResource'
 
 interface NudgeNotice {
-  type: 'success' | 'error'
+  type: 'success' | 'error' | 'warning'
   message: string
 }
 
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
-}
 
 function findingActionText(actions: ActionLifecycleCounts): string {
   return `共 ${actions.total} / 待开始 ${actions.todo} / 执行中 ${actions.in_progress} / 已完成 ${actions.done} / 已逾期 ${actions.overdue} / 即将到期 ${actions.due_soon}`
@@ -64,14 +66,15 @@ export function ManagementCaseProgressPage() {
       if (currentCaseIdRef.current !== commandCaseId) return
       setNudgeNotice({
         type: 'success',
-        message: `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
+        message: `服务器已确认催办：已通知 ${result.recipient_count} 人。`,
       })
       setRevision((value) => value + 1)
     } catch (error) {
       if (currentCaseIdRef.current !== commandCaseId) return
-      setNudgeNotice({ type: 'error', message: errorMessage(error, '催办失败') })
-      // 403/404：重读管理进度，授权丢失时受保护内容立即移除。
-      if (isUnavailable(error)) {
+      // 不展示后端 detail；403/404 与其他需要核对的失败都重读管理进度，授权丢失时受保护内容立即移除。
+      const failure = classifyCommandFailure(error, { label: '催办' })
+      setNudgeNotice(failure.message === '' ? null : { type: failureAlertType(failure), message: failure.message })
+      if (failureNeedsRefresh(failure)) {
         setRevision((value) => value + 1)
       }
     } finally {

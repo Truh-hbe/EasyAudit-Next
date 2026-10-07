@@ -375,7 +375,7 @@ test('M3.5.5 management nudge success survives authoritative same-case refetch',
 
   await page.goto(`/management/review-cases/${caseId}`)
   await page.getByRole('button', { name: '催办发现项' }).click()
-  await expect(page.getByText(/已通知 2 人，操作记录 activity-stable-feedback/)).toBeVisible()
+  await expect(page.getByText('服务器已确认催办：已通知 2 人。')).toBeVisible()
   await expect.poll(() => progressReads).toBeGreaterThan(1)
-  await expect(page.getByText(/已通知 2 人，操作记录 activity-stable-feedback/)).toBeVisible()
+  await expect(page.getByText('服务器已确认催办：已通知 2 人。')).toBeVisible()
 })

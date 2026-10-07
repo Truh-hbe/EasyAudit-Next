@@ -223,6 +223,40 @@ test('管理进度 403 移除受保护内容；催办 403 后重读并移除', a
   await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
   await expect(page.getByText('Progress finding')).toHaveCount(0)
   await expect(page.getByText('Progress case')).toHaveCount(0)
+  await expect(page.getByText('Management access required')).toHaveCount(0)
+})
+
+test('催办 403 而进度仍可读：显示中性文案，不出现后端 detail，内容保留并重读', async ({ page }) => {
+  await stubSession(page)
+  let progressReads = 0
+  await page.route((url) => url.pathname === `${LIST_PATH}/case-1/progress`, (route) => {
+    progressReads += 1
+    return fulfillJson(route, 200, progressBody())
+  })
+  await page.route((url) => url.pathname === '/api/v1/findings/finding-1/nudge', (route) =>
+    fulfillJson(route, 403, { detail: 'Role lead required for nudge' }),
+  )
+  await page.goto('/management/review-cases/case-1')
+  await page.getByRole('button', { name: '催办发现项' }).click()
+
+  await expect(page.getByText('当前账号没有执行此操作的权限。')).toBeVisible()
+  await expect.poll(() => progressReads).toBeGreaterThan(1)
+  await expect(page.getByText('Role lead required for nudge')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Progress finding' })).toBeVisible()
+})
+
+test('催办成功只说明通知人数，不显示内部操作记录 ID', async ({ page }) => {
+  await stubSession(page)
+  await page.route((url) => url.pathname === `${LIST_PATH}/case-1/progress`, (route) =>
+    fulfillJson(route, 200, progressBody()),
+  )
+  await page.route((url) => url.pathname === '/api/v1/action-items/action-1/nudge', (route) =>
+    fulfillJson(route, 200, { activity_id: 'activity-internal-id', recipient_count: 2 }),
+  )
+  await page.goto('/management/review-cases/case-1')
+  await page.getByRole('button', { name: '催办整改项' }).click()
+  await expect(page.getByText('服务器已确认催办：已通知 2 人。')).toBeVisible()
+  await expect(page.getByText('activity-internal-id', { exact: false })).toHaveCount(0)
 })
 
 test('管理进度加载失败可重新加载', async ({ page }) => {

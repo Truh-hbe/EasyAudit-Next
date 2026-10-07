@@ -1,4 +1,4 @@
-import { DownloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { ExportOutlined, SearchOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Empty, Flex, Form, Input, Radio, Result, Select, Table, Typography } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { cloneElement, useEffect, useRef, useState } from 'react'
@@ -221,13 +221,13 @@ export function ManagementPage() {
         extra={
           <>
             <Button
-              icon={<DownloadOutlined aria-hidden />}
+              icon={<ExportOutlined aria-hidden />}
               disabled={exporting !== null}
               loading={exporting === 'csv'}
               onClick={() => exportCases('csv')}
             >导出 CSV</Button>
             <Button
-              icon={<DownloadOutlined aria-hidden />}
+              icon={<ExportOutlined aria-hidden />}
               disabled={exporting !== null}
               loading={exporting === 'xlsx'}
               onClick={() => exportCases('xlsx')}

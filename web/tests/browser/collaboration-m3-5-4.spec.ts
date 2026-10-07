@@ -515,9 +515,9 @@ test('Management nudge shortcut calls original bodyless commands and displays on
   await page.goto(`/management/review-cases/${caseId}`)
   await expect(page.getByRole('heading', { name: 'Managed nudge case' })).toBeVisible()
   await page.getByRole('button', { name: '催办发现项' }).click()
-  await expect(page.getByText(/已通知 2 人，操作记录 activity-finding-nudge/)).toBeVisible()
+  await expect(page.getByText('服务器已确认催办：已通知 2 人。')).toBeVisible()
   await page.getByRole('button', { name: '催办整改项' }).click()
-  await expect(page.getByText(/已通知 3 人，操作记录 activity-action-nudge/)).toBeVisible()
+  await expect(page.getByText('服务器已确认催办：已通知 3 人。')).toBeVisible()
 })
 
 test('Finding nudge 422 stays authoritative and a late nudge result cannot leak across routes', async ({ page }) => {
