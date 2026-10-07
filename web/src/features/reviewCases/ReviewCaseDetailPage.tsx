@@ -450,7 +450,9 @@ export function ReviewCaseDetailPage() {
         current.status === 'ready' && current.caseId === targetId ? { status: 'ready', caseId: targetId, data: next } : current,
       )
     } else if (result.ok === false) {
-      if (command.mode !== 'reason' && result.failure.message !== '') setNotice(result.failure)
+      // 原因弹层自己显示失败；状态冲突时命令可能随重读消失（弹层随之卸载），所以冲突仍在页面级留一份提示。
+      const dialogShows = command.mode === 'reason' && result.failure.kind !== 'changed' && result.failure.kind !== 'conflict'
+      if (!dialogShows && result.failure.message !== '') setNotice(result.failure)
       // 不自动重放；冲突、权限变化或结果未知时只静默重读主资源，由用户核对后再决定。
       if (failureNeedsRefresh(result.failure)) authorization.trigger(authorization.generation(), targetId)
     }
@@ -569,8 +571,9 @@ export function ReviewCaseDetailPage() {
 
       {scenarioAdapter === undefined ? null : (
         <CaseLifecycleCommands
-          // 按活动和 lifecycle 换 key：命令集变化时丢弃旧命令的确认框与弹层状态。
-          key={`${reviewCase.id}:${reviewCase.lifecycle}`}
+          // 只按活动换 key：lifecycle 变化（含 409 后的静默重读）不能重挂载，否则带原因的弹层会丢失失败提示和已填原因。
+          // 命令不再属于新状态时，对应按钮（及其弹层、确认框）随命令集自然卸载。
+          key={reviewCase.id}
           commands={scenarioAdapter.caseCommands(reviewCase.lifecycle)}
           busy={commandBusy}
           notice={notice}

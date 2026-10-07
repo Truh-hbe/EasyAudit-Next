@@ -218,13 +218,17 @@ for (const command of COMMANDS) {
       const readsBefore = world.caseReads
       await invoke(page, command)
 
+      // 先等静默重读落地（命令集已按新状态变化），再断言提示：不依赖重读与断言之间的先后。
+      await expect.poll(() => world.caseReads).toBeGreaterThan(readsBefore) // 静默重读，页面不回到加载态
+      await expect(header(page).getByText(from === 'draft' ? '已排期' : '已关闭', { exact: true })).toBeVisible()
       if (command.action === 'cancel') {
-        await expect(page.getByRole('dialog', { name: '取消活动' }).getByText('数据已变化')).toBeVisible()
+        // 取消在新状态下仍然可用：弹层保留，显示 409 提示，并保留已填写的原因。
+        const dialog = page.getByRole('dialog', { name: '取消活动' })
+        await expect(dialog.getByText('数据已变化')).toBeVisible()
+        await expect(dialog.getByLabel('取消原因')).toHaveValue('计划调整')
       } else {
         await expect(page.getByRole('status').filter({ hasText: '数据已变化' })).toBeVisible()
       }
-      await expect.poll(() => world.caseReads).toBeGreaterThan(readsBefore) // 静默重读，页面不回到加载态
-      await expect(header(page).getByText(from === 'draft' ? '已排期' : '已关闭', { exact: true })).toBeVisible()
       expect(world.posts).toHaveLength(1) // 不自动重放
     })
 
@@ -384,4 +388,18 @@ test('a command still in flight when the route switches to another case neither 
   expect(await page.getByText('已完成：安排活动').count()).toBe(0)
   expect(otherReads).toBe(readsAfterLoad)
   await expect(header(page).getByText('草稿', { exact: true })).toBeVisible()
+})
+
+test('cancel 409 whose re-read makes cancel unavailable closes the dialog and keeps the notice on the page', async ({ page }) => {
+  const world = await mockWorld(page, 'process_review', 'scheduled')
+  world.postStatus = 409
+  world.postDetail = 'Concurrent ReviewCase transition'
+  world.lifecycleAfterFailure = 'in_progress'
+  await open(page)
+  await invoke(page, COMMANDS[4])
+  await expect(header(page).getByText('审查中', { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: '取消活动' })).toBeHidden() // 弹层之前确实打开过
+  expect(await button(page, '取消活动').count()).toBe(0)
+  await expect(page.getByRole('status').filter({ hasText: '数据已变化' })).toBeVisible()
+  expect(world.posts).toHaveLength(1)
 })
