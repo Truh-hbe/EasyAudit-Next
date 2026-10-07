@@ -1,5 +1,5 @@
-import { Alert, Button, Card, Descriptions, Empty, Flex, Result, Timeline, Typography } from 'antd'
-import { useEffect, useMemo, useState } from 'react'
+import { Alert, App, Button, Card, Descriptions, Empty, Flex, Result, Timeline, Typography } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { ApiError } from '../../api/client'
@@ -9,6 +9,7 @@ import {
   getReviewCaseActivities,
   getReviewCaseFindings,
   getReviewCaseMembers,
+  transitionReviewCase,
 } from '../../api/product'
 import type {
   CaseMemberViewResponse,
@@ -18,6 +19,12 @@ import type {
   ReviewCaseResponse,
 } from '../../api/product'
 import { useSession } from '../../app/auth/session'
+import {
+  BUSY_FAILURE,
+  classifyCommandFailure,
+  failureNeedsRefresh,
+} from '../../product/commandFailure'
+import type { CommandFailure, CommandResult } from '../../product/commandFailure'
 import { formatDateTime } from '../../product/format'
 import { caseRoleName, scenarioName, scenarioVersionText } from '../../product/terms'
 import { ActivityEventName } from '../../ui/ActivityEventName'
@@ -27,7 +34,9 @@ import { ItemList } from '../../ui/ItemList'
 import { PageHeader } from '../../ui/PageHeader'
 import { isDeadlineStatus, StatusTag } from '../../ui/StatusTag'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
+import type { ScenarioCaseCommand } from '../../scenarios/registry'
 import { FindingCreatePanel } from '../findings/FindingCreatePanel'
+import { CaseLifecycleCommands } from './CaseLifecycleCommands'
 import { initialCaseAuthorization, reduceCaseAuthorization } from './caseAuthorization'
 import type { CaseAuthorizationEvent, CaseAuthorizationState } from './caseAuthorization'
 import { ReviewCaseTeamPanel } from './ReviewCaseTeamPanel'
@@ -236,6 +245,16 @@ export function ReviewCaseDetailPage() {
   const { state: sessionState } = useSession()
   const [revision, setRevision] = useState(0)
   const [teamRevision, setTeamRevision] = useState(0)
+  const [lifecycleRevision, setLifecycleRevision] = useState(0)
+  const { message } = App.useApp()
+  const currentCaseIdRef = useRef(caseId)
+  currentCaseIdRef.current = caseId
+  // 每次进入（或回到）一个活动都换一个代次：按 ID 比较会让 A→B→A 之后 A 的旧命令误释放新命令的锁。
+  const generationRef = useRef(0)
+  const deniedRef = useRef(false)
+  const busyRef = useRef(false)
+  const [commandBusy, setCommandBusy] = useState(false)
+  const [notice, setNotice] = useState<CommandFailure | null>(null)
   const [primary, setPrimary] = useState<PrimaryState>({ status: 'loading', caseId: undefined })
   const [members, setMembers] = useState<SectionState<CaseMemberViewResponse[]>>(idleSection)
   const [findings, setFindings] = useState<SectionState<FindingResponse[]>>(idleSection)
@@ -243,8 +262,20 @@ export function ReviewCaseDetailPage() {
   const [management, setManagement] = useState<SectionState<ManagementCaseProgressResponse>>(idleSection)
   const authorization = useMemo(() => createAuthorizationController(setPrimary), [])
 
+  // 切换活动时丢弃上一个活动的提示与进行中状态；卸载也换代次，旧实例里在途的命令之后不能再提示或刷新。
+  useEffect(() => {
+    generationRef.current += 1
+    busyRef.current = false
+    setCommandBusy(false)
+    setNotice(null)
+    return () => {
+      generationRef.current += 1
+    }
+  }, [caseId])
+
   useEffect(() => {
     const loadGeneration = authorization.load()
+    deniedRef.current = false
     setMembers(idleSection)
     setFindings(idleSection)
     setActivities(idleSection)
@@ -284,6 +315,8 @@ export function ReviewCaseDetailPage() {
   }, [authorization, caseId, revision])
 
   const primaryMatchesRoute = primary.caseId === caseId
+  // 主授权被拒绝（403/404）之后拒绝状态保持：在途命令结束时不再提示成功或刷新。
+  deniedRef.current = deniedRef.current || (primaryMatchesRoute && primary.status === 'unavailable')
   const authorizedCaseId =
     primaryMatchesRoute && primary.status === 'ready' ? primary.data.id : null
   useEffect(() => {
@@ -387,7 +420,46 @@ export function ReviewCaseDetailPage() {
       })
 
     return () => controller.abort()
-  }, [authorization, authorizedCaseId])
+  }, [authorization, authorizedCaseId, lifecycleRevision])
+
+  // targetId 是构造该命令时的活动：确认框或弹层晚于路由切换残留时，当前页面已不是它，不发请求。
+  async function runCaseCommand(targetId: string, command: ScenarioCaseCommand, reason?: string): Promise<CommandResult> {
+    if (currentCaseIdRef.current !== targetId || busyRef.current || deniedRef.current) {
+      return { ok: false, failure: BUSY_FAILURE }
+    }
+    const generation = generationRef.current
+    busyRef.current = true
+    setCommandBusy(true)
+    setNotice(null)
+    let result: CommandResult
+    let updated: ReviewCaseResponse | null = null
+    try {
+      updated = await transitionReviewCase(targetId, command.action, reason ?? null)
+      result = { ok: true }
+    } catch (error) {
+      result = { ok: false, failure: classifyCommandFailure(error, { label: command.label, fields: ['reason'] }) }
+    }
+    if (generationRef.current !== generation) return result
+    busyRef.current = false
+    setCommandBusy(false)
+    if (deniedRef.current) return result
+    if (updated !== null) {
+      const next = updated
+      void message.success(`已完成：${command.label}`)
+      setPrimary((current) =>
+        current.status === 'ready' && current.caseId === targetId ? { status: 'ready', caseId: targetId, data: next } : current,
+      )
+    } else if (result.ok === false) {
+      if (command.mode !== 'reason' && result.failure.message !== '') setNotice(result.failure)
+      // 不自动重放；冲突、权限变化或结果未知时只静默重读主资源，由用户核对后再决定。
+      if (failureNeedsRefresh(result.failure)) authorization.trigger(authorization.generation(), targetId)
+    }
+    if (updated !== null || (result.ok === false && failureNeedsRefresh(result.failure))) {
+      setTeamRevision((value) => value + 1)
+      setLifecycleRevision((value) => value + 1)
+    }
+    return result
+  }
 
   if (!primaryMatchesRoute || primary.status === 'loading') {
     return (
@@ -495,6 +567,17 @@ export function ReviewCaseDetailPage() {
         <ScenarioSection reviewCase={reviewCase} />
       )}
 
+      {scenarioAdapter === undefined ? null : (
+        <CaseLifecycleCommands
+          // 按活动和 lifecycle 换 key：命令集变化时丢弃旧命令的确认框与弹层状态。
+          key={`${reviewCase.id}:${reviewCase.lifecycle}`}
+          commands={scenarioAdapter.caseCommands(reviewCase.lifecycle)}
+          busy={commandBusy}
+          notice={notice}
+          onDismissNotice={() => setNotice(null)}
+          run={(command, reason) => runCaseCommand(reviewCase.id, command, reason)}
+        />
+      )}
       <ManagementProgressSection state={managementState} />
       <FindingCreatePanel reviewCase={reviewCase} />
       <FindingSection state={findingState} />

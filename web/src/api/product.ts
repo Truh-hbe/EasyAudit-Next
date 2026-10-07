@@ -451,6 +451,17 @@ export function removeReviewCaseMember(
   )
 }
 
+export function transitionReviewCase(
+  caseId: string,
+  action: string,
+  reason: string | null = null,
+): Promise<ReviewCaseResponse> {
+  return sessionApiRequest<ReviewCaseResponse>(
+    `/api/v1/review-cases/${encodeURIComponent(caseId)}/transitions`,
+    { method: 'POST', body: JSON.stringify({ action, reason }) },
+  )
+}
+
 export function getReviewCaseFindings(
   caseId: string,
   signal?: AbortSignal,
