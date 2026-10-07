@@ -9,7 +9,9 @@ import {
 } from 'react'
 
 import {
+  advanceSessionGeneration,
   ApiError,
+  currentSessionGeneration,
   installSessionUnauthorizedHandler,
   sessionApiRequest,
 } from '../../api/client'
@@ -48,21 +50,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [resolutionError, setResolutionError] = useState<string | null>(null)
 
   const clearLocalSession = useCallback(() => {
+    advanceSessionGeneration()
     setState({ status: 'anonymous' })
     setResolutionError(null)
   }, [])
 
   const refresh = useCallback(async (): Promise<SessionState> => {
+    const generation = advanceSessionGeneration()
     setState({ status: 'resolving' })
     setResolutionError(null)
     try {
       const next = await resolveServerSession()
-      setState(next)
+      if (currentSessionGeneration() === generation) {
+        setState(next)
+      }
       return next
     } catch (error) {
-      setResolutionError(
-        error instanceof Error ? error.message : '无法确认登录状态',
-      )
+      if (currentSessionGeneration() === generation) {
+        setResolutionError(
+          error instanceof Error ? error.message : '无法确认登录状态',
+        )
+      }
       throw error
     }
   }, [])
@@ -74,17 +82,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController()
+    const generation = currentSessionGeneration()
     let active = true
 
     void resolveServerSession(controller.signal)
       .then((next) => {
-        if (active) {
+        if (active && currentSessionGeneration() === generation) {
           setState(next)
           setResolutionError(null)
         }
       })
       .catch((error: unknown) => {
-        if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
+        if (
+          active &&
+          currentSessionGeneration() === generation &&
+          !(error instanceof DOMException && error.name === 'AbortError')
+        ) {
           setResolutionError(
             error instanceof Error ? error.message : '无法确认登录状态',
           )
