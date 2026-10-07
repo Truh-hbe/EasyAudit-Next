@@ -344,10 +344,14 @@ class SqlAlchemyAuthSessionRepository:
         *,
         min_interval: timedelta = timedelta(0),
     ) -> AuthSession | None:
-        """Record activity; None when nothing was written (inactive, or touched within
-        `min_interval` already: then no UPDATE takes place at all)."""
-        result = self._session.execute(
-            sa_update(AuthSessionRecord)
+        """Record activity; None when nothing was written (inactive, touched within
+        `min_interval` already, or the row is locked by another transaction).
+
+        Best effort: the row is claimed with `FOR NO KEY UPDATE SKIP LOCKED`, so a touch never
+        waits for a lock. It runs at the end of a request that may already hold other session
+        rows (revoking another session); waiting here would invert the lock order."""
+        claimable = (
+            select(AuthSessionRecord.id)
             .where(
                 AuthSessionRecord.id == session_id,
                 AuthSessionRecord.token_hash == expected_token_hash,
@@ -358,6 +362,11 @@ class SqlAlchemyAuthSessionRepository:
                     AuthSessionRecord.last_seen_at < touched_at - min_interval,
                 ),
             )
+            .with_for_update(key_share=True, skip_locked=True)
+        )
+        result = self._session.execute(
+            sa_update(AuthSessionRecord)
+            .where(AuthSessionRecord.id.in_(claimable))
             .values(last_seen_at=touched_at)
             .returning(AuthSessionRecord.id),
             execution_options={"synchronize_session": False},
