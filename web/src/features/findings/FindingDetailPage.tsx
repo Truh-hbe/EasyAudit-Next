@@ -19,6 +19,7 @@ import {
   submitRectification,
   transitionFinding,
 } from '../../api/product'
+import type { SubmissionResponse } from '../../api/product'
 import {
   BUSY_FAILURE,
   NOT_AVAILABLE_TEXT,
@@ -43,6 +44,7 @@ import { actorText } from '../actorNames'
 import { SectionNotice } from '../SectionNotice'
 import { SectionSpin } from '../SectionSpin'
 import { useScopedResource } from '../useScopedResource'
+import { RejectionNotice, SubmissionContent } from './SubmissionContent'
 import { ActionCreateDrawer } from './ActionCreateDrawer'
 import type { ActionCreateInput } from './ActionCreateDrawer'
 
@@ -257,6 +259,19 @@ export function FindingDetailPage() {
   const terminal = finding.lifecycle === 'closed' || finding.lifecycle === 'voided'
   const Interaction = scenarioAdapter?.FindingInteractionSection
   const kindLabel = scenarioAdapter?.findingKindLabel(finding) ?? null
+  const submissionMeta = (submission: SubmissionResponse) =>
+    `${formatDateTime(submission.submitted_at)} · 提交人 ${actorText(submission.submitted_by, names)}`
+  const views =
+    scenarioAdapter === undefined || submissions.status !== 'ready'
+      ? null
+      : new Map(submissions.data.map((submission) => [submission.id, scenarioAdapter.describeSubmission(submission)]))
+  // 回到整改中时，最近一次验证若是驳回，把原因提到页面上方。
+  const latestVerification =
+    submissions.status === 'ready' ? submissions.data.findLast((submission) => submission.purpose === 'verification') : undefined
+  const latestRejection =
+    finding.lifecycle === 'rectifying' && latestVerification !== undefined && views?.get(latestVerification.id)?.outcome === 'rejected'
+      ? latestVerification
+      : undefined
   const interactionCommands: ScenarioFindingCommandPorts = {
     transition: (action, reason) => transitionFinding(finding.id, action, reason ?? null),
     submitRectification: (action, payload) => submitRectification(finding.id, action, payload),
@@ -339,6 +354,9 @@ export function FindingDetailPage() {
               title={`暂不支持当前版本的审查场景界面（${scenarioName(caseContext.scenario_key)} · ${scenarioVersionText(caseContext.scenario_key, caseContext.scenario_version)}）。仍可查看发现项的通用信息。`}
             />
           ) : null}
+          {latestRejection === undefined ? null : (
+            <RejectionNotice view={views!.get(latestRejection.id)!} meta={submissionMeta(latestRejection)} />
+          )}
           {Interaction === undefined ? null : (
             <Interaction key={finding.id} finding={finding} disabled={commandBusy} commands={interactionCommands} execute={run} />
           )}
@@ -484,11 +502,12 @@ export function FindingDetailPage() {
                     items={submissions.data.map((submission) => ({
                       key: submission.id,
                       content: (
-                        <Flex vertical>
-                          <Typography.Text strong>{submissionPurposeName(submission.purpose)}</Typography.Text>
-                          <Typography.Text type="secondary">
-                            {formatDateTime(submission.submitted_at)} · 提交人 {actorText(submission.submitted_by, names)}
+                        <Flex vertical gap={4}>
+                          <Typography.Text strong>
+                            {views === null ? submissionPurposeName(submission.purpose) : views.get(submission.id)?.heading}
                           </Typography.Text>
+                          <Typography.Text type="secondary">{submissionMeta(submission)}</Typography.Text>
+                          {views === null ? null : <SubmissionContent view={views.get(submission.id)!} />}
                         </Flex>
                       ),
                     }))}

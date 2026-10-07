@@ -642,6 +642,14 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   )
   await page.getByRole('link', { name: JOURNEY_FINDING_TITLE }).click()
   await expect(page.getByRole('heading', { name: JOURNEY_FINDING_TITLE })).toBeVisible()
+  // 驳回原因对整改负责人可读：页面上方提示 + 提交记录。
+  await expect(page.getByRole('status').filter({ hasText: '最近一次验证被驳回' })).toContainText(
+    'Reviewer requires a second corrective cycle',
+  )
+  const submissionHistory = page.getByRole('list', { name: '提交记录' })
+  await expect(submissionHistory).toContainText('Real multi-user root cause accepted through Product UI')
+  await expect(submissionHistory).toContainText('First correction completed through assigned Action')
+  await expect(submissionHistory).toContainText('Reviewer requires a second corrective cycle')
   await page.getByRole('link', { name: JOURNEY_ACTION_TITLE }).click()
   await expect(page.getByRole('button', { name: '重新打开' })).toBeVisible()
 
