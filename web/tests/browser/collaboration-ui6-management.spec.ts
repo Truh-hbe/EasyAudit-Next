@@ -259,3 +259,19 @@ for (const width of [375, 320]) {
     await expectNoDocumentOverflow(page)
   })
 }
+
+test('1280px 下管理视图操作列链接在视口内且不显示内部场景标识', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await stubSession(page)
+  await page.route((url) => url.pathname === LIST_PATH, (route) =>
+    fulfillJson(route, 200, listBody([managementCase('case-1', 'Wide case')])),
+  )
+  await page.goto('/management')
+  const row = page.getByRole('row').filter({ hasText: 'Wide case' })
+  await expect(row).toBeVisible()
+  await expect(row.getByRole('link', { name: '查看管理进度' })).toBeInViewport({ ratio: 1 })
+  await expect(row.getByRole('link', { name: '打开审查活动' })).toBeInViewport({ ratio: 1 })
+  await expect(row).toContainText('过程审查')
+  await expect(page.getByText('process_review', { exact: false })).toHaveCount(0)
+  await expectNoDocumentOverflow(page)
+})

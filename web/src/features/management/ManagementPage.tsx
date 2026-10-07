@@ -17,7 +17,7 @@ import type {
 import type { DeadlineBucket, ManagementCaseSummary, ReviewCaseLifecycle } from '../../api/product'
 import { formatDateTime } from '../../product/format'
 import { NOT_AVAILABLE_TEXT } from '../../product/commandFailure'
-import { scenarioName, scenarioVersionText } from '../../product/terms'
+import { scenarioName } from '../../product/terms'
 import { InitialLoading } from '../../ui/InitialLoading'
 import { PageHeader } from '../../ui/PageHeader'
 import { isDeadlineStatus, StatusTag, statusLabel } from '../../ui/StatusTag'
@@ -79,9 +79,7 @@ const columns: TableColumnsType<ManagementCaseSummary> = [
     render: (_value: unknown, item) => (
       <Flex vertical>
         <strong>{item.title}</strong>
-        <Typography.Text type="secondary">
-          {scenarioName(item.scenario_key)} · {scenarioVersionText(item.scenario_key, item.scenario_version)}
-        </Typography.Text>
+        <Typography.Text type="secondary">{scenarioName(item.scenario_key)}</Typography.Text>
       </Flex>
     ),
   },
@@ -89,7 +87,7 @@ const columns: TableColumnsType<ManagementCaseSummary> = [
     title: '状态',
     key: 'status',
     render: (_value: unknown, item) => (
-      <Flex wrap gap={4}>
+      <Flex vertical align="flex-start" gap={4}>
         <StatusTag kind="reviewCase" value={item.lifecycle} />
         <DeadlineBucketText bucket={item.deadline_bucket} />
       </Flex>
@@ -103,20 +101,23 @@ const columns: TableColumnsType<ManagementCaseSummary> = [
   {
     title: '发现项',
     key: 'findings',
-    width: 200,
+    width: 190,
     render: (_value: unknown, item) =>
       `共 ${item.findings.total} / 待处理 ${item.findings.open} / 整改中 ${item.findings.rectifying} / 待验证 ${item.findings.verifying} / 已关闭 ${item.findings.closed} / 已作废 ${item.findings.voided}`,
   },
   {
     title: '整改项',
     key: 'actions',
-    width: 200,
+    width: 190,
     render: (_value: unknown, item) =>
       `共 ${item.actions.total} / 待开始 ${item.actions.todo} / 执行中 ${item.actions.in_progress} / 已完成 ${item.actions.done} / 已取消 ${item.actions.cancelled} / 已逾期 ${item.actions.overdue} / 即将到期 ${item.actions.due_soon}`,
   },
   {
     title: '操作',
     key: 'operations',
+    // 主要入口始终可见：内容宽于容器时只滚动前面的列。
+    fixed: 'right',
+    width: 120,
     render: (_value: unknown, item) => (
       <Flex vertical>
         <Link to={`/management/review-cases/${item.id}`}>查看管理进度</Link>
