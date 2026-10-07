@@ -688,6 +688,12 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   expect(secondSubmitResponse.status()).toBe(201)
   const secondSubmitted = (await secondSubmitResponse.json()) as { finding: { lifecycle: string } }
   expect(secondSubmitted.finding.lifecycle).toBe('verifying')
+  // 发现项已提交验证：整改项页面解释原因，且不再给出必然被拒绝的写入口。
+  await page.getByRole('link', { name: JOURNEY_ACTION_TITLE }).click()
+  await expect(page.getByRole('status').filter({ hasText: '发现项已提交验证' })).toBeVisible()
+  expect(await page.getByRole('button', { name: '重新打开整改项', exact: true }).count()).toBe(0)
+  expect(await page.getByRole('button', { name: '添加执行人', exact: true }).count()).toBe(0)
+  expect(await page.getByRole('button', { name: '上传证据', exact: true }).count()).toBe(0)
   await submitLogout(page)
 
   await loginFromWorkbench(

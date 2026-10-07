@@ -2,8 +2,10 @@ import type { ComponentType } from 'react'
 
 import type { CommandResult } from '../product/commandFailure'
 import type {
+  ActionItemLifecycle,
   ActorKind,
   AssignmentRole,
+  FindingLifecycle,
   FindingResponse,
   ReviewCaseLifecycle,
   ReviewCaseResponse,
@@ -133,8 +135,26 @@ export interface ScenarioFindingAdapter {
   participantOptions: readonly ScenarioParticipantOption[]
   assigneeOptions: readonly ScenarioAssigneeOption[]
   FindingInteractionSection: ComponentType<ScenarioFindingInteractionProps>
+  // 按父级与整改项生命周期给出整改项写操作的前置条件。
+  actionOperations: (context: ScenarioActionOperationContext) => ScenarioActionOperations
   // 按精确场景版本解释历史提交的 payload。
   describeSubmission: (submission: SubmissionResponse) => ScenarioSubmissionView
+}
+
+// 整改项页面已读取的确定生命周期；父级读取失败时为 null（未知）。
+export interface ScenarioActionOperationContext {
+  action: ActionItemLifecycle
+  finding: FindingLifecycle | null
+  reviewCase: ReviewCaseLifecycle | null
+}
+
+export interface ScenarioActionOperations {
+  // 父级状态已确定不允许整改写操作时的解释；null 表示没有已确定的阻塞。
+  blockedReason: string | null
+  // 开始/完成/重开/取消/转交等命令是否还值得展示（仍须按整改项自身生命周期筛选）。
+  writable: boolean
+  manageAssignees: boolean
+  uploadEvidence: boolean
 }
 
 export interface ScenarioUiAdapter extends ScenarioCaseAdapter, ScenarioFindingAdapter {}

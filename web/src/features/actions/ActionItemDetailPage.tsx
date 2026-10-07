@@ -290,6 +290,11 @@ export function ActionItemDetailPage() {
     actorKind: option.actorKind,
   }))
   const cancelled = action.lifecycle === 'cancelled'
+  const operations = scenarioAdapter?.actionOperations({
+    action: action.lifecycle,
+    finding: findingData?.lifecycle ?? null,
+    reviewCase: caseContext?.lifecycle ?? null,
+  })
   const refreshingOf = (state: { status: string; refreshing?: boolean }) => state.status === 'ready' && state.refreshing === true
   const overviewRefreshing = primary.refreshing || refreshingOf(assignees) || refreshingOf(findingState)
   const run = (label: string, command: () => Promise<unknown>, options?: { fields?: readonly string[]; notify?: boolean }) =>
@@ -321,7 +326,7 @@ export function ActionItemDetailPage() {
             <Card
               title={<h2 id="action-overview-title">整改事项</h2>}
               extra={
-                scenarioAdapter !== undefined && !cancelled ? (
+                operations?.manageAssignees === true ? (
                   <Button icon={<PlusOutlined aria-hidden />} onClick={() => setAssignDrawerOpen(true)}>
                     添加执行人
                   </Button>
@@ -387,13 +392,27 @@ export function ActionItemDetailPage() {
               <Flex vertical gap={12}>
                 {scenarioAdapter === undefined ? (
                   <Typography.Text type="secondary">
-                    {caseState.status === 'loading' ? '正在确认审查场景…' : '当前审查场景的界面不可用，整改项操作已关闭。'}
+                    {findingState.status === 'error' || findingState.status === 'unavailable'
+                      ? '无法确认所属发现项的当前状态，整改项操作已关闭；请重新加载。'
+                      : caseState.status === 'loading'
+                        ? '正在确认审查场景…'
+                        : '当前审查场景的界面不可用，整改项操作已关闭。'}
                   </Typography.Text>
                 ) : (
                   <>
                     <Typography.Text type="secondary">
                       这里只隐藏明显无关的操作；最终授权与并发校验以服务器为准。
                     </Typography.Text>
+                    {operations?.blockedReason == null ? null : (
+                      <Alert
+                        type="info"
+                        showIcon
+                        role="status"
+                        title={operations.blockedReason}
+                        action={<ButtonLink to={`/findings/${action.finding_id}`}>返回发现项</ButtonLink>}
+                      />
+                    )}
+                    {operations?.writable !== true ? null : (
                     <Flex wrap gap={8}>
                       {action.lifecycle === 'todo' ? (
                         <Button
@@ -433,6 +452,7 @@ export function ActionItemDetailPage() {
                         </Button>
                       ) : null}
                     </Flex>
+                    )}
                     {cancelled ? <Typography.Text type="secondary">当前整改项已取消，没有可执行的操作。</Typography.Text> : null}
                   </>
                 )}
@@ -444,6 +464,7 @@ export function ActionItemDetailPage() {
             key={action.id}
             actionId={action.id}
             cancelled={cancelled}
+            blockedReason={operations?.blockedReason ?? null}
             state={evidences}
             names={names}
             onRefresh={refresh}
