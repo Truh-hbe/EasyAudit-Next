@@ -56,6 +56,20 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
   }
 
   const scenarioAdapter = adapter
+  if (!scenarioAdapter.canCreateFinding(reviewCase.lifecycle)) {
+    return (
+      <section aria-labelledby="create-finding-title">
+        <Card title={<h2 id="create-finding-title">新建发现项</h2>}>
+          <Alert
+            type="info"
+            showIcon
+            role="status"
+            title={`审查活动进入“${statusLabel('reviewCase', 'in_progress') ?? '进行中'}”后才能新建发现项；当前状态为“${statusLabel('reviewCase', reviewCase.lifecycle) ?? reviewCase.lifecycle}”。`}
+          />
+        </Card>
+      </section>
+    )
+  }
   const ScenarioFields = scenarioAdapter.FindingCreateFields
   const scenarioFieldNames = Object.keys(scenarioAdapter.buildFindingScenarioData({}))
   const fieldErrors = failure?.fieldErrors ?? {}

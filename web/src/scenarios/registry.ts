@@ -5,6 +5,7 @@ import type {
   ActorKind,
   AssignmentRole,
   FindingResponse,
+  ReviewCaseLifecycle,
   ReviewCaseResponse,
 } from '../api/product'
 
@@ -29,11 +30,30 @@ export interface ScenarioFormFieldsProps {
   fieldErrors?: Record<string, string>
 }
 
+// 场景声明的活动命令。当前 lifecycle 下"可能合法"的命令清单是状态机，不是权限：
+// 角色是否允许由服务器判断，页面不推导。
+export interface ScenarioCaseCommand {
+  action: string
+  // 用于失败提示的操作名，如 "开始活动"。
+  label: string
+  buttonText: string
+  primary?: boolean
+  danger?: boolean
+  // direct：直接执行；confirm：二次确认；reason：弹层填写原因（服务器校验必填）。
+  mode: 'direct' | 'confirm' | 'reason'
+  dialogTitle?: string
+  dialogDescription?: string
+  okText?: string
+  reasonLabel?: string
+}
+
 export interface ScenarioCaseAdapter {
   CaseScenarioSection: ComponentType<ScenarioCaseSectionProps>
   CaseCreateFields: ComponentType<ScenarioFormFieldsProps>
   buildCaseScenarioData: (values: ScenarioFormValues) => Record<string, unknown>
   caseMemberRoleOptions: readonly ScenarioCaseRoleOption[]
+  // 活动在该 lifecycle 下可展示的命令；没有则返回空数组。
+  caseCommands: (lifecycle: ReviewCaseLifecycle) => readonly ScenarioCaseCommand[]
 }
 
 export interface ScenarioCaseRoleOption {
@@ -86,6 +106,8 @@ export interface ScenarioFindingInteractionProps {
 }
 
 export interface ScenarioFindingAdapter {
+  // 该活动 lifecycle 下是否可以新建发现项（状态规则，不是权限）。
+  canCreateFinding: (lifecycle: ReviewCaseLifecycle) => boolean
   // 概览里的场景字段（如问题类型、条款）。
   findingScenarioItems: (finding: FindingResponse) => readonly ScenarioDescriptionItem[]
   // 首屏展示的场景内分类（如观察项、不符合项）；没有则返回 null。

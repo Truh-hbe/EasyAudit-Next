@@ -20,6 +20,7 @@ import {
   VerificationCommands,
   VoidCommand,
 } from './findingCommandKit'
+import { standardCanCreateFinding, standardCaseCommands } from './caseCommandKit'
 import { ScenarioFieldsCard } from './ScenarioFieldsCard'
 
 function scenarioText(value: unknown): string {
@@ -178,6 +179,8 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
     { roleKey: 'reviewer', label: '复核员' },
     { roleKey: 'observer', label: '观察员' },
   ],
+  caseCommands: standardCaseCommands,
+  canCreateFinding: standardCanCreateFinding,
   findingScenarioItems: findingItems,
   findingKindLabel: (finding) => {
     const label = findingTypeText(finding.scenario_data.finding_type)
