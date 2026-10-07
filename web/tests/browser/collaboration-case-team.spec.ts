@@ -871,6 +871,12 @@ test('添加成员：切换角色时，旧角色挂起的搜索晚到也不会�
   await mockCase(page, 'case-role-late')
   const gate = deferred()
   const requests = await routeRoleCandidates(page, 'case-role-late', { lead: gate.promise })
+  // 旧 lead 请求的终点：被前端中止是 requestfailed，被放行并 fulfill 是 requestfinished。
+  const isLeadSearch = (request: Request) => request.url().includes('/member-candidates') && request.url().includes('role_key=lead')
+  const leadSearchEnded = Promise.race([
+    page.waitForEvent('requestfinished', isLeadSearch),
+    page.waitForEvent('requestfailed', isLeadSearch),
+  ])
   await page.goto('/review-cases/case-role-late')
   const team = page.getByRole('region', { name: '团队管理' })
   await team.getByRole('button', { name: '添加成员' }).click()
@@ -884,7 +890,9 @@ test('添加成员：切换角色时，旧角色挂起的搜索晚到也不会�
   await expect(page.getByTitle('Reviewer Role Candidate')).toHaveCount(1)
 
   gate.resolve()
-  await page.waitForTimeout(500) // 让旧响应有机会（错误地）写入状态
+  // 确定性同步点：旧请求已结束（中止或完成），再排空两轮事件循环让任何（错误的）状态写入落地。
+  await leadSearchEnded
+  for (let turn = 0; turn < 2; turn += 1) await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)))
   expect(await page.getByTitle('Lead Role Candidate').count()).toBe(0)
   expect(await page.getByTitle('Reviewer Role Candidate').count()).toBe(1)
 })
