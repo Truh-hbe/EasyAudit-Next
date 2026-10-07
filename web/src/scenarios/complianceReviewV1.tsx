@@ -21,6 +21,7 @@ import {
   VoidCommand,
 } from './findingCommandKit'
 import { standardCanCreateFinding, standardCaseCommands } from './caseCommandKit'
+import { standardActionOperations } from './actionOperationsKit'
 import { standardDescribeSubmission } from './submissionKit'
 import { ScenarioFieldsCard } from './ScenarioFieldsCard'
 
@@ -210,4 +211,5 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
   ],
   FindingInteractionSection: ComplianceReviewV1FindingInteraction,
   describeSubmission: standardDescribeSubmission,
+  actionOperations: standardActionOperations,
 }

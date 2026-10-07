@@ -37,6 +37,8 @@ type UploadOutcome =
 interface EvidenceSectionProps {
   actionId: string
   cancelled: boolean
+  // 父级生命周期已确定不允许登记证据时的解释；null 表示不拦截（含父级状态未知）。
+  blockedReason: string | null
   state: ResourceState<EvidenceResponse[]>
   names: ReadonlyMap<string, string>
   // 上传已被服务器确认，或失败后需要核对服务器状态时，请页面重新读取。
@@ -46,7 +48,7 @@ interface EvidenceSectionProps {
 // 证据：Upload 只负责选择文件和文件列表；传输走 uploadActionEvidence（原始字节、MIME、编码文件名、说明），
 // 由明确的“上传证据”按钮触发（beforeUpload 返回 false，不使用 Upload 自带的传输）。
 // 没有真实的上传进度，所以不显示百分比；中断后不自动重传。下载是同源附件链接，不读成 Blob。
-export function EvidenceSection({ actionId, cancelled, state, names, onRefresh }: EvidenceSectionProps) {
+export function EvidenceSection({ actionId, cancelled, blockedReason, state, names, onRefresh }: EvidenceSectionProps) {
   const [fileList, setFileList] = useState<UploadFile[]>([])
   const [description, setDescription] = useState('')
   const [busy, setBusy] = useState(false)
@@ -108,7 +110,9 @@ export function EvidenceSection({ actionId, cancelled, state, names, onRefresh }
         <Flex vertical gap={24}>
           <Flex vertical gap={12} component="section" aria-labelledby="evidence-upload-title">
             <h3 id="evidence-upload-title">上传证据</h3>
-            {cancelled ? (
+            {blockedReason !== null ? (
+              <Typography.Text type="secondary">{blockedReason}已上传的证据仍可查看和下载。</Typography.Text>
+            ) : cancelled ? (
               <Typography.Text type="secondary">当前整改项已取消，不能上传证据。</Typography.Text>
             ) : (
               <Form layout="vertical" requiredMark={false} disabled={busy} onFinish={() => void upload()}>
