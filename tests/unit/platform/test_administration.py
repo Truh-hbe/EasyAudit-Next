@@ -36,7 +36,7 @@ def test_last_active_system_admin_cannot_be_demoted_or_disabled(
 ) -> None:
     actor = system_admin()
     users = Mock()
-    users.get.return_value = actor
+    users.lock_users_for_update.return_value = (actor,)
     users.count_active_system_admins.return_value = 1
     service = PlatformAdministrationService(
         Mock(),
@@ -64,7 +64,7 @@ def test_admin_can_be_demoted_when_another_active_admin_exists() -> None:
     actor = system_admin()
     organizations = Mock()
     users = Mock()
-    users.get.return_value = actor
+    users.lock_users_for_update.return_value = (actor,)
     users.count_active_system_admins.return_value = 2
     audit = Mock()
     service = PlatformAdministrationService(

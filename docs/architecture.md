@@ -118,6 +118,7 @@ src/easyaudit_next/
   - 全局锁序是 `Organization → Case → User → Finding → Action / Submission`：需要 Organization 锁的路径（成员增删、用户停用、`move_department`）先取 Organization，且持有 Case/User 锁后不得再取；整改、参与人、催办等路径过去不取 Case 锁，现在**新增**了 Case 锁，且排在 Finding 之前，与验证路径一致，没有反向加锁。锁内重读 actor 时按 `Case → User` 取 User 行锁，与成员增删/停用的顺序相同。
   - 新增写路径时，先取 Case 锁再授权；测试用双 Session：A 持 Case 锁撤销角色，B 在锁前通过检查并等待，A 提交后 B 必须被拒绝（`test_post_lock_authorization_race.py`）。
   - 锁内顺序固定（`lock_case_and_build_context`）：Case 锁 → 重新读取 actor（停用在 Case 锁下提交，所以拿到锁后能看到；已停用则拒绝）→ **先**比较 Case 生命周期（变化即 409，不是 422）→ 重建授权上下文 → 授权。生命周期比较必须在授权之前：授权闭包会用锁后的 Case 做业务校验，Case 已被推进时校验会抛 `ValueError`（422），而这应当是并发冲突。锁前的拒绝必须和锁内是**同一个** `authorize` 函数，包括由业务决策得到的 `required_permission`，只读用户因此不会排队抢 Case 锁。
+  - **用户 PATCH 同理：锁后重读、只改请求显式给出的字段。** `PlatformAdministrationService.update_user` 先取 Organization 锁，再 `lock_users_for_update`（`FOR NO KEY UPDATE` + `populate_existing`）锁住 actor 与目标，之后的最后管理者检查、会话撤销、审计 metadata 和返回值全部基于锁后的行；调用方传入的 actor 快照只用于锁前的便宜拒绝，授权（`system_admin` 且启用）以锁后的 actor 为准。停用路径的 Organization → Case → User 顺序不变，`update_user` 在其内部重复取同一批锁是无等待的。测试：`test_user_update_race.py`。
   - 不在此规则内：`primary_department_id`（`update_user` 改部门时不取 Case 锁，仍有残留窗口，部门授权只影响 Finding/Action 级部门授权），以及 Finding/Action 级授权本身（目前没有删除这些授权的写路径）。
 - **上下文按目标构造。** Finding 只使用父 Case 的授权、自身的授权以及其下 Action 的授权；Action 只使用父 Case、父 Finding 和自身的授权。兄弟资源的授权不能扩大当前目标的权限。
 - **批量读取只是查询优化，不能放宽授权范围。** 先批量取出事实，在内存中按目标分组，再逐个目标判断。
