@@ -614,6 +614,30 @@ export function addActionAssignee(
   )
 }
 
+export function searchActionTransferCandidates(
+  actionItemId: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<AssignmentCandidateResponse[]> {
+  const params = new URLSearchParams({ q: query, limit: '20' })
+  return sessionApiRequest<AssignmentCandidateResponse[]>(
+    `/api/v1/action-items/${encodeURIComponent(actionItemId)}/transfer-candidates?${params.toString()}`,
+    { signal },
+  )
+}
+
+// 原子命令：指定新的活跃主要执行人并把已完成的整改项重新打开；原因必填。
+export function transferAndReopenActionItem(
+  actionItemId: string,
+  newExecutorId: string,
+  reason: string,
+): Promise<ActionItemResponse> {
+  return sessionApiRequest<ActionItemResponse>(
+    `/api/v1/action-items/${encodeURIComponent(actionItemId)}/transfer-and-reopen`,
+    { method: 'POST', body: JSON.stringify({ new_executor_id: newExecutorId, reason }) },
+  )
+}
+
 export function transitionActionItem(
   actionItemId: string,
   action: string,

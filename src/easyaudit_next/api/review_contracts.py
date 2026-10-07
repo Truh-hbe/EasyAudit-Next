@@ -185,6 +185,11 @@ class ActionItemTransitionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=2_000)
 
 
+class ActionItemTransferRequest(BaseModel):
+    new_executor_id: UUID
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
 class EvidenceResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 

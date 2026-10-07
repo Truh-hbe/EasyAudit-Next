@@ -44,6 +44,7 @@ describe('product terms', () => {
       'action_item.created',
       'action_item.evidence_registered',
       'action_item.nudged',
+      'action_item.transferred_and_reopened',
       'action_item.transitioned',
       'finding.approved',
       'finding.created',

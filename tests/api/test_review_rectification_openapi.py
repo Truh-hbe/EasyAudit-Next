@@ -13,6 +13,11 @@ def test_rectification_routes_are_explicit_and_do_not_expose_lifecycle_patch() -
     assert "post" in paths["/api/v1/action-items/{action_item_id}/assignees"]
     assert "get" in paths["/api/v1/action-items/{action_item_id}/assignees"]
     assert "post" in paths["/api/v1/action-items/{action_item_id}/transitions"]
+    transfer = paths["/api/v1/action-items/{action_item_id}/transfer-and-reopen"]["post"]
+    assert transfer["operationId"] == "transferAndReopenActionItem"
+    transfer_schema = schema["components"]["schemas"]["ActionItemTransferRequest"]
+    assert set(transfer_schema["required"]) == {"new_executor_id", "reason"}
+    assert "get" in paths["/api/v1/action-items/{action_item_id}/transfer-candidates"]
     assert "post" not in paths["/api/v1/action-items/{action_item_id}/evidences"]
     assert "post" in paths["/api/v1/action-items/{action_item_id}/evidence-uploads"]
     assert "get" in paths["/api/v1/action-items/{action_item_id}/evidences"]

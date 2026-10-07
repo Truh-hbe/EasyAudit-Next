@@ -1,5 +1,6 @@
 from collections.abc import Callable
 
+from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import UserRepository
 from easyaudit_next.review_core.domain.ids import ActionItemId, FindingId, ReviewCaseId
@@ -157,6 +158,8 @@ def lock_case_and_build_context[T](
     expected_case: ReviewCase,
     build_context: Callable[[User], AuthorizationContext],
     authorize: Callable[[ReviewCase, AuthorizationContext], T],
+    *,
+    also_lock_user_ids: tuple[UserId, ...] = (),
 ) -> tuple[ReviewCase, AuthorizationContext, T]:
     """Take the Case lock, then authorize on what is visible after it.
 
@@ -168,6 +171,12 @@ def lock_case_and_build_context[T](
     Callers run the same `authorize` before the lock as a cheap
     refusal, so a user who may not do this never queues on the lock; the write is guarded
     by the decision made here, never by the pre-lock one.
+
+    `also_lock_user_ids` are further User rows the write depends on (e.g. a new assignee that
+    must still be active). They are locked in the same statement as the actor, in ID order,
+    so two users are never taken one after the other in an order that can invert against the
+    sorted multi-User locks of deactivation (Organization -> Case -> User). The caller re-reads
+    them with `lock_users_for_update` (already held, no wait) after this returns.
     """
 
     locked_case = repository.lock_case_for_team_management(
@@ -178,7 +187,11 @@ def lock_case_and_build_context[T](
         raise LookupError("ReviewCase not found")
     # Deactivation holds this Case lock while committing, so once the lock is granted
     # the actor row read here reflects it (Case -> User keeps the documented lock order).
-    fresh = next(iter(users.lock_users_for_update(actor.organization_id, (actor.id,))), None)
+    locked_users = users.lock_users_for_update(
+        actor.organization_id,
+        tuple(sorted({actor.id, *also_lock_user_ids}, key=str)),
+    )
+    fresh = next((user for user in locked_users if user.id == actor.id), None)
     if fresh is None or not fresh.is_active:
         raise ReviewAuthorizationError("Active organization user required")
     if locked_case.lifecycle is not expected_case.lifecycle:

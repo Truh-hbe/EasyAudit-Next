@@ -250,6 +250,11 @@ class ActionItemOperationPolicy(Protocol):
         context: ActionItemOperationContext,
     ) -> None: ...
 
+    def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
+        """Validate the atomic transfer-and-reopen command and return the workflow action
+        that reopens the ActionItem (the target state comes from `action_workflow`)."""
+        ...
+
 
 class ReviewCaseCreationPolicy(Protocol):
     def decision(self) -> CaseCreationDecision: ...
