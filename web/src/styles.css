@@ -519,6 +519,12 @@ h3 {
   color: var(--ant-red-7);
 }
 
+.app-root .submission-text.ant-typography {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .item-list {
   margin: 0;
   padding: 0;

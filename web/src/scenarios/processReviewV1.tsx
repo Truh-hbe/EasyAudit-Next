@@ -20,6 +20,7 @@ import {
   VoidCommand,
 } from './findingCommandKit'
 import { standardCanCreateFinding, standardCaseCommands } from './caseCommandKit'
+import { standardDescribeSubmission } from './submissionKit'
 import { ScenarioFieldsCard } from './ScenarioFieldsCard'
 
 function scenarioText(value: unknown): string {
@@ -171,4 +172,5 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
     { role: 'collaborator', actorKind: 'user', label: '协作者' },
   ],
   FindingInteractionSection: ProcessReviewV1FindingInteraction,
+  describeSubmission: standardDescribeSubmission,
 }

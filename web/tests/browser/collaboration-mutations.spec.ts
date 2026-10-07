@@ -276,7 +276,7 @@ test('rectification plan and completion stay server-owned, including reopened-Ac
   planAllowed = true
   await planDrawer.getByRole('button', { name: '提交整改计划' }).click()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
-  await expect(submissionHistory.getByText('整改提交', { exact: true })).toHaveCount(1)
+  await expect(submissionHistory.getByText('整改计划', { exact: true })).toHaveCount(1)
   await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: '提交整改完成' }).click()
@@ -292,7 +292,7 @@ test('rectification plan and completion stay server-owned, including reopened-Ac
   completionAllowed = true
   await completionDrawer.getByRole('button', { name: '提交验证' }).click()
   await expect(page.getByRole('article').locator('header').getByText('待验证', { exact: true })).toBeVisible()
-  await expect(submissionHistory.getByText('整改提交', { exact: true })).toHaveCount(2)
+  await expect(submissionHistory.getByRole('listitem')).toHaveCount(2)
 })
 
 test('verification refusal, reject success, and reopen validation preserve authoritative Finding state', async ({ page }) => {
@@ -340,7 +340,7 @@ test('verification refusal, reject success, and reopen validation preserve autho
   await rejectDialog.getByRole('button', { name: '确认驳回' }).click()
   await expect(page.getByRole('article').locator('header').getByText('整改中', { exact: true })).toBeVisible()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
-  await expect(submissionHistory.getByText('验证结论', { exact: true })).toBeVisible()
+  await expect(submissionHistory.getByText('验证驳回', { exact: true })).toBeVisible()
 
   lifecycle = 'closed'
   await page.reload()

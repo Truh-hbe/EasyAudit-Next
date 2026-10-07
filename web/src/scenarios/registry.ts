@@ -7,6 +7,7 @@ import type {
   FindingResponse,
   ReviewCaseLifecycle,
   ReviewCaseResponse,
+  SubmissionResponse,
 } from '../api/product'
 
 export type ScenarioFormValues = Record<string, string>
@@ -20,6 +21,21 @@ export interface ScenarioDescriptionItem {
   key: string
   label: string
   value: string
+}
+
+// 一条历史提交的展示：标题、结论与按场景翻译好的字段；未知字段进入 extras，由页面按纯文本展示。
+export interface ScenarioSubmissionField {
+  key: string
+  label: string
+  value: string
+}
+
+export interface ScenarioSubmissionView {
+  heading: string
+  // 验证提交的结论；其他提交为 null。
+  outcome: 'approved' | 'rejected' | null
+  fields: readonly ScenarioSubmissionField[]
+  extras: readonly ScenarioSubmissionField[]
 }
 
 export interface ScenarioFormFieldsProps {
@@ -117,6 +133,8 @@ export interface ScenarioFindingAdapter {
   participantOptions: readonly ScenarioParticipantOption[]
   assigneeOptions: readonly ScenarioAssigneeOption[]
   FindingInteractionSection: ComponentType<ScenarioFindingInteractionProps>
+  // 按精确场景版本解释历史提交的 payload。
+  describeSubmission: (submission: SubmissionResponse) => ScenarioSubmissionView
 }
 
 export interface ScenarioUiAdapter extends ScenarioCaseAdapter, ScenarioFindingAdapter {}

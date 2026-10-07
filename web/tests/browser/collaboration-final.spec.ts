@@ -231,7 +231,7 @@ test('verification approve success closes from server truth and refreshes persis
 
   await expect(page.getByRole('article').locator('header').getByText('已关闭', { exact: true })).toBeVisible()
   const submissionHistory = page.locator('section[aria-labelledby="submission-history-title"]')
-  await expect(submissionHistory.getByText('验证结论', { exact: true })).toBeVisible()
+  await expect(submissionHistory.getByText('验证通过', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '通过验证' })).toHaveCount(0)
 })
 
