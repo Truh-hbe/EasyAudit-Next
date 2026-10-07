@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from pwdlib import PasswordHash
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from easyaudit_next.collaboration.reminder_sweep import describe_failure
@@ -80,10 +80,17 @@ from easyaudit_next.review_core.persistence.evidence_maintenance_repository impo
 )
 from easyaudit_next.review_core.persistence.repositories import SqlAlchemyScenarioCatalogRepository
 
+# Fixed key of the transaction-level advisory lock that serializes bootstrap (docs/architecture.md).
+BOOTSTRAP_ADVISORY_LOCK_KEY = 0x45415F424F4F5453  # "EA_BOOTS"
+
+
+class BootstrapRefusedError(RuntimeError):
+    pass
+
 
 def _ensure_bootstrap_available(session: Session) -> None:
     if SqlAlchemyOrganizationRepository(session).list_all():
-        raise RuntimeError("Bootstrap refused: an Organization already exists")
+        raise BootstrapRefusedError("Bootstrap refused: an Organization already exists")
 
 
 def bootstrap_admin_in_session(
@@ -95,6 +102,12 @@ def bootstrap_admin_in_session(
     *,
     now: datetime | None = None,
 ) -> None:
+    # "No Organization yet" is a check-then-write with nothing to conflict on: serialize it. The
+    # lock is released at commit/rollback, so a waiter's check (a new READ COMMITTED statement)
+    # sees the winner's Organization and is refused.
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"), {"key": BOOTSTRAP_ADVISORY_LOCK_KEY}
+    )
     _ensure_bootstrap_available(session)
     validate_local_password(password)
     organizations = SqlAlchemyOrganizationRepository(session)
@@ -608,7 +621,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     if args.command == "bootstrap-admin":
-        bootstrap_admin(args.organization_name, args.admin_name, args.login_name)
+        try:
+            bootstrap_admin(args.organization_name, args.admin_name, args.login_name)
+        except BootstrapRefusedError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
     elif args.command == "publish-scenario":
         publish_scenario(
             OrganizationId(args.organization_id),
