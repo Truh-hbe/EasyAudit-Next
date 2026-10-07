@@ -226,13 +226,16 @@ class ReviewResourceContextQueryService:
             raise ReviewAuthorizationError(
                 "Finding owner role required to transfer and reopen ActionItem"
             )
-        policy.action_operations.decide_transfer_and_reopen(
+        assignees = self._repository.list_action_assignees(
+            actor.organization_id,
+            action_item.id,
+        )
+        policy.action_operations.validate_transfer_and_reopen_state(
             ActionItemOperationContext(
                 case_lifecycle=review_case.lifecycle,
                 finding_lifecycle=finding.lifecycle,
                 current_action_lifecycle=action_item.lifecycle,
-                # Only the ActionItem state is being checked here; the reason is entered later.
-                reason="-",
+                has_active_assignee=self._rectification_service.has_active_executor(assignees),
             )
         )
         self._require_role_kind(

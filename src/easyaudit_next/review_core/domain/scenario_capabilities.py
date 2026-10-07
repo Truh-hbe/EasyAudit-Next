@@ -126,6 +126,8 @@ class ActionItemOperationContext:
     finding_lifecycle: FindingLifecycle
     current_action_lifecycle: ActionItemLifecycle | None = None
     assignee_role_keys: frozenset[str] = field(default_factory=frozenset)
+    # Any User executor (primary or collaborator) that is still an active User.
+    has_active_assignee: bool = False
     reason: str | None = None
 
     def has_assignee_role(self, role_key: str) -> bool:
@@ -250,9 +252,15 @@ class ActionItemOperationPolicy(Protocol):
         context: ActionItemOperationContext,
     ) -> None: ...
 
+    def validate_transfer_and_reopen_state(self, context: ActionItemOperationContext) -> None:
+        """State preconditions of transfer-and-reopen (no reason needed): shared by the
+        command and the candidate search."""
+        ...
+
     def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
-        """Validate the atomic transfer-and-reopen command and return the workflow action
-        that reopens the ActionItem (the target state comes from `action_workflow`)."""
+        """Validate the atomic transfer-and-reopen command (state and reason) and return the
+        workflow action that reopens the ActionItem (the target state comes from
+        `action_workflow`)."""
         ...
 
 

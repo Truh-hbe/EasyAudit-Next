@@ -214,3 +214,19 @@ test('the transfer drawer is closed when the page switches to another Action', a
   await expect(page.getByRole('dialog', { name: '转交并重开整改项' })).toHaveCount(0)
   expect(world.posts).toEqual([])
 })
+
+test('a 422 because an executor is still active is shown as an alert, keeps the drawer open and is not replayed', async ({ page }) => {
+  const world = fresh({
+    outcome: { status: 422, detail: 'ActionItem still has an active executor, who can reopen it directly' },
+  })
+  await stubWorld(page, world)
+  await page.goto('/action-items/action-b5')
+  const drawer = await openAssignDrawer(page, '转交并重开', '转交并重开整改项')
+  await pickCandidate(drawer, '新执行人', 'New', 'New Executor')
+  await drawer.getByRole('textbox', { name: '转交原因' }).fill('原执行人已离职')
+  await drawer.getByRole('button', { name: '确认转交并重开' }).click()
+  await expect(drawer.getByRole('alert')).toContainText('still has an active executor')
+  await expect(drawer).toBeVisible()
+  await page.waitForTimeout(500)
+  expect(world.posts).toHaveLength(1)
+})

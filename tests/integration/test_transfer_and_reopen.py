@@ -88,7 +88,9 @@ class Seed:
         finding_lifecycle: str = "rectifying",
         case_lifecycle: str = "in_progress",
         with_collaborator: bool = False,
+        executors_active: bool = False,
     ) -> None:
+        """By default every executor is deactivated: the only situation transfer is for."""
         self.engine = engine
         self.organization_id = OrganizationId(uuid4())
         self.owner, self.primary, self.collaborator, self.new1, self.new2 = (
@@ -109,6 +111,7 @@ class Seed:
                     organization_id=org,
                     display_name=name,
                     platform_role="system_admin" if user_id == self.admin else "ordinary_user",
+                    is_active=executors_active or user_id not in (self.primary, self.collaborator),
                 )
                 for user_id, name in (
                     (self.owner, "Owner"),
@@ -304,7 +307,12 @@ class Seed:
 def test_issue_86_b5_journey_owner_transfers_and_new_executor_finishes(
     postgres_engine: Engine, scenario_key: str
 ) -> None:
-    seed = Seed(postgres_engine, scenario_key=scenario_key, action_lifecycle="todo")
+    seed = Seed(
+        postgres_engine,
+        scenario_key=scenario_key,
+        action_lifecycle="todo",
+        executors_active=True,
+    )
     completion = {"stage": "completion", "comment": "all done"}
 
     with Session(postgres_engine) as session, session.begin():
@@ -384,41 +392,54 @@ def test_issue_86_b5_journey_owner_transfers_and_new_executor_finishes(
     assert seed.action().lifecycle == "done"
 
 
-def test_active_collaborator_and_deactivated_user_handling(postgres_engine: Engine) -> None:
+def test_all_executors_deactivated_primary_and_collaborator_are_dropped(
+    postgres_engine: Engine,
+) -> None:
     seed = Seed(postgres_engine, with_collaborator=True)
-    seed.set_active(seed.primary, False)
 
     seed.transfer_committed(seed.owner, seed.new1)
 
-    assert seed.assignees() == {(seed.collaborator, "collaborator"), (seed.new1, "primary")}
+    assert seed.assignees() == {(seed.new1, "primary")}
     (activity,) = seed.transfer_activities()
-    assert activity.metadata_json["removed_assignees"] == [
-        {"actor_kind": "user", "actor_id": str(seed.primary), "role": "primary"}
-    ]
-    assert len(activity.metadata_json["previous_assignees"]) == 2
-
-
-def test_active_previous_primary_is_kept_and_existing_primary_is_not_duplicated(
-    postgres_engine: Engine,
-) -> None:
-    seed = Seed(postgres_engine)
-
-    seed.transfer_committed(seed.owner, seed.primary)
-
-    assert seed.assignees() == {(seed.primary, "primary")}
-    assert seed.action().lifecycle == "in_progress"
-
-
-def test_new_executor_who_is_a_collaborator_also_becomes_primary(postgres_engine: Engine) -> None:
-    seed = Seed(postgres_engine, with_collaborator=True)
-
-    seed.transfer_committed(seed.owner, seed.collaborator)
-
-    assert seed.assignees() == {
-        (seed.primary, "primary"),
-        (seed.collaborator, "collaborator"),
-        (seed.collaborator, "primary"),
+    removed = activity.metadata_json["removed_assignees"]
+    assert {(item["actor_id"], item["role"]) for item in removed} == {
+        (str(seed.primary), "primary"),
+        (str(seed.collaborator), "collaborator"),
     }
+    assert activity.metadata_json["previous_assignees"] == removed
+
+
+def test_an_action_with_no_executor_at_all_can_be_transferred(postgres_engine: Engine) -> None:
+    seed = Seed(postgres_engine)
+    with Session(postgres_engine) as session, session.begin():
+        session.execute(
+            text("DELETE FROM action_assignees WHERE action_item_id = :id"),
+            {"id": seed.action_id},
+        )
+
+    seed.transfer_committed(seed.owner, seed.new1)
+
+    assert seed.assignees() == {(seed.new1, "primary")}
+
+
+@pytest.mark.parametrize("active", ["primary", "collaborator"])
+@pytest.mark.parametrize("target", ["new1", "same"])
+def test_an_active_executor_blocks_the_command_with_a_422(
+    postgres_engine: Engine, active: str, target: str
+) -> None:
+    """Scope: only for an action nobody active can act on. With an active executor the owner
+    must not be able to reopen (or re-staff) the action, not even by naming that executor."""
+    seed = Seed(postgres_engine, with_collaborator=True)
+    seed.set_active(getattr(seed, active), True)
+    new_executor = seed.new1 if target == "new1" else getattr(seed, active)
+
+    with Session(postgres_engine) as session, session.begin():
+        with pytest.raises(ActionItemOperationError, match="active executor"):
+            seed.transfer(session, seed.owner, new_executor)
+
+    assert seed.action().lifecycle == "done"
+    assert seed.transfer_activities() == []
+    assert seed.assignees() == {(seed.primary, "primary"), (seed.collaborator, "collaborator")}
 
 
 @pytest.mark.parametrize("scenario_key", sorted(SCENARIOS))
@@ -683,25 +704,51 @@ def test_two_transfers_race_and_exactly_one_wins(postgres_engine: Engine) -> Non
     assert (seed.new2, "primary") not in seed.assignees()
 
 
-def test_transfer_racing_the_original_executor_reopening_is_a_409(
+def test_transfer_racing_reactivation_of_the_original_executor_is_a_409(
     postgres_engine: Engine,
 ) -> None:
+    """The original primary is reactivated (uncommitted) while the transfer passed its
+    pre-lock check on the committed 'all deactivated' state: after waiting, the executor is
+    active again, so the command is a stale one (409) and must change nothing."""
     seed = Seed(postgres_engine)
 
-    def reopen(session: Session) -> None:
-        build_rectification_service(session).transition_action_item(
-            seed.user(session, seed.primary),
-            ActionItemId(seed.action_id),
-            "reopen",
-            occurred_at=NOW,
+    def reactivate(session: Session) -> None:
+        build_case_team_coordinator(session).update_user(
+            seed.user(session, seed.admin), seed.primary, is_active=True, now=NOW
         )
 
-    error = _race(seed, reopen, lambda session: seed.transfer(session, seed.owner, seed.new1))
+    error = _race(seed, reactivate, lambda session: seed.transfer(session, seed.owner, seed.new1))
 
     assert isinstance(error, ConcurrentActionItemTransitionError), repr(error)
-    assert seed.transfer_activities() == []
+    seed.assert_untouched()
     assert seed.assignees() == {(seed.primary, "primary")}
+
+
+def test_deactivating_the_last_active_collaborator_races_the_transfer_serially(
+    postgres_engine: Engine,
+) -> None:
+    """While the deactivation of the last active executor is uncommitted, the committed state
+    still has an active executor: the transfer is refused (422, nothing blocks or changes);
+    once the deactivation commits the same command succeeds."""
+    seed = Seed(postgres_engine, with_collaborator=True)
+    seed.set_active(seed.collaborator, True)
+
+    session_a = Session(postgres_engine)
+    transaction = session_a.begin()
+    try:
+        _deactivate(seed, seed.collaborator)(session_a)
+        with Session(postgres_engine) as session_b, session_b.begin():
+            with pytest.raises(ActionItemOperationError, match="active executor"):
+                seed.transfer(session_b, seed.owner, seed.new1)
+        transaction.commit()
+    finally:
+        session_a.close()
+    seed.assert_untouched()
+
+    seed.transfer_committed(seed.owner, seed.new1)
+
     assert seed.action().lifecycle == "in_progress"
+    assert seed.assignees() == {(seed.new1, "primary")}
 
 
 def test_transfer_racing_a_finding_status_change_is_a_409(postgres_engine: Engine) -> None:
@@ -773,7 +820,7 @@ def _case_id(seed: Seed) -> Any:
 def test_lock_order_is_case_then_users_in_one_statement_then_finding(
     postgres_engine: Engine,
 ) -> None:
-    seed = Seed(postgres_engine)
+    seed = Seed(postgres_engine, with_collaborator=True)
     locks: list[tuple[str, int]] = []
 
     def record(_conn: Any, _cursor: Any, statement: str, parameters: Any, *_: Any) -> None:
@@ -795,7 +842,7 @@ def test_lock_order_is_case_then_users_in_one_statement_then_finding(
     tables = [table for table, _ in locks]
     assert tables[0] == "review_cases"
     first_user_lock = tables.index("users")
-    # actor and new executor are taken together, in one ID-ordered statement
-    assert locks[first_user_lock][1] == 2
+    # actor, new executor and both current executors: one ID-ordered statement
+    assert locks[first_user_lock][1] == 4
     last_user_lock = len(tables) - 1 - tables[::-1].index("users")
     assert last_user_lock < tables.index("findings")

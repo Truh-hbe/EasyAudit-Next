@@ -522,7 +522,7 @@ export function ActionItemDetailPage() {
             onClose={() => setTransferOpen(false)}
             scopeKey={action.id}
             title="转交并重开整改项"
-            description="原执行人无法继续时，由发现项负责人指定新的主要执行人并重新打开整改项；已停用的执行人会被移出执行人列表，原完成记录保留在操作记录中。"
+            description="仅当整改项的所有执行人都已停用时可用（仍有活跃执行人时可由其自行重新打开）：由发现项负责人指定新的主要执行人并重新打开整改项；已停用的执行人会被移出执行人列表，原完成记录保留在操作记录中。"
             roleFieldLabel="执行角色"
             actorFieldLabel="新执行人"
             reason={{ label: '转交原因', fieldName: 'reason' }}

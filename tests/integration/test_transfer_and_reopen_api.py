@@ -142,3 +142,22 @@ def test_candidate_search_is_owner_only_and_only_for_done_actions(
     seed.transfer_committed(seed.owner, seed.new1)
     for client in _client(postgres_engine, seed, seed.owner):
         assert client.get(url, params={"q": "New"}).status_code == 422
+
+
+def test_an_active_executor_is_a_422_for_the_command_and_for_candidate_search(
+    postgres_engine: Engine,  # noqa: F811
+) -> None:
+    seed = Seed(postgres_engine, executors_active=True)
+
+    response = _post(
+        postgres_engine, seed, seed.owner, new_executor_id=str(seed.primary), reason="x"
+    )
+    assert response.status_code == 422
+    assert "active executor" in response.json()["detail"]
+    for client in _client(postgres_engine, seed, seed.owner):
+        candidates = client.get(
+            f"/api/v1/action-items/{seed.action_id}/transfer-candidates", params={"q": "New"}
+        )
+    assert candidates.status_code == 422
+    assert seed.action().lifecycle == "done"
+    assert seed.transfer_activities() == []

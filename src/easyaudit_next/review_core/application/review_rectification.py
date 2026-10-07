@@ -469,12 +469,17 @@ class RectificationService:
         *,
         occurred_at: datetime | None = None,
     ) -> ActionItemTransferResult:
-        """Atomically hand a DONE ActionItem to a new active primary and reopen it.
+        """Atomically hand a DONE ActionItem that has no active executor to a new active
+        primary and reopen it.
 
-        Lock order: Case -> {actor, new executor} Users (one ID-ordered statement) ->
-        Finding -> ActionItem (CAS). Executors that are no longer active Users are dropped
-        from the assignee list; everything that was true before (who, when completed,
-        the reason) is carried by the single Activity this writes.
+        Only available when every executor (primary and collaborator) is deactivated or
+        there are none; otherwise an active executor can reopen it themselves (422).
+
+        Lock order: Case -> {actor, new executor, current executors} Users (one ID-ordered
+        statement) -> Finding -> ActionItem (CAS). The executors' active state is decided
+        from the locked rows, so a concurrent deactivation / reactivation is seen (409).
+        The deactivated executors are dropped from the assignee list; everything that was
+        true before (who, when completed, the reason) is carried by the single Activity.
         """
         action_item, finding, review_case, policy, context = self._action_context(
             actor,
@@ -490,12 +495,22 @@ class RectificationService:
         # Pre-lock refusal with the same rules as below: permission, business validation,
         # new executor. A user who may not do this never queues on the Case lock.
         authorize(review_case, context)
+        previous = self._repository.list_action_assignees(actor.organization_id, action_item.id)
         policy.action_operations.decide_transfer_and_reopen(
-            self._action_operation_context(review_case, finding, action_item, reason=reason)
+            self._action_operation_context(
+                review_case,
+                finding,
+                action_item,
+                reason=reason,
+                has_active_assignee=self.has_active_executor(previous, None),
+            )
         )
         new_executor_actor = UserActor(new_executor_id)
         self._require_active_assignee_actor(actor, new_executor_actor)
 
+        executor_ids = tuple(
+            assignee.actor.user_id for assignee in previous if isinstance(assignee.actor, UserActor)
+        )
         review_case, context, _ = lock_case_and_build_context(
             self._repository,
             self._users,
@@ -509,14 +524,17 @@ class RectificationService:
                 action_item_id=action_item.id,
             ),
             authorize,
-            also_lock_user_ids=(new_executor_id,),
+            also_lock_user_ids=(new_executor_id, *executor_ids),
         )
-        # Row already locked above; this re-read sees a deactivation that committed first
-        # (already inactive before the pre-lock check would have been refused as 404).
-        locked_executor = next(
-            iter(self._users.lock_users_for_update(actor.organization_id, (new_executor_id,))),
-            None,
-        )
+        # Rows already locked above; these re-reads see deactivations / reactivations that
+        # committed first.
+        locked_users = {
+            user.id: user
+            for user in self._users.lock_users_for_update(
+                actor.organization_id, (new_executor_id, *executor_ids)
+            )
+        }
+        locked_executor = locked_users.get(new_executor_id)
         if locked_executor is None:
             raise LookupError("Active organization User not found")
         if not locked_executor.is_active:
@@ -528,6 +546,16 @@ class RectificationService:
         action_item = self._reload_action(actor, action_item.id, finding.id)
         if action_item.lifecycle is not expected_lifecycle:
             raise ConcurrentActionItemTransitionError("Concurrent ActionItem transition")
+        previous = self._repository.list_action_assignees(actor.organization_id, action_item.id)
+        if any(
+            isinstance(assignee.actor, UserActor) and assignee.actor.user_id not in locked_users
+            for assignee in previous
+        ):
+            raise ConcurrentActionItemTransitionError("Concurrent ActionItem assignee change")
+        # The pre-lock check passed, so an active executor now means one was reactivated
+        # while we waited: a concurrent change (409), not an invalid request (422).
+        if self.has_active_executor(previous, locked_users):
+            raise ConcurrentActionItemTransitionError("ActionItem executor became active")
         reopen_action = policy.action_operations.decide_transfer_and_reopen(
             self._action_operation_context(review_case, finding, action_item, reason=reason)
         )
@@ -551,31 +579,18 @@ class RectificationService:
         ):
             raise ConcurrentActionItemTransitionError("Concurrent ActionItem transition")
 
-        previous = self._repository.list_action_assignees(actor.organization_id, action_item.id)
-        removed: list[ActionAssignee] = []
-        for assignee in previous:
-            if isinstance(assignee.actor, UserActor) and assignee.actor.user_id != new_executor_id:
-                holder = self._users.get(assignee.actor.user_id)
-                if holder is not None and not holder.is_active:
-                    self._repository.remove_action_assignee(assignee)
-                    removed.append(assignee)
-        new_assignee = next(
-            (
-                assignee
-                for assignee in previous
-                if assignee.actor == new_executor_actor and assignee.role is AssignmentRole.PRIMARY
-            ),
-            None,
+        # No executor is active (checked above), so every User executor is dropped.
+        removed = [assignee for assignee in previous if isinstance(assignee.actor, UserActor)]
+        for assignee in removed:
+            self._repository.remove_action_assignee(assignee)
+        new_assignee = ActionAssignee(
+            organization_id=actor.organization_id,
+            action_item_id=action_item.id,
+            actor=new_executor_actor,
+            role=AssignmentRole.PRIMARY,
+            assigned_at=now,
         )
-        if new_assignee is None:
-            new_assignee = ActionAssignee(
-                organization_id=actor.organization_id,
-                action_item_id=action_item.id,
-                actor=new_executor_actor,
-                role=AssignmentRole.PRIMARY,
-                assigned_at=now,
-            )
-            self._repository.add_action_assignee(new_assignee)
+        self._repository.add_action_assignee(new_assignee)
 
         def describe(assignee: ActionAssignee) -> dict[str, str]:
             actor_kind, actor_id = self._participant_identity(assignee.actor)
@@ -981,6 +996,7 @@ class RectificationService:
         action_item: ActionItem | None = None,
         *,
         reason: str | None = None,
+        has_active_assignee: bool = False,
     ) -> ActionItemOperationContext:
         assignee_role_keys = (
             frozenset(
@@ -1000,8 +1016,29 @@ class RectificationService:
                 action_item.lifecycle if action_item is not None else None
             ),
             assignee_role_keys=assignee_role_keys,
+            has_active_assignee=has_active_assignee,
             reason=reason,
         )
+
+    def has_active_executor(
+        self,
+        assignees: tuple[ActionAssignee, ...],
+        locked_users: dict[UserId, User] | None = None,
+    ) -> bool:
+        """Is any User executor active? `locked_users` are the rows read under lock; without
+        them (pre-lock refusal) the current persisted rows are read."""
+        for assignee in assignees:
+            if not isinstance(assignee.actor, UserActor):
+                continue
+            user_id = assignee.actor.user_id
+            holder = (
+                locked_users.get(user_id)
+                if locked_users is not None
+                else self._users.get(user_id)
+            )
+            if holder is not None and holder.is_active:
+                return True
+        return False
 
     def _require_active_assignee_actor(
         self,

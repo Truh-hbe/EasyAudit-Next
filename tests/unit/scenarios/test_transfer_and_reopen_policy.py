@@ -36,11 +36,13 @@ def _context(
     finding: FindingLifecycle = FindingLifecycle.RECTIFYING,
     action: ActionItemLifecycle | None = ActionItemLifecycle.DONE,
     reason: str | None = "executor left the company",
+    active_executor: bool = False,
 ) -> ActionItemOperationContext:
     return ActionItemOperationContext(
         case_lifecycle=case,
         finding_lifecycle=finding,
         current_action_lifecycle=action,
+        has_active_assignee=active_executor,
         reason=reason,
     )
 
@@ -136,3 +138,20 @@ def test_permission_belongs_to_the_finding_owner_only(policy) -> None:
         AuthorizationContext(is_active_organization_user=True),
     ):
         assert not authorization.allows(PERMISSION, denied)
+
+
+@pytest.mark.parametrize("policy", POLICIES, ids=lambda p: p.scenario.key)
+def test_an_active_executor_blocks_the_command_and_the_state_check(policy) -> None:
+    for method in (
+        policy.action_operations.decide_transfer_and_reopen,
+        policy.action_operations.validate_transfer_and_reopen_state,
+    ):
+        with pytest.raises(ActionItemOperationError, match="active executor"):
+            method(_context(active_executor=True))
+
+
+@pytest.mark.parametrize("policy", POLICIES, ids=lambda p: p.scenario.key)
+def test_state_check_needs_no_reason_but_the_command_does(policy) -> None:
+    policy.action_operations.validate_transfer_and_reopen_state(_context(reason=None))
+    with pytest.raises(ActionItemOperationError, match="requires a reason"):
+        policy.action_operations.decide_transfer_and_reopen(_context(reason=None))

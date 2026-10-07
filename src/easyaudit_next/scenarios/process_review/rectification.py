@@ -106,12 +106,19 @@ class ProcessReviewActionOperations:
                 "Evidence cannot be registered for a cancelled ActionItem"
             )
 
-    def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
+    def validate_transfer_and_reopen_state(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
         if context.current_action_lifecycle is not ActionItemLifecycle.DONE:
             raise ActionItemOperationError(
                 "Only a done ActionItem can be transferred and reopened"
             )
+        if context.has_active_assignee:
+            raise ActionItemOperationError(
+                "ActionItem still has an active executor, who can reopen it directly"
+            )
+
+    def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
+        self.validate_transfer_and_reopen_state(context)
         if context.reason is None or not context.reason.strip():
             raise ActionItemOperationError(
                 "Transferring and reopening an ActionItem requires a reason"
