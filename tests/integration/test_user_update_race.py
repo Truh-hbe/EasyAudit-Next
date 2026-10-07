@@ -1,11 +1,12 @@
 """Concurrent admin PATCHes on one User keep each other's fields (issue #87 B3).
 
 Every PATCH in these tests runs through `CaseTeamUserCoordinator.update_user`, the same entry
-point the API uses. A hook in the repository's `update` makes the interleaving deterministic: each
-transaction's first user write waits (bounded) for the other transaction to arrive. Without an
-Organization lock plus a locked re-read both transactions decide from the same old snapshot, both
-write and both commit; with it the second PATCH blocks before it reads, so the wait times out,
-the first commits and the second decides from the committed row.
+point the API uses. A hook on the Organization lock makes the interleaving deterministic: each
+transaction waits at its first lock attempt until the other has arrived, so both PATCHes are in
+flight (and hold pre-lock snapshots of the actor) before either one proceeds. One then takes the
+lock and commits while the other blocks, and must decide from the committed rows. The tests with a
+pre-loaded Session cover the identity-map side: a row loaded earlier in the same Session must not
+be what the decision is made from.
 """
 
 import threading
@@ -17,26 +18,34 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
-from easyaudit_next.composition import build_case_team_coordinator
+from easyaudit_next.composition import (
+    build_case_team_coordinator,
+    build_platform_administration_service,
+)
 from easyaudit_next.platform.application.administration import LastSystemAdminError
 from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
 from easyaudit_next.platform.domain.models import PlatformRole, User
 from easyaudit_next.platform.persistence.models import (
     DepartmentRecord,
     OrganizationRecord,
+    PlatformAuditEventRecord,
     UserRecord,
 )
-from easyaudit_next.platform.persistence.repositories import SqlAlchemyUserRepository
+from easyaudit_next.platform.persistence.repositories import (
+    SqlAlchemyOrganizationRepository,
+)
+from tests.integration.barrier_support import CountingBarrier
+from tests.integration.test_m5_3_case_team_management import _create_case, _seed_fixture, _user
 
 pytestmark = pytest.mark.skipif(
     environ.get("EASYAUDIT_RUN_POSTGRES_TESTS") != "1",
     reason="PostgreSQL integration tests are opt-in outside CI",
 )
 
-RENDEZVOUS_SECONDS = 1.5
+RENDEZVOUS_SECONDS = 10.0
 
 
 @pytest.fixture(scope="module")
@@ -54,7 +63,7 @@ class Seed:
     department_ids: list[UUID]
 
 
-def _user(organization_id: UUID, user_id: UUID, role: PlatformRole) -> User:
+def _make_user(organization_id: UUID, user_id: UUID, role: PlatformRole) -> User:
     return User(
         id=UserId(user_id),
         organization_id=OrganizationId(organization_id),
@@ -97,36 +106,48 @@ def _seed(engine: Engine, admin_count: int = 2) -> Seed:
         )
     return Seed(
         organization_id,
-        [_user(organization_id, admin_id, PlatformRole.SYSTEM_ADMIN) for admin_id in admin_ids],
+        [
+            _make_user(organization_id, admin_id, PlatformRole.SYSTEM_ADMIN)
+            for admin_id in admin_ids
+        ],
         target_id,
         department_ids,
     )
 
 
 class _Rendezvous:
-    """Make each transaction's first user write wait (bounded) for the other's."""
+    """Hold each transaction at its first Organization lock attempt until both have arrived."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.both_arrived = threading.Event()
-        self._arrived: set[int] = set()
+        self.barrier = CountingBarrier(2)
+        self._seen: set[int] = set()
         self._lock = threading.Lock()
-        original = SqlAlchemyUserRepository.update
+        original = SqlAlchemyOrganizationRepository.lock_for_update
 
-        def update(repo: SqlAlchemyUserRepository, user: Any) -> None:
+        def lock_for_update(repo: SqlAlchemyOrganizationRepository, organization_id: Any) -> Any:
             transaction = id(repo._session)  # one Session == one transaction
             with self._lock:
-                first = transaction not in self._arrived
-                self._arrived.add(transaction)
-                if len(self._arrived) >= 2:
-                    self.both_arrived.set()
+                first = transaction not in self._seen
+                self._seen.add(transaction)
             if first:
-                self.both_arrived.wait(RENDEZVOUS_SECONDS)
-            original(repo, user)
+                self.barrier.wait(RENDEZVOUS_SECONDS)
+            return original(repo, organization_id)
 
-        monkeypatch.setattr(SqlAlchemyUserRepository, "update", update)
+        monkeypatch.setattr(SqlAlchemyOrganizationRepository, "lock_for_update", lock_for_update)
+
+    def assert_both_arrived(self) -> None:
+        assert self.barrier.hits == 2
 
 
 _returned: dict[tuple[UUID, str], User] = {}
+
+
+@pytest.fixture
+def rendezvous(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Rendezvous]:
+    rendezvous = _Rendezvous(monkeypatch)
+    yield rendezvous
+    # If the hook stops being reached the barrier never trips and the race would be vacuous.
+    rendezvous.assert_both_arrived()
 
 
 def _patch(engine: Engine, actor: User, user_id: UUID, **fields: Any) -> str:
@@ -173,11 +194,10 @@ def _assert_one_loser_and_an_admin_left(
 
 
 def test_deactivate_and_role_change_keep_both(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
+    engine: Engine, rendezvous: _Rendezvous
 ) -> None:
     seed = _seed(engine)
     admin = seed.admins[0]
-    _Rendezvous(monkeypatch)
 
     results = _race(
         [
@@ -193,11 +213,10 @@ def test_deactivate_and_role_change_keep_both(
 
 
 def test_deactivate_and_department_change_keep_both(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
+    engine: Engine, rendezvous: _Rendezvous
 ) -> None:
     seed = _seed(engine)
     admin = seed.admins[0]
-    _Rendezvous(monkeypatch)
 
     results = _race(
         [
@@ -219,11 +238,10 @@ def test_deactivate_and_department_change_keep_both(
 
 
 def test_role_and_department_change_keep_both(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
+    engine: Engine, rendezvous: _Rendezvous
 ) -> None:
     seed = _seed(engine)
     admin = seed.admins[0]
-    _Rendezvous(monkeypatch)
 
     results = _race(
         [
@@ -245,11 +263,10 @@ def test_role_and_department_change_keep_both(
 
 
 def test_display_name_and_deactivate_of_an_admin_keep_both(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
+    engine: Engine, rendezvous: _Rendezvous
 ) -> None:
     seed = _seed(engine)
     actor, victim = seed.admins
-    _Rendezvous(monkeypatch)
 
     results = _race(
         [
@@ -265,11 +282,10 @@ def test_display_name_and_deactivate_of_an_admin_keep_both(
 
 
 def test_last_admin_survives_opposite_deactivate_and_demote(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
+    engine: Engine, rendezvous: _Rendezvous
 ) -> None:
     seed = _seed(engine)
     a, b = seed.admins
-    _Rendezvous(monkeypatch)
 
     results = _race(
         [
@@ -282,11 +298,10 @@ def test_last_admin_survives_opposite_deactivate_and_demote(
 
 
 def test_last_admin_survives_two_deactivations(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
+    engine: Engine, rendezvous: _Rendezvous
 ) -> None:
     seed = _seed(engine)
     a, b = seed.admins
-    _Rendezvous(monkeypatch)
 
     results = _race(
         [
@@ -298,41 +313,70 @@ def test_last_admin_survives_two_deactivations(
     _assert_one_loser_and_an_admin_left(engine, results, a, b)
 
 
-def test_promotion_racing_deactivation_of_the_same_user_is_checked_against_the_new_role(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The target is promoted while the other PATCH deactivates it from a pre-promotion read.
+def _commit(engine: Engine, user_id: UUID, **columns: Any) -> None:
+    with Session(engine) as session, session.begin():
+        record = session.get(UserRecord, user_id)
+        assert record is not None
+        for name, value in columns.items():
+            setattr(record, name, value)
 
-    Admins: A (actor) and the target T, promoted to system_admin by one PATCH while another
-    deactivates T. Either order is fine, but A is then the only admin, so A must not be demotable
-    by T's stale authority: afterwards at least one active system_admin exists.
+
+def test_deactivation_from_a_stale_snapshot_cannot_remove_the_only_admin(engine: Engine) -> None:
+    """T becomes the only active admin while the deactivation still holds T as ordinary_user.
+
+    The Session already holds T's row (ordinary_user) in its identity map; another transaction
+    promotes T and demotes the original admin. The deactivation must decide from the locked row.
     """
 
     seed = _seed(engine, admin_count=1)
-    (a,) = seed.admins
-    _Rendezvous(monkeypatch)
+    (original_admin,) = seed.admins
+    promoted = _make_user(seed.organization_id, seed.target_id, PlatformRole.SYSTEM_ADMIN)
 
-    results = _race(
-        [
-            lambda: _patch(engine, a, seed.target_id, platform_role=PlatformRole.SYSTEM_ADMIN),
-            lambda: _patch(engine, a, seed.target_id, is_active=False),
-        ]
-    )
+    with Session(engine) as session:
+        stale = session.get(UserRecord, seed.target_id)
+        assert stale is not None and stale.platform_role == "ordinary_user"
+        _commit(engine, seed.target_id, platform_role="system_admin")
+        _commit(engine, original_admin.id, platform_role="ordinary_user")
+        with pytest.raises(LastSystemAdminError):
+            build_platform_administration_service(session).update_user(
+                promoted, UserId(seed.target_id), is_active=False
+            )
+        session.rollback()
 
-    assert results == ["ok", "ok"]
     row = _row(engine, seed.target_id)
-    assert row.platform_role == "system_admin" and row.is_active is False
-    assert _row(engine, a.id).is_active is True
+    assert row.is_active is True and row.platform_role == "system_admin"
 
 
-def test_response_reflects_the_committed_row_not_the_pre_lock_read(
-    engine: Engine, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("change", ["demoted", "deactivated"])
+def test_actor_authority_is_checked_against_the_locked_row(engine: Engine, change: str) -> None:
+    """The Session holds the actor's old row; a committed demotion/deactivation must win."""
+
+    seed = _seed(engine)
+    _, b = seed.admins
+
+    with Session(engine) as session:
+        preloaded = session.get(UserRecord, b.id)  # keep a strong ref: the map is weak
+        assert preloaded is not None and preloaded.platform_role == "system_admin"
+        if change == "demoted":
+            _commit(engine, b.id, platform_role="ordinary_user")
+        else:
+            _commit(engine, b.id, is_active=False)
+        with pytest.raises(PermissionError):
+            build_case_team_coordinator(session).update_user(
+                b, UserId(seed.target_id), display_name="By stale admin"
+            )
+        session.rollback()
+
+    assert _row(engine, seed.target_id).display_name == "B3 target"
+
+
+def test_response_and_audit_reflect_the_committed_row_not_the_pre_lock_read(
+    engine: Engine, rendezvous: _Rendezvous
 ) -> None:
     """A rename racing a deactivation must not report (or audit) the target as still active."""
 
     seed = _seed(engine)
     admin = seed.admins[0]
-    _Rendezvous(monkeypatch)
 
     results = _race(
         [
@@ -344,30 +388,36 @@ def test_response_reflects_the_committed_row_not_the_pre_lock_read(
     assert results == ["ok", "ok"]
     row = _row(engine, seed.target_id)
     assert (row.display_name, row.is_active) == ("Renamed", False)
+    # Whichever PATCH ran second saw the first one's committed change, in its response too.
     renamed = _returned[(seed.target_id, "display_name")]
     deactivated = _returned[(seed.target_id, "is_active")]
-    # Whichever PATCH ran second saw the first one's committed change.
-    assert (renamed.display_name, deactivated.is_active) == ("Renamed", False)
     assert renamed.is_active is False or deactivated.display_name == "Renamed"
+    with Session(engine) as session:
+        events = session.scalars(
+            select(PlatformAuditEventRecord)
+            .where(PlatformAuditEventRecord.target_user_id == seed.target_id)
+            .order_by(PlatformAuditEventRecord.occurred_at)
+        ).all()
+    assert len(events) == 2
+    assert events[-1].metadata_json["is_active"] is False
 
 
-@pytest.mark.parametrize("change", ["demoted", "deactivated"])
-def test_actor_authority_is_checked_against_the_locked_row(engine: Engine, change: str) -> None:
-    """The actor object comes from before the lock; a committed demotion/deactivation wins."""
+def test_deactivation_by_a_revoked_admin_is_forbidden_before_any_case_fact_is_visible(
+    engine: Engine,
+) -> None:
+    """A revoked admin gets 403, not the 409 that discloses the target is a Case's only manager.
 
-    seed = _seed(engine)
-    a, b = seed.admins
-    stale_b = b  # what the request authenticated with
+    B's request was authorized with a pre-demotion actor and then waited for the Organization
+    lock; by the time it runs, B's demotion has committed.
+    """
+
+    fixture = _seed_fixture(engine)
     with Session(engine) as session, session.begin():
-        record = session.get(UserRecord, b.id)
-        assert record is not None
-        if change == "demoted":
-            record.platform_role = "ordinary_user"
-        else:
-            record.is_active = False
+        _create_case(session, fixture, "process_review")
+    stale_admin = _user(engine, fixture.admin_id)
+    _commit(engine, fixture.admin_id, platform_role="ordinary_user")
 
-    assert (
-        _patch(engine, stale_b, seed.target_id, display_name="By stale admin") == "PermissionError"
-    )
-    assert _row(engine, seed.target_id).display_name == "B3 target"
-    assert a.id != b.id
+    with Session(engine) as session, pytest.raises(PermissionError):
+        build_case_team_coordinator(session).update_user(
+            stale_admin, fixture.manager_id, is_active=False
+        )
