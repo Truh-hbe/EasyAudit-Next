@@ -43,6 +43,7 @@ src/easyaudit_next/
   - Finding 创建、参与人、直接流转、手动催办：先取 `ReviewCase`（催办此后只写 Activity / Notification）；Finding 的参与人与流转随后用 CAS 串行化
   - 验证、重开、Case 关闭：`ReviewCase → Finding → Submission / Activity`
   - Case 成员增删、用户停用：`Organization → Case（按 ID 排序）→ User（按 ID 排序）`
+  - Bootstrap（`bootstrap-admin`）："库里没有 Organization"没有可冲突的行，唯一索引帮不上，所以是本文唯一使用 advisory lock 的地方。`bootstrap_admin_in_session` 的**第一条语句**取 `pg_advisory_xact_lock(BOOTSTRAP_ADVISORY_LOCK_KEY)`（`cli.py` 中的固定常量，不得复用于其他用途），之后才检查并写入；锁随事务提交/回滚释放，等待者的检查（READ COMMITTED 新语句）会看到赢家的 Organization 并以 `BootstrapRefusedError` 拒绝，CLI 退出码 1、stderr 给出可读信息，失败事务回滚，不留 Organization/User/凭据/审计。它在任何行锁之前，不会与上面的顺序反向。`tests/integration/test_bootstrap_race.py` 在一次性数据库里固定双 Session 竞争。
   - 部门父节点变更：`IdentityOrganizationService.move_department` 自己先取 `Organization`（`FOR NO KEY UPDATE`），再用 `DepartmentRepository.get_current`（`populate_existing`，绕过 identity map 的旧快照；生产 Session 是 `autoflush=False`，所以只在锁后的决定性读取里用，普通 `get` 不刷新）重读被移动的部门、校验父部门并遍历祖先，最后 UPDATE。锁在服务层而不是 API 入口，所以任何调用 `move_department` 的代码（目前只有管理 API）自动获得保护。**约束：已经持有 Case、User 等其他行锁之后，不得再调用 `move_department`**，否则 `Organization` 会排到它们后面，锁顺序反向。成环抛 `DepartmentCycleError`，API 返回 409。同组织的部门结构变更串行，跨组织互不影响。`tests/integration/test_department_move_race.py` 固定双 Session 竞争，以及“锁后刷新”的确定性顺序用例。数据库触发器 `reject_department_cycle` 只是兜底（读事务快照，拦不住写偏差；对已损坏的环会无限递归，修改需要迁移，另行处理）。
 - **会话 touch 是尽力而为，不得等锁**：每个已认证请求在退出路径（`get_current_identity` 的 `yield` 之后，与请求同一事务）更新当前会话的 `last_seen_at`。此时请求可能已持有别的会话行（`DELETE /me/sessions/{id}` 撤销另一个会话），阻塞式 UPDATE 会形成 A→B / B→A 的反向加锁（40P01，500）。因此 `touch_if_active` 用 `FOR NO KEY UPDATE SKIP LOCKED` 抢行，拿不到就跳过（返回 None，下次请求再记）；活跃时间不是安全属性，不能让安全操作失败。撤销语义不受影响：撤销是请求事务里的 `revoke_if_active`，touch 的条件仍含 `revoked_at IS NULL`，被跳过或晚于撤销提交的 touch 都不会复活会话。**新增的"顺带维护"类写入（统计、活跃时间等）同理：在请求末尾对可能被他人持有的行只能 SKIP LOCKED/NOWAIT，不得阻塞等待。** `tests/integration/test_session_revoke_touch_race.py` 固定互相撤销 204/204 与"行被锁时 touch 立即跳过"。
 - **父行锁强度**：被外键引用的父行（Organization、User、Case、Finding、Action）一律用 `FOR NO KEY UPDATE`，SQLAlchemy 写作 `.with_for_update(key_share=True)`。
@@ -69,7 +70,7 @@ src/easyaudit_next/
 - 重放按**当前**读取授权返回资源的当前表示（不存响应快照）；actor 已无权读取时按现有读取规则返回 403/404。
 - 指纹：校验后的请求体 `model_dump`，键排序、datetime 统一为 UTC ISO、无空白，再取 sha256；`operation` 不计入（已在作用域里）。Plan：`title`、`planned_start_at`、`planned_end_at`；Case：`plan_id`、`scenario_key`、`scenario_version`、`title`、`planned_start_at`、`planned_end_at`、`scenario_data`。
 - **该表所有外键都是 `DEFERRABLE INITIALLY DEFERRED`。** 立即检查的 FK 会在 claim 时对 Organization / User 行加 `FOR KEY SHARE`，两个并发创建各持一份后都要升级为行锁（`_lock_actor`），互相等待而死锁。延迟到提交时检查，此时本事务已持有行锁。（父行锁改为 `FOR NO KEY UPDATE` 后，升级本身不再与 `KEY SHARE` 冲突，延迟检查对这一点已不是必需，但保留无害。）`test_concurrent_creations_with_different_keys_do_not_deadlock` 固定了这一点。
-- 不用 advisory lock：它需要自己的键空间与生命周期，而唯一索引已经给出等同语义，并且随事务回滚自动释放。
+- 不用 advisory lock：它需要自己的键空间与生命周期，而唯一索引已经给出等同语义，并且随事务回滚自动释放。（唯一例外是 bootstrap，那里没有可冲突的行，见上方锁顺序。）
 - **保留期**：试点期不清理幂等记录（规模很小）；并入"数据保留"一起设计。记录有 FK 指向资源与用户，清理前需要先确定这些行的删除规则。
 
 ## 数据库预算

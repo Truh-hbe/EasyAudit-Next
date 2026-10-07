@@ -78,7 +78,7 @@ $DC run --rm api easyaudit-next bootstrap-admin \
   --organization-name "<组织名>" --admin-name "<管理员姓名>" --login-name "<登录名>"
 ```
 
-`bootstrap-admin` 会交互式询问密码（需要 TTY），仅在尚无组织时可用。之后通过 `https://<域名>/` 登录。
+`bootstrap-admin` 会交互式询问密码（需要 TTY），仅在尚无组织时可用；并发运行两次最多一次成功，另一次以退出码 1 和 `Bootstrap refused` 拒绝且不写入任何数据。之后通过 `https://<域名>/` 登录。
 
 ### 从基础设施 Ready 到可创建业务
 
