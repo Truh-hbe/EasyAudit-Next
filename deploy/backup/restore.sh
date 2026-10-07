@@ -77,6 +77,7 @@ isolate_entrypoints() {
 }
 on_exit() {
   local status=$?
+  trap - EXIT INT TERM # isolate at most once; no re-entry from a second signal
   if [ "$status" -ne 0 ] && $ENTRYPOINTS_STARTED; then isolate_entrypoints; fi
   exit "$status"
 }
@@ -120,13 +121,19 @@ restore_environment() {
   step "verify the restored data before any entry point is started"
   "$BACKUP_DIR_SRC/verify.sh" "$BACKUP"
 
+  # A signal must also end in a non-zero status through on_exit (it can otherwise see the 0 of the
+  # last successful command), so Ctrl-C / SIGTERM leave the entrypoints stopped.
   trap on_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   ENTRYPOINTS_STARTED=true
   step "start api and web (internal network only) and check the application"
   "${DC[@]}" up -d --wait api web
   "${DC[@]}" run --rm -T api easyaudit-next verify-evidence
   step "open the gateway"
   "${DC[@]}" up -d --wait gateway
+  trap - EXIT INT TERM
+  ENTRYPOINTS_STARTED=false
   echo "RESTORE OK: release $head, alembic $current"
 }
 

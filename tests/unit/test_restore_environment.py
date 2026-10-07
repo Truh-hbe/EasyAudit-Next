@@ -4,8 +4,10 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,7 +34,12 @@ case "$args" in
   *" object-tool "*lsf*) ;;
   *" object-tool "*copy*) fail_if STUB_FAIL_COPY ;;
   *" migrate alembic "*) echo "$STUB_ALEMBIC_REVISION" ;;
-  *" easyaudit-next verify-evidence"*) fail_if STUB_FAIL_APP ;;
+  *" easyaudit-next verify-evidence"*)
+    fail_if STUB_FAIL_APP
+    if [ -n "${STUB_READY:-}" ]; then
+      touch "$STUB_READY"
+      for _ in $(seq 100); do [ -e "$STUB_READY.release" ] && break; sleep 0.1; done
+    fi ;;
   *" up -d --wait gateway"*) fail_if STUB_FAIL_GATEWAY ;;
 esac
 exit 0
@@ -226,5 +233,50 @@ def test_post_start_failure_stops_the_entrypoints_and_keeps_the_data(
     assert stop > sandbox.index("up -d --wait api web")
     if failure == "STUB_FAIL_APP":
         assert not sandbox.called("up -d --wait gateway")
+    _assert_nothing_deleted(sandbox)
+    assert (sandbox.backup / "manifest.json").is_file()
+
+
+@pytest.mark.parametrize(("sig", "expected"), [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
+def test_signal_after_entrypoints_started_stops_them(
+    sandbox: Sandbox, sig: signal.Signals, expected: int
+) -> None:
+    ready = sandbox.root / "app-check-running"
+    script = sandbox.root / "deploy" / "backup" / "restore.sh"
+    process = subprocess.Popen(
+        [str(script), "environment", str(sandbox.backup)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{sandbox.root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+            "STUB_CALLS": str(sandbox.calls),
+            "STUB_DB_REVISION": REVISION,
+            "STUB_ALEMBIC_REVISION": REVISION,
+            "EASYAUDIT_RELEASE": SHA,
+            "EASYAUDIT_SECRETS_DIR": str(sandbox.root / "secrets"),
+            "EASYAUDIT_CERTS_DIR": str(sandbox.root / "certs"),
+            "STUB_READY": str(ready),
+        },
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            assert process.poll() is None and time.monotonic() < deadline
+            time.sleep(0.05)
+        process.send_signal(sig)
+        # bash runs the trap once the foreground stub returns; let it return successfully.
+        Path(f"{ready}.release").touch()
+        stdout, stderr = process.communicate(timeout=30)
+    finally:
+        process.kill()
+
+    assert process.returncode in (expected, -sig)
+    assert "RESTORE OK" not in stdout
+    assert "stopping gateway, web and api" in stderr
+    assert stderr.count("stopping gateway, web and api") == 1
+    sandbox.index("stop gateway web api")
+    assert not sandbox.called("up -d --wait gateway")
     _assert_nothing_deleted(sandbox)
     assert (sandbox.backup / "manifest.json").is_file()
