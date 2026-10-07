@@ -17,7 +17,7 @@ const catalog = [
 
 const KEY_REUSE = 'Idempotency-Key reused with a different request'
 
-type Outcome = 'abort' | 'server-error' | 'key-reuse' | 'conflict' | 'rejected' | 'unmapped' | 'created'
+type Outcome = 'abort' | 'server-error' | 'key-reuse' | 'conflict' | 'rejected' | 'dates-rejected' | 'unmapped' | 'created'
 
 function fulfillJson(route: Route, status: number, body: unknown) {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
@@ -51,6 +51,10 @@ async function stubCreate(page: Page, path: string, outcomes: Outcome[], created
         return fulfillJson(route, 422, {
           detail: 'review_type must be a non-blank string; area_code must not contain surrounding whitespace',
         })
+      case 'dates-rejected':
+        return fulfillJson(route, 422, {
+          detail: 'planned_end_at must be greater than or equal to planned_start_at',
+        })
       case 'unmapped':
         return fulfillJson(route, 422, { detail: 'Plan dates are outside the allowed range' })
       case 'created':
@@ -64,7 +68,13 @@ async function stubShell(page: Page) {
   await page.route('**/api/v1/me', (route) => fulfillJson(route, 200, user))
   await page.route('**/api/v1/review-catalog', (route) => fulfillJson(route, 200, catalog))
   await page.route('**/api/v1/review-plans/plan-1', (route) =>
-    fulfillJson(route, 200, { id: 'plan-1', title: 'Wizard Plan', organization_id: user.organization_id }),
+    fulfillJson(route, 200, {
+      id: 'plan-1',
+      title: 'Wizard Plan',
+      organization_id: user.organization_id,
+      planned_start_at: '2026-08-01T00:00:00Z',
+      planned_end_at: '2026-08-31T00:00:00Z',
+    }),
   )
   // 创建成功后会跳到下一页，只需让它安静地加载。
   await page.route('**/api/v1/review-cases/case-1**', (route) => fulfillJson(route, 404, { detail: 'not found' }))
@@ -520,6 +530,131 @@ test.describe('case step', () => {
     await fillCase(page)
     await page.getByRole('button', { name: '创建审查活动' }).click()
     await expect(page.getByRole('alert')).toHaveText('Plan dates are outside the allowed range')
+  })
+
+  test('dates are optional: left empty they are omitted, never copied from the plan', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-cases', [], { id: 'case-1' })
+    await fillCase(page)
+    // 计划日期只读展示，不会预填到活动日期。
+    await expect(page.getByText('2026/08/01 08:00')).toBeVisible()
+    await expect(page.getByLabel('活动开始时间（可选）')).toHaveValue('')
+    await expect(page.getByLabel('活动结束时间（可选）')).toHaveValue('')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page).toHaveURL(/\/review-cases\/case-1$/)
+    expect(requests[0].body).not.toHaveProperty('planned_start_at')
+    expect(requests[0].body).not.toHaveProperty('planned_end_at')
+  })
+
+  test('filled dates are sent as Asia/Shanghai ISO instants; a lone end date is allowed', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-cases', [], { id: 'case-1' })
+    await fillCase(page)
+    await enterDateTime(page, '活动开始时间（可选）', '2026/09/01 09:00')
+    await enterDateTime(page, '活动结束时间（可选）', '2026/09/30 18:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page).toHaveURL(/\/review-cases\/case-1$/)
+    expect(requests[0].body).toMatchObject({
+      planned_start_at: '2026-09-01T01:00:00.000Z',
+      planned_end_at: '2026-09-30T10:00:00.000Z',
+    })
+
+    await fillCase(page)
+    await enterDateTime(page, '活动结束时间（可选）', '2026/09/30 18:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect.poll(() => requests.length).toBe(2)
+    expect(requests[1].body).not.toHaveProperty('planned_start_at')
+    expect(requests[1].body).toMatchObject({ planned_end_at: '2026-09-30T10:00:00.000Z' })
+  })
+
+  test('invalid text or an end before the start is rejected on the field without a request', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-cases', [], { id: 'case-1' })
+    await fillCase(page)
+    await enterDateTime(page, '活动开始时间（可选）', '2026/02/30 10:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page.getByText('活动开始时间无效：请填写存在的上海时间（Asia/Shanghai）。')).toBeVisible()
+    expect(requests).toHaveLength(0)
+
+    await enterDateTime(page, '活动开始时间（可选）', '2026/09/30 18:00')
+    await enterDateTime(page, '活动结束时间（可选）', '2026/09/01 09:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page.getByText('活动结束时间不能早于活动开始时间。')).toBeVisible()
+    await expect(page.getByLabel('活动结束时间（可选）')).toBeFocused()
+    expect(requests).toHaveLength(0)
+    await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
+
+    // 改开始时间后，结束时间的错误随之重新校验。
+    await enterDateTime(page, '活动开始时间（可选）', '2026/08/30 18:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page).toHaveURL(/\/review-cases\/case-1$/)
+    expect(requests).toHaveLength(1)
+  })
+
+  test('422 on the dates lands on the end field, keeps the dates and the key; the retry sends the same dates', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-cases', ['dates-rejected'], { id: 'case-1' })
+    await fillCase(page)
+    await enterDateTime(page, '活动开始时间（可选）', '2026/09/01 09:00')
+    await enterDateTime(page, '活动结束时间（可选）', '2026/09/30 18:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    const end = page.getByLabel('活动结束时间（可选）')
+    await expect(page.getByText('planned_end_at must be greater than or equal to planned_start_at')).toBeVisible()
+    await expect(end).toBeFocused()
+    await expect(end).toHaveAccessibleDescription(/planned_end_at must be greater than or equal to planned_start_at/)
+    await expect(page.getByLabel('活动开始时间（可选）')).toHaveValue('2026/09/01 09:00')
+    await expect(end).toHaveValue('2026/09/30 18:00')
+    await expect(page.getByRole('alert')).toHaveCount(0)
+
+    // 修改字段后错误清除；服务器明确拒绝过，重试沿用同一键（拒绝不会占用键）。
+    await enterDateTime(page, '活动结束时间（可选）', '2026/10/01 18:00')
+    await expect(page.getByText('planned_end_at must be')).toHaveCount(0)
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page).toHaveURL(/\/review-cases\/case-1$/)
+    expect(requests[1].body).toMatchObject({
+      planned_start_at: '2026-09-01T01:00:00.000Z',
+      planned_end_at: '2026-10-01T10:00:00.000Z',
+    })
+  })
+
+  test('unknown outcome with dates: the retry sends the same key and the same dates', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-cases', ['abort'], { id: 'case-1' })
+    await fillCase(page)
+    await enterDateTime(page, '活动开始时间（可选）', '2026/09/01 09:00')
+    await enterDateTime(page, '活动结束时间（可选）', '2026/09/30 18:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page.getByRole('alert').filter({ hasText: '未确认是否成功' })).toBeVisible()
+    await expect(page.getByLabel('活动结束时间（可选）')).toHaveValue('2026/09/30 18:00')
+    await page.getByRole('button', { name: '重试创建审查活动' }).click()
+    await expect(page).toHaveURL(/\/review-cases\/case-1$/)
+    expect(requests).toHaveLength(2)
+    expect(requests[1].key).toBe(requests[0].key)
+    expect(requests[1].body).toEqual(requests[0].body)
+    expect(requests[1].body).toMatchObject({ planned_end_at: '2026-09-30T10:00:00.000Z' })
+  })
+
+  test('unknown outcome, then editing a date: the retry reuses the key, a 409 key reuse says the content differs, keeps the draft and never replays by itself', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-cases', ['abort', 'key-reuse'], { id: 'case-1' })
+    await fillCase(page)
+    await enterDateTime(page, '活动开始时间（可选）', '2026/09/01 09:00')
+    await enterDateTime(page, '活动结束时间（可选）', '2026/09/30 18:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page.getByRole('alert').filter({ hasText: '未确认是否成功' })).toBeVisible()
+
+    await enterDateTime(page, '活动结束时间（可选）', '2026/10/15 18:00')
+    await page.getByRole('button', { name: '重试创建审查活动' }).click()
+    await expect(page.getByRole('alert')).toContainText('当前内容与之前提交的创建请求不一致')
+    expect(requests).toHaveLength(2)
+    expect(requests[1].key).toBe(requests[0].key)
+    expect(requests[1].body).toMatchObject({ planned_end_at: '2026-10-15T10:00:00.000Z' })
+    await expect(page.getByLabel('活动结束时间（可选）')).toHaveValue('2026/10/15 18:00')
+    await expect(page.getByLabel('活动开始时间（可选）')).toHaveValue('2026/09/01 09:00')
+    await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
+    await page.waitForTimeout(1500)
+    expect(requests).toHaveLength(2)
+    await expect(page).toHaveURL(/\/review-plans\/plan-1\/review-cases\/new$/)
   })
 
   test('a blank or padded name is rejected on the field without a request', async ({ page }) => {

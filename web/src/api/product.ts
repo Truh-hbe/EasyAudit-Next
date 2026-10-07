@@ -132,6 +132,8 @@ export interface ReviewCaseCreateInput {
   scenario_key: string
   scenario_version: number
   title: string
+  planned_start_at?: string
+  planned_end_at?: string
   scenario_data: Record<string, unknown>
 }
 

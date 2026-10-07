@@ -15,6 +15,12 @@ import type {
   ReviewCatalogItemResponse,
   ReviewPlanResponse,
 } from '../../api/product'
+import {
+  DISPLAY_TIME_ZONE_HINT,
+  formatDateTime,
+  invalidDisplayZoneInputMessage,
+  parseOptionalDisplayZoneText,
+} from '../../product/format'
 import { scenarioName, scenarioVersionText } from '../../product/terms'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import { caseCreateFieldId } from '../../scenarios/CaseCreateTextField'
@@ -23,7 +29,9 @@ import { ButtonLink } from '../../ui/ButtonLink'
 import { FieldError } from '../../ui/FieldError'
 import { InitialLoading } from '../../ui/InitialLoading'
 import { PageHeader } from '../../ui/PageHeader'
+import { ShanghaiDateTimePicker } from '../../ui/ShanghaiDateTimePicker'
 import {
+  clearedErrors,
   describeRejection,
   isDefinitiveCreationRejection,
   serverError,
@@ -44,6 +52,31 @@ export type CaseSubmitState =
 
 interface CaseFormValues {
   title: string
+  planned_start_at: string | undefined
+  planned_end_at: string | undefined
+}
+
+// 结束时间排在前面：服务端 "planned_end_at must be ... planned_start_at" 同时提到两个字段，挂到结束时间上。
+const DATE_FIELDS = ['planned_end_at', 'planned_start_at'] as const
+const TIME_ZONE_HINT_ID = 'case-time-zone-hint'
+
+// 校验失败以 FieldError 元素作为提示（达标配色）；结束早于开始只在两者都有效时检查，最终以服务端 422 为准。
+function timeRules(label: string, getStart?: () => string | undefined) {
+  return [
+    {
+      validator: (_: unknown, value: string | undefined): Promise<void> => {
+        const parsed = parseOptionalDisplayZoneText(value ?? '')
+        if (!parsed.valid) return Promise.reject(<FieldError>{invalidDisplayZoneInputMessage(label)}</FieldError>)
+        if (getStart !== undefined && parsed.iso !== null) {
+          const start = parseOptionalDisplayZoneText(getStart() ?? '')
+          if (start.valid && start.iso !== null && Date.parse(parsed.iso) < Date.parse(start.iso)) {
+            return Promise.reject(<FieldError>{label}不能早于活动开始时间。</FieldError>)
+          }
+        }
+        return Promise.resolve()
+      },
+    },
+  ]
 }
 
 // 选项不超过 4 个用 Radio.Group，否则用 Select（docs/design.md「组件选用」）。
@@ -95,12 +128,17 @@ export function buildCaseCreateInput(
   title: string,
   adapter: ScenarioCaseAdapter,
   values: ScenarioFormValues,
+  plannedStartAt: string | null = null,
+  plannedEndAt: string | null = null,
 ): ReviewCaseCreateInput {
   return {
     plan_id: planId,
     scenario_key: item.scenario_key,
     scenario_version: item.scenario_version,
     title,
+    // 日期属于请求体，与 Plan 日期无关；留空时省略，保持 null。
+    ...(plannedStartAt === null ? {} : { planned_start_at: plannedStartAt }),
+    ...(plannedEndAt === null ? {} : { planned_end_at: plannedEndAt }),
     scenario_data: adapter.buildCaseScenarioData(values),
   }
 }
@@ -122,6 +160,7 @@ export function ReviewCaseCreatePage() {
   const [selectedIdentity, setSelectedIdentity] = useState('')
   const [scenarioValues, setScenarioValues] = useState<ScenarioFormValues>({})
   const [titleError, setTitleError] = useState<string | undefined>()
+  const [dateErrors, setDateErrors] = useState<Record<string, string>>({})
   const [scenarioErrors, setScenarioErrors] = useState<Record<string, string>>({})
   const [submitState, setSubmitState] = useState<CaseSubmitState>({ status: 'idle' })
   // 校验是异步的：双击或连按 Enter 时第二次提交可能先于重新渲染，用 ref 同步拦截。
@@ -191,15 +230,21 @@ export function ReviewCaseCreatePage() {
       !canCreateCase(scenarioAdapter, submitState)
     ) return
 
+    // 无效时间不能当作"未填写"提交；保留输入和幂等键，由用户修改后重试。
+    const startAt = parseOptionalDisplayZoneText(values.planned_start_at ?? '')
+    const endAt = parseOptionalDisplayZoneText(values.planned_end_at ?? '')
+    if (!startAt.valid || !endAt.valid) return
+
     inFlight.current = true
     setTitleError(undefined)
+    setDateErrors({})
     setScenarioErrors({})
     setSubmitState({ status: 'submitting' })
     const scenarioFields = Object.keys(scenarioAdapter.buildCaseScenarioData({}))
     const result = await executeCaseSubmission(() => createReviewCase(
-      buildCaseCreateInput(planId, selectedItem, values.title, scenarioAdapter, scenarioValues),
+      buildCaseCreateInput(planId, selectedItem, values.title, scenarioAdapter, scenarioValues, startAt.iso, endAt.iso),
       idempotencyKey.current,
-    ), ['title', ...scenarioFields])
+    ), [...DATE_FIELDS, 'title', ...scenarioFields])
     if (result.reviewCase !== undefined) {
       idempotencyKey.current = newIdempotencyKey()
       await navigate(`/review-cases/${encodeURIComponent(result.reviewCase.id)}`)
@@ -211,15 +256,22 @@ export function ReviewCaseCreatePage() {
     flushSync(() => {
       setSubmitState(result.state)
       setTitleError(fieldErrors.title)
+      setDateErrors(Object.fromEntries(DATE_FIELDS.flatMap((name) => {
+        const text = fieldErrors[name]
+        return text === undefined ? [] : [[name, text]]
+      })))
       setScenarioErrors(Object.fromEntries(scenarioFields.flatMap((name) => {
         const text = fieldErrors[name]
         return text === undefined ? [] : [[name, text]]
       })))
     })
     if (result.state.status !== 'rejected') return
-    // 聚焦第一个有错误的字段：先标题，再场景字段（按适配器的字段顺序）。
+    // 聚焦第一个有错误的字段，按页面顺序：标题、日期，再是场景字段（按适配器的字段顺序）。
+    const firstDate = (['planned_start_at', 'planned_end_at'] as const).find((name) => fieldErrors[name] !== undefined)
     if (fieldErrors.title !== undefined) {
       form.scrollToField('title', { focus: true })
+    } else if (firstDate !== undefined) {
+      form.scrollToField(firstDate, { focus: true })
     } else {
       const first = scenarioFields.find((name) => fieldErrors[name] !== undefined)
       if (first !== undefined) document.getElementById(caseCreateFieldId(first))?.focus()
@@ -270,6 +322,8 @@ export function ReviewCaseCreatePage() {
             items={[
               { key: 'title', label: '计划名称', children: loadState.plan.title },
               { key: 'id', label: '计划编号', children: loadState.plan.id },
+              { key: 'plan-start', label: '计划开始时间', children: formatDateTime(loadState.plan.planned_start_at) },
+              { key: 'plan-end', label: '计划结束时间', children: formatDateTime(loadState.plan.planned_end_at) },
             ]}
           />
         </Flex>
@@ -279,7 +333,7 @@ export function ReviewCaseCreatePage() {
         <Flex vertical gap={16}>
           <h2>审查活动信息</h2>
           <Typography.Text type="secondary">
-            审查活动名称必须单独填写；计划名称和计划日期不会自动复制到审查活动。
+            审查活动名称和日期必须单独填写；计划名称和计划日期不会自动复制到审查活动，日期留空表示该活动没有期限。
           </Typography.Text>
           <Form
             form={form}
@@ -289,6 +343,7 @@ export function ReviewCaseCreatePage() {
             scrollToFirstError={{ focus: true }}
             onValuesChange={(changed) => {
               if ('title' in changed) setTitleError(undefined)
+              setDateErrors((current) => clearedErrors(current, changed))
             }}
             onFinish={(values) => void submitCase(values)}
           >
@@ -343,6 +398,19 @@ export function ReviewCaseCreatePage() {
             {unsupportedSelection ? (
               <Alert type="warning" showIcon title="当前版本的审查场景界面暂不支持，创建已关闭。" className="wizard-alert" />
             ) : null}
+            <Typography.Paragraph id={TIME_ZONE_HINT_ID} type="secondary">{DISPLAY_TIME_ZONE_HINT}</Typography.Paragraph>
+            <Form.Item label="活动开始时间（可选）" name="planned_start_at" {...serverError(dateErrors, 'planned_start_at')} rules={timeRules('活动开始时间')}>
+              <ShanghaiDateTimePicker hintId={TIME_ZONE_HINT_ID} />
+            </Form.Item>
+            <Form.Item
+              label="活动结束时间（可选）"
+              name="planned_end_at"
+              dependencies={['planned_start_at']}
+              {...serverError(dateErrors, 'planned_end_at')}
+              rules={timeRules('活动结束时间', () => form.getFieldValue('planned_start_at') as string | undefined)}
+            >
+              <ShanghaiDateTimePicker hintId={TIME_ZONE_HINT_ID} />
+            </Form.Item>
             {CaseCreateFields === undefined ? null : (
               <CaseCreateFields
                 values={scenarioValues}

@@ -44,6 +44,31 @@ describe('M5.2 plan-first creation contracts', () => {
     })
   })
 
+  it('includes Case dates only when given, as the exact ISO instants', () => {
+    const item = { scenario_key: 'process_review', scenario_version: 1, display_name: 'Process Review' }
+    const adapter = resolveCaseScenarioAdapter(item.scenario_key, item.scenario_version)
+    if (adapter === undefined) throw new Error('adapter missing')
+    const values = { area_code: 'area-a', review_type: 'standard' }
+    const both = buildCaseCreateInput('p', item, 't', adapter, values, '2026-09-01T01:00:00.000Z', '2026-09-30T10:00:00.000Z')
+    expect(both).toMatchObject({ planned_start_at: '2026-09-01T01:00:00.000Z', planned_end_at: '2026-09-30T10:00:00.000Z' })
+    const endOnly = buildCaseCreateInput('p', item, 't', adapter, values, null, '2026-09-30T10:00:00.000Z')
+    expect(endOnly).not.toHaveProperty('planned_start_at')
+    expect(endOnly).toMatchObject({ planned_end_at: '2026-09-30T10:00:00.000Z' })
+    expect(buildCaseCreateInput('p', item, 't', adapter, values, null, null)).not.toHaveProperty('planned_end_at')
+  })
+
+  it('maps the end-before-start 422 onto the end field', async () => {
+    const { state } = await executeCaseSubmission(
+      () => Promise.reject(new ApiError(422, 'planned_end_at must be greater than or equal to planned_start_at')),
+      ['planned_end_at', 'planned_start_at', 'title'],
+    )
+    expect(state).toMatchObject({
+      status: 'rejected',
+      message: '',
+      fieldErrors: { planned_end_at: 'planned_end_at must be greater than or equal to planned_start_at' },
+    })
+  })
+
   it('treats a 4xx response as definitive but a transport error or 5xx as ambiguous', () => {
     expect(isDefinitiveRejection(new ApiError(422, 'invalid'))).toBe(true)
     expect(isDefinitiveRejection(new ApiError(409, 'conflict'))).toBe(true)
