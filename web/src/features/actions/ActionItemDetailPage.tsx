@@ -1,4 +1,12 @@
-import { CheckOutlined, NotificationOutlined, PlayCircleOutlined, PlusOutlined, RollbackOutlined, StopOutlined } from '@ant-design/icons'
+import {
+  CheckOutlined,
+  NotificationOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  RollbackOutlined,
+  StopOutlined,
+  SwapOutlined,
+} from '@ant-design/icons'
 import { Alert, App, Button, Card, Descriptions, Empty, Flex, Result, Spin, Timeline, Typography } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
@@ -13,6 +21,8 @@ import {
   getFinding,
   getReviewCase,
   searchActionAssigneeCandidates,
+  searchActionTransferCandidates,
+  transferAndReopenActionItem,
   transitionActionItem,
 } from '../../api/product'
 import {
@@ -45,6 +55,9 @@ import { EvidenceSection } from './EvidenceSection'
 type NudgeNotice =
   | { actionItemId: string; type: 'success'; text: string }
   | { actionItemId: string; type: 'failure'; failure: CommandFailure }
+
+// 转交并重开只能把已完成的整改项交给新的主要执行人（后端场景规则固定为用户 + 主要执行人）。
+const TRANSFER_ROLE: AssignRoleOption = { value: 'primary', label: assignmentRoleName('primary'), actorKind: 'user' }
 
 // 完成要求只陈述领域规则（domain.md），不由本页推导新的逾期或完成规则。
 function completionRequirement(lifecycle: string, completedAt: string | null): string {
@@ -93,6 +106,7 @@ export function ActionItemDetailPage() {
   const [nudgeBusy, setNudgeBusy] = useState(false)
   const [nudgeNotice, setNudgeNotice] = useState<NudgeNotice | null>(null)
   const [assignDrawerOpen, setAssignDrawerOpen] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const refresh = () => setRevision((value) => value + 1)
 
@@ -107,6 +121,7 @@ export function ActionItemDetailPage() {
     setNudgeBusy(false)
     setNudgeNotice(null)
     setAssignDrawerOpen(false)
+    setTransferOpen(false)
     setCancelOpen(false)
     // 卸载（含路由切换后重新挂载）也换代次：旧实例里仍在途的命令之后不能再提示或刷新。
     return () => {
@@ -407,6 +422,11 @@ export function ActionItemDetailPage() {
                           run={() => run('重新打开整改项', () => transitionActionItem(action.id, 'reopen'))}
                         />
                       ) : null}
+                      {action.lifecycle === 'done' && findingData?.lifecycle === 'rectifying' ? (
+                        <Button icon={<SwapOutlined aria-hidden />} disabled={commandBusy} onClick={() => setTransferOpen(true)}>
+                          转交并重开
+                        </Button>
+                      ) : null}
                       {action.lifecycle === 'todo' || action.lifecycle === 'in_progress' ? (
                         <Button danger icon={<StopOutlined aria-hidden />} disabled={commandBusy} onClick={() => setCancelOpen(true)}>
                           取消整改项
@@ -494,6 +514,26 @@ export function ActionItemDetailPage() {
                 () => addActionAssignee(action.id, candidate.actor_kind, candidate.actor_id, role.value as 'primary' | 'collaborator'),
                 { notify: false },
               )
+            }
+            onAccessLost={refresh}
+          />
+          <ActorAssignDrawer
+            open={transferOpen}
+            onClose={() => setTransferOpen(false)}
+            scopeKey={action.id}
+            title="转交并重开整改项"
+            description="仅当整改项的所有执行人都已停用时可用（仍有活跃执行人时可由其自行重新打开）：由发现项负责人指定新的主要执行人并重新打开整改项；已停用的执行人会被移出执行人列表，原完成记录保留在操作记录中。"
+            roleFieldLabel="执行角色"
+            actorFieldLabel="新执行人"
+            reason={{ label: '转交原因', fieldName: 'reason' }}
+            okText="确认转交并重开"
+            roles={[TRANSFER_ROLE]}
+            search={(_role, query, signal) => searchActionTransferCandidates(action.id, query, signal)}
+            add={(_role, candidate, reason) =>
+              run('转交并重开整改项', () => transferAndReopenActionItem(action.id, candidate.actor_id, reason), {
+                fields: ['reason'],
+                notify: false,
+              })
             }
             onAccessLost={refresh}
           />

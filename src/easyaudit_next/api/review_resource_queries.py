@@ -201,6 +201,31 @@ def search_action_assignee_candidates(
 
 
 @review_resource_query_router.get(
+    "/action-items/{action_item_id}/transfer-candidates",
+    response_model=list[AssignmentCandidateResponse],
+    operation_id="searchActionTransferCandidates",
+)
+def search_action_transfer_candidates(
+    action_item_id: UUID,
+    identity: BusinessIdentity,
+    session: DatabaseSession,
+    q: Annotated[str, Query(min_length=2, max_length=200)],
+    limit: Annotated[int, Query(ge=1, le=20)] = 20,
+) -> list[AssignmentCandidateResponse]:
+    service = build_review_resource_context_query_service(session)
+    try:
+        items = service.search_action_transfer_candidates(
+            identity.user,
+            ActionItemId(action_item_id),
+            search_text=q,
+            limit=limit,
+        )
+    except (ReviewAuthorizationError, LookupError, ValueError) as exc:
+        _raise_api_error(exc)
+    return [_candidate_response(item) for item in items]
+
+
+@review_resource_query_router.get(
     "/findings/{finding_id}/submissions",
     response_model=list[SubmissionResponse],
     operation_id="listFindingSubmissions",

@@ -33,6 +33,7 @@ from easyaudit_next.scenarios.process_review.v1 import (
 class ProcessReviewRectificationPermission(StrEnum):
     MANAGE_ACTION_ASSIGNEES = "manage_action_assignees"
     ADD_RECTIFICATION_EVIDENCE = "add_rectification_evidence"
+    TRANSFER_AND_REOPEN_ACTION = "transfer_and_reopen_action"
 
 
 _ACTIVE_CASE_LIFECYCLES = {
@@ -105,13 +106,35 @@ class ProcessReviewActionOperations:
                 "Evidence cannot be registered for a cancelled ActionItem"
             )
 
+    def validate_transfer_and_reopen_state(self, context: ActionItemOperationContext) -> None:
+        self._require_active_rectification(context)
+        if context.current_action_lifecycle is not ActionItemLifecycle.DONE:
+            raise ActionItemOperationError(
+                "Only a done ActionItem can be transferred and reopened"
+            )
+        if context.has_active_assignee:
+            raise ActionItemOperationError(
+                "ActionItem still has an active executor, who can reopen it directly"
+            )
+
+    def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
+        self.validate_transfer_and_reopen_state(context)
+        if context.reason is None or not context.reason.strip():
+            raise ActionItemOperationError(
+                "Transferring and reopening an ActionItem requires a reason"
+            )
+        return ProcessReviewActionItemAction.REOPEN.value
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessReviewRectificationAuthorizationPolicy(ProcessReviewAuthorizationPolicy):
     def allows(self, permission: str, context: AuthorizationContext) -> bool:
         finding_roles = _direct_user_role_keys(context, action=False)
         action_roles = _direct_user_role_keys(context, action=True)
-        if permission == ProcessReviewRectificationPermission.MANAGE_ACTION_ASSIGNEES:
+        if permission in {
+            ProcessReviewRectificationPermission.MANAGE_ACTION_ASSIGNEES,
+            ProcessReviewRectificationPermission.TRANSFER_AND_REOPEN_ACTION,
+        }:
             return "owner" in finding_roles
         if permission == ProcessReviewRectificationPermission.ADD_RECTIFICATION_EVIDENCE:
             return "owner" in finding_roles or bool(

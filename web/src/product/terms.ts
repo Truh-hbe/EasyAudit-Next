@@ -86,6 +86,7 @@ export const ACTIVITY_EVENT_NAMES = {
   'action_item.created': '创建整改项',
   'action_item.transitioned': '整改项状态变更',
   'action_item.assignee_added': '添加整改项执行人',
+  'action_item.transferred_and_reopened': '转交并重新打开整改项',
   'action_item.evidence_registered': '登记证据',
   'action_item.nudged': '催办整改项',
 } as const satisfies Record<string, string>

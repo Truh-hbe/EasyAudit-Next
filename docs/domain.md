@@ -91,6 +91,14 @@ done --reopen--> in_progress
 
 整改操作要求 Case 为 `in_progress` / `awaiting_closure` 且 Finding 为 `rectifying`。
 
+**转交并重开**（`transfer_and_reopen_action`）：`done` 的整改项**没有任何活跃执行人**（primary 与 collaborator 都已停用，或没有执行人）时的恢复路径。它不是通用的重新分配：`done` 冻结执行人变更，且仍有活跃执行人时他们可以自己重开，所以此时命令被拒绝（422）。用一个原子命令而不是"DONE 追加执行人"，因为后者会让所有 `manage_action_assignees` 持有者随时改写已完成事实的责任归属。
+- 前置条件：Case `in_progress` / `awaiting_closure`、Finding `rectifying`、ActionItem `done`、没有活跃的用户执行人；必填原因；新执行人是同组织的**活跃用户**，以 `primary` 加入。
+- 同一事务内：ActionItem `done → in_progress`（场景 `reopen` 流转的目标状态，`completed_at` 清空，与普通重开一致）；追加新执行人；移出原有的（均已停用的）用户执行关系；写一条 `action_item.transferred_and_reopened` Activity。
+- 并发：原执行人、协作人与新执行人的 User 行在 Case 锁之后一次锁定并重读；等锁期间原执行人被重新启用、新执行人被停用、整改项/发现项/Case 生命周期变化都是 409。
+- 历史保留在 Activity（append-only）：原因、原 `completed_at`、原执行人列表、被移出的执行人、新执行人。原来的完成/提交记录不改动。
+- 授权由场景定义，两个 v1 场景都给 Finding `owner`；`system_admin`、Case 角色（含 `lead`）、原执行人都没有这个权限。
+- 新执行人收到与"添加执行人"相同的站内通知（来源为这条 Activity）。
+
 **角色与权限**
 
 | 关系 | 角色 | 主体 |
@@ -107,6 +115,7 @@ done --reopen--> in_progress
 | `manage_case_members` / `transition_case` | `lead` |
 | `create_finding` / `issue_finding` / `manage_finding_participants` | `lead`、`auditor` |
 | `create_action` / `manage_action_assignees` / `submit_rectification` | Finding `owner` |
+| `transfer_and_reopen_action` | Finding `owner` |
 | `update_assigned_action` | Action `primary`、`collaborator` |
 | `add_rectification_evidence` | Finding `owner`、Action `primary`、`collaborator` |
 | `verify_finding` | `reviewer` |

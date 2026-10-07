@@ -13,6 +13,7 @@ from easyaudit_next.review_core.application.authorization import (
 )
 from easyaudit_next.review_core.application.mutation_results import (
     ActionAssigneeAddedResult,
+    ActionItemTransferResult,
     RectificationSubmissionResult,
 )
 from easyaudit_next.review_core.application.review_findings import (
@@ -70,6 +71,7 @@ CREATE_ACTION_PERMISSION = "create_action"
 MANAGE_ACTION_ASSIGNEES_PERMISSION = "manage_action_assignees"
 UPDATE_ASSIGNED_ACTION_PERMISSION = "update_assigned_action"
 ADD_RECTIFICATION_EVIDENCE_PERMISSION = "add_rectification_evidence"
+TRANSFER_AND_REOPEN_ACTION_PERMISSION = "transfer_and_reopen_action"
 
 
 class ConcurrentActionItemTransitionError(RuntimeError):
@@ -458,6 +460,179 @@ class RectificationService:
         )
         return updated
 
+    def transfer_and_reopen_action(
+        self,
+        actor: User,
+        action_item_id: ActionItemId,
+        new_executor_id: UserId,
+        reason: str,
+        *,
+        occurred_at: datetime | None = None,
+    ) -> ActionItemTransferResult:
+        """Atomically hand a DONE ActionItem that has no active executor to a new active
+        primary and reopen it.
+
+        Only available when every executor (primary and collaborator) is deactivated or
+        there are none; otherwise an active executor can reopen it themselves (422).
+
+        Lock order: Case -> {actor, new executor, current executors} Users (one ID-ordered
+        statement) -> Finding -> ActionItem (CAS). The executors' active state is decided
+        from the locked rows, so a concurrent deactivation / reactivation is seen (409).
+        The deactivated executors are dropped from the assignee list; everything that was
+        true before (who, when completed, the reason) is carried by the single Activity.
+        """
+        action_item, finding, review_case, policy, context = self._action_context(
+            actor,
+            action_item_id,
+        )
+
+        def authorize(_case: ReviewCase, current: AuthorizationContext) -> None:
+            if not policy.authorization.allows(TRANSFER_AND_REOPEN_ACTION_PERMISSION, current):
+                raise ReviewAuthorizationError(
+                    "Finding owner role required to transfer and reopen ActionItem"
+                )
+
+        # Pre-lock refusal with the same rules as below: permission, business validation,
+        # new executor. A user who may not do this never queues on the Case lock.
+        authorize(review_case, context)
+        previous = self._repository.list_action_assignees(actor.organization_id, action_item.id)
+        policy.action_operations.decide_transfer_and_reopen(
+            self._action_operation_context(
+                review_case,
+                finding,
+                action_item,
+                reason=reason,
+                has_active_assignee=self.has_active_executor(previous, None),
+            )
+        )
+        new_executor_actor = UserActor(new_executor_id)
+        self._require_active_assignee_actor(actor, new_executor_actor)
+
+        executor_ids = tuple(
+            assignee.actor.user_id for assignee in previous if isinstance(assignee.actor, UserActor)
+        )
+        review_case, context, _ = lock_case_and_build_context(
+            self._repository,
+            self._users,
+            actor,
+            review_case,
+            lambda fresh: build_rectification_authorization_context(
+                self._repository,
+                fresh,
+                review_case.id,
+                finding_id=finding.id,
+                action_item_id=action_item.id,
+            ),
+            authorize,
+            also_lock_user_ids=(new_executor_id, *executor_ids),
+        )
+        # Rows already locked above; these re-reads see deactivations / reactivations that
+        # committed first.
+        locked_users = {
+            user.id: user
+            for user in self._users.lock_users_for_update(
+                actor.organization_id, (new_executor_id, *executor_ids)
+            )
+        }
+        locked_executor = locked_users.get(new_executor_id)
+        if locked_executor is None:
+            raise LookupError("Active organization User not found")
+        if not locked_executor.is_active:
+            raise ConcurrentActionItemTransitionError(
+                "New executor was deactivated concurrently"
+            )
+        expected_lifecycle = action_item.lifecycle
+        finding = self._lock_expected_finding(actor, finding)
+        action_item = self._reload_action(actor, action_item.id, finding.id)
+        if action_item.lifecycle is not expected_lifecycle:
+            raise ConcurrentActionItemTransitionError("Concurrent ActionItem transition")
+        previous = self._repository.list_action_assignees(actor.organization_id, action_item.id)
+        if any(
+            isinstance(assignee.actor, UserActor) and assignee.actor.user_id not in locked_users
+            for assignee in previous
+        ):
+            raise ConcurrentActionItemTransitionError("Concurrent ActionItem assignee change")
+        # The pre-lock check passed, so an active executor now means one was reactivated
+        # while we waited: a concurrent change (409), not an invalid request (422).
+        if self.has_active_executor(previous, locked_users):
+            raise ConcurrentActionItemTransitionError("ActionItem executor became active")
+        reopen_action = policy.action_operations.decide_transfer_and_reopen(
+            self._action_operation_context(review_case, finding, action_item, reason=reason)
+        )
+        grant = self._assignee_grant(new_executor_actor, AssignmentRole.PRIMARY)
+        if not any(
+            specification.accepts_grant(grant)
+            for specification in policy.action_assignee_role_specs
+        ):
+            raise ValueError("Scenario does not allow a User as ActionAssignee primary")
+
+        now = occurred_at or datetime.now(UTC)
+        target = policy.action_workflow.transition(
+            action_item.lifecycle,
+            reopen_action,
+            ActionItemTransitionContext(reason=reason),
+        )
+        updated = replace(action_item, lifecycle=target, completed_at=None)
+        if not self._repository.update_action_item(
+            updated,
+            expected_lifecycle=action_item.lifecycle,
+        ):
+            raise ConcurrentActionItemTransitionError("Concurrent ActionItem transition")
+
+        # No executor is active (checked above), so every User executor is dropped.
+        removed = [assignee for assignee in previous if isinstance(assignee.actor, UserActor)]
+        for assignee in removed:
+            self._repository.remove_action_assignee(assignee)
+        new_assignee = ActionAssignee(
+            organization_id=actor.organization_id,
+            action_item_id=action_item.id,
+            actor=new_executor_actor,
+            role=AssignmentRole.PRIMARY,
+            assigned_at=now,
+        )
+        self._repository.add_action_assignee(new_assignee)
+
+        def describe(assignee: ActionAssignee) -> dict[str, str]:
+            actor_kind, actor_id = self._participant_identity(assignee.actor)
+            return {
+                "actor_kind": actor_kind.value,
+                "actor_id": str(actor_id),
+                "role": assignee.role.value,
+            }
+
+        activity_id = ActivityId(uuid4())
+        self._repository.add_activity(
+            Activity(
+                id=activity_id,
+                organization_id=actor.organization_id,
+                subject=ActionItemActivitySubject(action_item.id),
+                event_type="action_item.transferred_and_reopened",
+                actor_id=actor.id,
+                occurred_at=now,
+                metadata={
+                    "reason": reason,
+                    "action": reopen_action,
+                    "from_lifecycle": action_item.lifecycle.value,
+                    "to_lifecycle": target.value,
+                    "previous_completed_at": (
+                        action_item.completed_at.isoformat()
+                        if action_item.completed_at is not None
+                        else None
+                    ),
+                    "new_assignee_actor_kind": ActorKind.USER.value,
+                    "new_assignee_actor_id": str(new_executor_id),
+                    "role": AssignmentRole.PRIMARY.value,
+                    "previous_assignees": [describe(item) for item in previous],
+                    "removed_assignees": [describe(item) for item in removed],
+                },
+            )
+        )
+        return ActionItemTransferResult(
+            action_item=updated,
+            new_assignee=new_assignee,
+            activity_id=activity_id,
+        )
+
     def authorize_evidence_registration(
         self,
         actor: User,
@@ -821,6 +996,7 @@ class RectificationService:
         action_item: ActionItem | None = None,
         *,
         reason: str | None = None,
+        has_active_assignee: bool = False,
     ) -> ActionItemOperationContext:
         assignee_role_keys = (
             frozenset(
@@ -840,8 +1016,29 @@ class RectificationService:
                 action_item.lifecycle if action_item is not None else None
             ),
             assignee_role_keys=assignee_role_keys,
+            has_active_assignee=has_active_assignee,
             reason=reason,
         )
+
+    def has_active_executor(
+        self,
+        assignees: tuple[ActionAssignee, ...],
+        locked_users: dict[UserId, User] | None = None,
+    ) -> bool:
+        """Is any User executor active? `locked_users` are the rows read under lock; without
+        them (pre-lock refusal) the current persisted rows are read."""
+        for assignee in assignees:
+            if not isinstance(assignee.actor, UserActor):
+                continue
+            user_id = assignee.actor.user_id
+            holder = (
+                locked_users.get(user_id)
+                if locked_users is not None
+                else self._users.get(user_id)
+            )
+            if holder is not None and holder.is_active:
+                return True
+        return False
 
     def _require_active_assignee_actor(
         self,

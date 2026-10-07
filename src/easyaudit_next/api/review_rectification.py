@@ -11,6 +11,7 @@ from easyaudit_next.api.review_contracts import (
     ActionAssigneeResponse,
     ActionItemCreateRequest,
     ActionItemResponse,
+    ActionItemTransferRequest,
     ActionItemTransitionRequest,
     EvidenceResponse,
     FindingResponse,
@@ -23,6 +24,7 @@ from easyaudit_next.composition import (
     build_rectification_service,
 )
 from easyaudit_next.platform.domain.ids import DepartmentId, UserId
+from easyaudit_next.review_core.application.mutation_results import ActionAssigneeAddedResult
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
 )
@@ -302,6 +304,45 @@ def transition_action_item(
     ) as exc:
         _raise_api_error(exc)
     return _action_response(action_item)
+
+
+@review_rectification_router.post(
+    "/action-items/{action_item_id}/transfer-and-reopen",
+    response_model=ActionItemResponse,
+    operation_id="transferAndReopenActionItem",
+)
+def transfer_and_reopen_action_item(
+    action_item_id: UUID,
+    payload: ActionItemTransferRequest,
+    identity: BusinessIdentity,
+    session: DatabaseSession,
+) -> ActionItemResponse:
+    service = build_rectification_service(session)
+    notifications = build_notification_orchestrator(session)
+    try:
+        result = service.transfer_and_reopen_action(
+            identity.user,
+            ActionItemId(action_item_id),
+            UserId(payload.new_executor_id),
+            payload.reason,
+        )
+        notifications.action_assignee_added(
+            ActionAssigneeAddedResult(
+                assignee=result.new_assignee,
+                activity_id=result.activity_id,
+            )
+        )
+    except (
+        ConcurrentActionItemTransitionError,
+        ConcurrentCaseTransitionError,
+        ConcurrentFindingTransitionError,
+        ReviewAuthorizationError,
+        LookupError,
+        ValueError,
+        IntegrityError,
+    ) as exc:
+        _raise_api_error(exc)
+    return _action_response(result.action_item)
 
 
 @review_rectification_router.get(

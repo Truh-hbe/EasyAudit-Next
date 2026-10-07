@@ -1,10 +1,12 @@
-import { Alert, Button, Drawer, Flex, Form, Grid, Radio, Select, Spin } from 'antd'
+import { Alert, Button, Drawer, Flex, Form, Grid, Input, Radio, Select, Spin, Typography } from 'antd'
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 
 import { ApiError } from '../api/client'
 import type { ActorKind, AssignmentCandidateResponse } from '../api/product'
 import { FORBIDDEN_WRITE_TEXT, classifyCommandFailure, failureAlertType } from '../product/commandFailure'
 import type { CommandFailure, CommandResult } from '../product/commandFailure'
+import { FieldError } from '../ui/FieldError'
 
 const SEARCH_DEBOUNCE_MS = 300
 // 服务端候选接口要求 q 至少 2 个字符。
@@ -29,9 +31,12 @@ interface ActorAssignDrawerProps {
   roleFieldLabel: string
   actorFieldLabel: string
   okText: string
+  description?: ReactNode
+  // 需要原因的命令（如转交并重开）：多一个必填原因输入框；fieldName 是服务端 422 提示里的字段名。
+  reason?: { label: string; fieldName: string }
   roles: readonly AssignRoleOption[]
   search: (role: AssignRoleOption, query: string, signal: AbortSignal) => Promise<AssignmentCandidateResponse[]>
-  add: (role: AssignRoleOption, candidate: AssignmentCandidateResponse) => Promise<CommandResult>
+  add: (role: AssignRoleOption, candidate: AssignmentCandidateResponse, reason: string) => Promise<CommandResult>
   // 候选搜索返回 403/404：资源已不可见，交给页面重新确认主授权。
   onAccessLost: () => void
 }
@@ -39,6 +44,7 @@ interface ActorAssignDrawerProps {
 interface FormValues {
   role: string
   actor?: { value: string; label: string }
+  reason?: string
 }
 
 function candidateKey(candidate: AssignmentCandidateResponse): string {
@@ -54,6 +60,8 @@ export function ActorAssignDrawer({
   roleFieldLabel,
   actorFieldLabel,
   okText,
+  description,
+  reason,
   roles,
   search,
   add,
@@ -156,7 +164,7 @@ export function ActorAssignDrawer({
     setFailure(null)
     let result: CommandResult
     try {
-      result = await add(role, candidate)
+      result = await add(role, candidate, (values.reason ?? '').trim())
     } catch (error) {
       result = { ok: false, failure: classifyCommandFailure(error, { label: title }) }
     } finally {
@@ -174,6 +182,7 @@ export function ActorAssignDrawer({
     setFailure(result.failure)
   }
 
+  const reasonError = reason === undefined ? undefined : failure?.fieldErrors[reason.fieldName]
   const notFound = searching ? (
     <Flex align="center" gap={8}>
       <Spin size="small" />
@@ -203,8 +212,12 @@ export function ActorAssignDrawer({
         preserve={false}
         initialValues={{ role: roles[0]?.value }}
         disabled={submitting}
+        onValuesChange={() => setFailure((current) => (current === null ? null : { ...current, fieldErrors: {} }))}
         onFinish={(values) => void submit(values)}
       >
+        {description === undefined ? null : (
+          <Typography.Paragraph type="secondary">{description}</Typography.Paragraph>
+        )}
         {failure === null || failure.message === '' ? null : (
           <Alert type={failureAlertType(failure)} showIcon title={failure.message} style={{ marginBottom: 16 }} />
         )}
@@ -240,6 +253,17 @@ export function ActorAssignDrawer({
             }}
           />
         </Form.Item>
+        {reason === undefined ? null : (
+          <Form.Item
+            label={reason.label}
+            name="reason"
+            rules={[{ required: true, whitespace: true, message: `请填写${reason.label}` }]}
+            validateStatus={reasonError === undefined ? undefined : 'error'}
+            help={reasonError === undefined ? undefined : <FieldError>{reasonError}</FieldError>}
+          >
+            <Input.TextArea rows={3} maxLength={2000} />
+          </Form.Item>
+        )}
         <Flex justify="flex-end" gap={8}>
           <Button onClick={onClose} disabled={submitting}>取消</Button>
           <Button type="primary" htmlType="submit" loading={submitting}>

@@ -1,4 +1,4 @@
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
 from easyaudit_next.review_core.domain.ids import (
@@ -135,6 +135,25 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
             .execution_options(populate_existing=True)
         )
         return tuple(self._assignee_to_domain(record) for record in records)
+
+    def remove_action_assignee(self, assignee: ActionAssignee) -> None:
+        actor = assignee.actor
+        actor_criterion = (
+            ActionAssigneeRecord.user_id == actor.user_id
+            if isinstance(actor, UserActor)
+            else ActionAssigneeRecord.department_id == actor.department_id
+        )
+        self._session.execute(
+            delete(ActionAssigneeRecord)
+            .where(
+                ActionAssigneeRecord.organization_id == assignee.organization_id,
+                ActionAssigneeRecord.action_item_id == assignee.action_item_id,
+                ActionAssigneeRecord.role == assignee.role.value,
+                actor_criterion,
+            )
+            .execution_options(synchronize_session="fetch")
+        )
+        self._session.flush()
 
     def add_evidence(self, evidence: Evidence) -> None:
         self._session.add(

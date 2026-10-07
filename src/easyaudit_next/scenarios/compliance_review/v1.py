@@ -96,6 +96,7 @@ class ComplianceReviewPermission(StrEnum):
     MANAGE_ACTION_ASSIGNEES = "manage_action_assignees"
     UPDATE_ASSIGNED_ACTION = "update_assigned_action"
     ADD_RECTIFICATION_EVIDENCE = "add_rectification_evidence"
+    TRANSFER_AND_REOPEN_ACTION = "transfer_and_reopen_action"
     SUBMIT_RECTIFICATION = "submit_rectification"
     VERIFY_FINDING = "verify_finding"
     REOPEN_FINDING = "reopen_finding"
@@ -510,6 +511,25 @@ class ComplianceReviewActionOperations:
                 "Evidence cannot be registered for a cancelled ActionItem"
             )
 
+    def validate_transfer_and_reopen_state(self, context: ActionItemOperationContext) -> None:
+        self._require_active_rectification(context)
+        if context.current_action_lifecycle is not ActionItemLifecycle.DONE:
+            raise ActionItemOperationError(
+                "Only a done ActionItem can be transferred and reopened"
+            )
+        if context.has_active_assignee:
+            raise ActionItemOperationError(
+                "ActionItem still has an active executor, who can reopen it directly"
+            )
+
+    def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
+        self.validate_transfer_and_reopen_state(context)
+        if context.reason is None or not context.reason.strip():
+            raise ActionItemOperationError(
+                "Transferring and reopening an ActionItem requires a reason"
+            )
+        return ComplianceReviewActionItemAction.REOPEN.value
+
 
 @dataclass(frozen=True, slots=True)
 class ComplianceReviewAuthorizationPolicy:
@@ -551,6 +571,7 @@ class ComplianceReviewAuthorizationPolicy:
         if requested in {
             ComplianceReviewPermission.CREATE_ACTION,
             ComplianceReviewPermission.MANAGE_ACTION_ASSIGNEES,
+            ComplianceReviewPermission.TRANSFER_AND_REOPEN_ACTION,
             ComplianceReviewPermission.SUBMIT_RECTIFICATION,
         }:
             return "owner" in finding_roles

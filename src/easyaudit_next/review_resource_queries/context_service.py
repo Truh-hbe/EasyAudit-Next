@@ -17,6 +17,7 @@ from easyaudit_next.review_core.application.review_findings import (
 from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
 from easyaudit_next.review_core.application.review_rectification import (
     MANAGE_ACTION_ASSIGNEES_PERMISSION,
+    TRANSFER_AND_REOPEN_ACTION_PERMISSION,
     RectificationService,
 )
 from easyaudit_next.review_core.domain.ids import ActionItemId, FindingId
@@ -208,6 +209,41 @@ class ReviewResourceContextQueryService:
         )
         self._require_role_kind(policy.action_assignee_role_specs, role.value, actor_kind)
         return self._search_candidates(actor, actor_kind, search_text, limit)
+
+    def search_action_transfer_candidates(
+        self,
+        actor: User,
+        action_item_id: ActionItemId,
+        *,
+        search_text: str,
+        limit: int,
+    ) -> tuple[AssignmentCandidateView, ...]:
+        action_item, finding, review_case, policy, context = self._action_policy_context(
+            actor,
+            action_item_id,
+        )
+        if not policy.authorization.allows(TRANSFER_AND_REOPEN_ACTION_PERMISSION, context):
+            raise ReviewAuthorizationError(
+                "Finding owner role required to transfer and reopen ActionItem"
+            )
+        assignees = self._repository.list_action_assignees(
+            actor.organization_id,
+            action_item.id,
+        )
+        policy.action_operations.validate_transfer_and_reopen_state(
+            ActionItemOperationContext(
+                case_lifecycle=review_case.lifecycle,
+                finding_lifecycle=finding.lifecycle,
+                current_action_lifecycle=action_item.lifecycle,
+                has_active_assignee=self._rectification_service.has_active_executor(assignees),
+            )
+        )
+        self._require_role_kind(
+            policy.action_assignee_role_specs,
+            AssignmentRole.PRIMARY.value,
+            ActorKind.USER,
+        )
+        return self._search_candidates(actor, ActorKind.USER, search_text, limit)
 
     def list_finding_submissions(
         self,

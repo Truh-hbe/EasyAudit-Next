@@ -132,6 +132,9 @@
     "/api/v1/action-items/{action_item_id}/transitions": {
       "post": {"operationId": "transitionActionItem", "tags": ["review-rectification"]}
     },
+    "/api/v1/action-items/{action_item_id}/transfer-and-reopen": {
+      "post": {"operationId": "transferAndReopenActionItem", "tags": ["review-rectification"]}
+    },
     "/api/v1/action-items/{action_item_id}/evidences": {
       "get": {"operationId": "listActionEvidences", "tags": ["review-rectification"]}
     },
