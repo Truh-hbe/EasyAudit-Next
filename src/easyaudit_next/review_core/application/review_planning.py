@@ -464,6 +464,9 @@ class ReviewPlanningService:
             fieldwork_completed_at=(
                 now
                 if target is ReviewCaseLifecycle.AWAITING_CLOSURE
+                else None
+                if review_case.lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE
+                and target is ReviewCaseLifecycle.IN_PROGRESS
                 else review_case.fieldwork_completed_at
             ),
             closed_at=(now if target is ReviewCaseLifecycle.CLOSED else review_case.closed_at),

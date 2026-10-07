@@ -95,3 +95,65 @@ test('a draft case can be cancelled with a reason, and an empty reason is reject
   await expect(status(page, '已取消')).toBeVisible()
   await expect(commands(page).getByText('当前状态没有可执行的操作')).toBeVisible()
 })
+
+// 完成现场工作 → 恢复现场（填原因）→ 录入发现项 → 作废发现项（使其为终态）→ 再完成现场工作 → 关闭。
+async function reopenFieldworkJourney(
+  page: Page,
+  scenario: 'process_review' | 'compliance_review',
+  title: string,
+  fillFinding: () => Promise<void>,
+) {
+  await createDraftCase(page, scenario, title)
+  await driveToInProgress(page)
+
+  await commands(page).getByRole('button', { name: '完成现场工作' }).click()
+  await page.getByRole('dialog', { name: '完成现场工作' }).getByRole('button', { name: '确认完成' }).click()
+  await expect(status(page, '待关闭')).toBeVisible()
+  expect(await page.getByRole('button', { name: '新建发现项' }).count()).toBe(0)
+
+  // 空原因由后端拒绝；弹层保留。
+  await commands(page).getByRole('button', { name: '恢复现场' }).click()
+  const dialog = page.getByRole('dialog', { name: '恢复现场' })
+  await dialog.getByRole('button', { name: '确认恢复' }).click()
+  await expect(dialog.getByText('requires a reason')).toBeVisible()
+  expect(await status(page, '审查中').count()).toBe(0)
+  await dialog.getByLabel('恢复原因').fill('补录漏记的发现项')
+  await dialog.getByRole('button', { name: '确认恢复' }).click()
+  await expect(status(page, '审查中')).toBeVisible()
+
+  await fillFinding()
+  await page.getByRole('button', { name: '新建发现项' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: `${title} Finding` })).toBeVisible()
+  await page.getByRole('button', { name: '作废发现项' }).click()
+  const voidDialog = page.getByRole('dialog', { name: '作废发现项' })
+  await voidDialog.getByLabel('作废原因').fill('演示用，作废以便关闭')
+  await voidDialog.getByRole('button', { name: '确认作废' }).click()
+  await expect(page.getByText('已作废', { exact: true }).first()).toBeVisible()
+  await page.getByRole('link', { name: '返回审查活动' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible()
+
+  await commands(page).getByRole('button', { name: '完成现场工作' }).click()
+  await page.getByRole('dialog', { name: '完成现场工作' }).getByRole('button', { name: '确认完成' }).click()
+  await expect(status(page, '待关闭')).toBeVisible()
+  await commands(page).getByRole('button', { name: '关闭活动' }).click()
+  await page.getByRole('dialog', { name: '关闭活动' }).getByRole('button', { name: '确认关闭' }).click()
+  await expect(status(page, '已关闭')).toBeVisible()
+}
+
+test('process_review: reopen fieldwork from awaiting_closure, record a finding, finish and close again', async ({ page }) => {
+  const title = 'Reopen Process Case'
+  await reopenFieldworkJourney(page, 'process_review', title, async () => {
+    await page.getByLabel('标题').fill(`${title} Finding`)
+    await page.getByLabel('问题类型').fill('control_gap')
+    await page.getByLabel('项目类别').fill('assembly')
+  })
+})
+
+test('compliance_review: reopen fieldwork from awaiting_closure, record a finding, finish and close again', async ({ page }) => {
+  const title = 'Reopen Compliance Case'
+  await reopenFieldworkJourney(page, 'compliance_review', title, async () => {
+    await page.getByLabel('标题').fill(`${title} Finding`)
+    await page.getByLabel('条款 / 要求').fill('8.5.1')
+    await page.getByRole('radio', { name: '不符合项' }).check()
+  })
+})

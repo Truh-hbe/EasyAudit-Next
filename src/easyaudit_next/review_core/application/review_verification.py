@@ -122,6 +122,9 @@ class ClosureAwareReviewPlanningService(ActionAwareReviewPlanningService):
             fieldwork_completed_at=(
                 now
                 if target is ReviewCaseLifecycle.AWAITING_CLOSURE
+                else None
+                if locked_case.lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE
+                and target is ReviewCaseLifecycle.IN_PROGRESS
                 else locked_case.fieldwork_completed_at
             ),
             closed_at=(now if target is ReviewCaseLifecycle.CLOSED else locked_case.closed_at),

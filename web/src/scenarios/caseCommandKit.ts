@@ -27,8 +27,19 @@ const FINISH_FIELDWORK: ScenarioCaseCommand = {
   primary: true,
   mode: 'confirm',
   dialogTitle: '完成现场工作',
-  dialogDescription: '完成后活动进入待关闭，不能再新建发现项，且不能回到进行中。',
+  dialogDescription: '完成后活动进入待关闭，不能再新建发现项；如需补录，可在待关闭时带原因恢复现场。',
   okText: '确认完成',
+}
+
+const REOPEN_FIELDWORK: ScenarioCaseCommand = {
+  action: 'reopen_fieldwork',
+  label: '恢复现场',
+  buttonText: '恢复现场',
+  mode: 'reason',
+  dialogTitle: '恢复现场',
+  dialogDescription: '恢复后活动回到审查中，可继续新建发现项；请说明恢复原因（如误操作或需要补录）。',
+  okText: '确认恢复',
+  reasonLabel: '恢复原因',
 }
 
 const CLOSE: ScenarioCaseCommand = {
@@ -63,7 +74,7 @@ export function standardCaseCommands(lifecycle: ReviewCaseLifecycle): readonly S
     case 'in_progress':
       return [FINISH_FIELDWORK]
     case 'awaiting_closure':
-      return [CLOSE]
+      return [REOPEN_FIELDWORK, CLOSE]
     default:
       return []
   }

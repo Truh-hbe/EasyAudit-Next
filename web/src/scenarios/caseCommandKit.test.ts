@@ -8,7 +8,7 @@ const EXPECTED: Record<ReviewCaseLifecycle, string[]> = {
   draft: ['schedule', 'cancel'],
   scheduled: ['start', 'cancel'],
   in_progress: ['finish_fieldwork'],
-  awaiting_closure: ['close'],
+  awaiting_closure: ['reopen_fieldwork', 'close'],
   closed: [],
   cancelled: [],
 }
@@ -30,10 +30,10 @@ describe('case lifecycle commands', () => {
     })
   }
 
-  it('commands that need a reason are the destructive ones only', () => {
+  it('commands that need a reason are cancel and reopen_fieldwork', () => {
     const reasons = (['draft', 'scheduled', 'in_progress', 'awaiting_closure'] as const)
       .flatMap((lifecycle) => standardCaseCommands(lifecycle))
       .filter((command) => command.mode === 'reason')
-    expect(reasons.map((command) => command.action)).toEqual(['cancel', 'cancel'])
+    expect(reasons.map((command) => command.action)).toEqual(['cancel', 'cancel', 'reopen_fieldwork'])
   })
 })
