@@ -843,3 +843,90 @@ for (const [label, status, expected] of [
     expect(state.postCount).toBe(1)
   })
 }
+
+// 候选接口按角色返回不同的人，便于判断结果属于哪个角色；可按角色挂起响应。
+const ROLE_CANDIDATES: Record<string, { user_id: string; display_name: string }> = {
+  lead: { user_id: 'cand-lead', display_name: 'Lead Role Candidate' },
+  reviewer: { user_id: 'cand-reviewer', display_name: 'Reviewer Role Candidate' },
+}
+
+async function routeRoleCandidates(page: Page, caseId: string, gates: Partial<Record<string, Promise<void>>> = {}) {
+  const requests: string[] = []
+  await page.route((url) => url.pathname === `/api/v1/review-cases/${caseId}/member-candidates`, async (route) => {
+    const roleKey = new URL(route.request().url()).searchParams.get('role_key') ?? ''
+    requests.push(roleKey)
+    await gates[roleKey]
+    // 请求可能已被前端中止（修复后的行为）；中止后无法再 fulfill，忽略即可。
+    await fulfillJson(route, 200, [ROLE_CANDIDATES[roleKey]]).catch(() => undefined)
+  })
+  return requests
+}
+
+async function chooseRole(page: Page, drawer: ReturnType<Page['locator']>, label: string) {
+  await drawer.getByLabel('团队角色').click()
+  await page.getByTitle(label, { exact: true }).last().click()
+}
+
+test('添加成员：切换角色时，旧角色挂起的搜索晚到也不会进入候选，新角色的搜索带新的 role_key', async ({ page }) => {
+  await mockCase(page, 'case-role-late')
+  const gate = deferred()
+  const requests = await routeRoleCandidates(page, 'case-role-late', { lead: gate.promise })
+  await page.goto('/review-cases/case-role-late')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('button', { name: '添加成员' }).click()
+  const drawer = page.getByRole('dialog', { name: '添加成员' })
+  // 打开时按默认角色（审查组长）发起的搜索被挂起。
+  await expect.poll(() => requests).toEqual(['lead'])
+
+  await chooseRole(page, drawer, '复核员')
+  await expect.poll(() => requests).toEqual(['lead', 'reviewer'])
+  await drawer.getByLabel('成员').click()
+  await expect(page.getByTitle('Reviewer Role Candidate')).toHaveCount(1)
+
+  gate.resolve()
+  await page.waitForTimeout(500) // 让旧响应有机会（错误地）写入状态
+  expect(await page.getByTitle('Lead Role Candidate').count()).toBe(0)
+  expect(await page.getByTitle('Reviewer Role Candidate').count()).toBe(1)
+})
+
+test('添加成员：搜索返回后切换角色，候选列表与已选成员被清空', async ({ page }) => {
+  await mockCase(page, 'case-role-clear')
+  const gate = deferred()
+  const requests = await routeRoleCandidates(page, 'case-role-clear', { reviewer: gate.promise })
+  await page.goto('/review-cases/case-role-clear')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('button', { name: '添加成员' }).click()
+  const drawer = page.getByRole('dialog', { name: '添加成员' })
+  await pickCandidate(page, drawer, 'Lead', 'Lead Role Candidate')
+
+  await chooseRole(page, drawer, '复核员')
+  await expect.poll(() => requests.at(-1)).toBe('reviewer') // 新角色的搜索挂起中
+  // 已选成员被清空；候选列表也为空（旧角色的人不会留在下拉框里）。
+  await expect(drawer.getByTitle('Lead Role Candidate')).toHaveCount(0)
+  await drawer.getByLabel('成员').click()
+  expect(await page.getByTitle('Lead Role Candidate').count()).toBe(0)
+  await drawer.getByLabel('成员').press('Escape')
+  await drawer.getByRole('button', { name: '添加成员' }).dispatchEvent('click')
+  await expect(drawer.getByText('请选择要添加的成员')).toBeVisible()
+  gate.resolve()
+})
+
+test('添加成员：提交的 role_key 与当前所选角色及其搜索一致', async ({ page }) => {
+  const state = await mockCase(page, 'case-role-submit')
+  const requests = await routeRoleCandidates(page, 'case-role-submit')
+  await page.goto('/review-cases/case-role-submit')
+  const team = page.getByRole('region', { name: '团队管理' })
+  await team.getByRole('button', { name: '添加成员' }).click()
+  const drawer = page.getByRole('dialog', { name: '添加成员' })
+  // 先在默认角色下选人，再切换角色并重新选人：提交的必须是新角色及其搜索结果。
+  await pickCandidate(page, drawer, 'Lead', 'Lead Role Candidate')
+  await chooseRole(page, drawer, '复核员')
+  await pickCandidate(page, drawer, 'Rev', 'Reviewer Role Candidate')
+  expect(requests.at(-1)).toBe('reviewer')
+
+  const postPromise = page.waitForRequest((request) => request.method() === 'POST' && request.url().includes('/case-role-submit/members'))
+  await drawer.getByRole('button', { name: '添加成员' }).click()
+  expect((await postPromise).postDataJSON()).toEqual({ user_id: 'cand-reviewer', role_key: 'reviewer' })
+  await expect(page.getByRole('dialog', { name: '添加成员' })).toHaveCount(0)
+  expect(state.adds).toEqual([{ user_id: 'cand-reviewer', role_key: 'reviewer' }])
+})
