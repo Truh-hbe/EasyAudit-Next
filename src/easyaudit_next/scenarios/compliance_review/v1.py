@@ -306,6 +306,12 @@ class ComplianceReviewFindingWorkflow:
         ):
             if not _has_reason(context.reason):
                 raise WorkflowTransitionError("Reopening a Finding requires a reason")
+            # An observation never entered rectification: back to open so it can be
+            # accepted again.
+            if context.scenario_data.get("finding_type") == (
+                ComplianceReviewFindingType.OBSERVATION.value
+            ):
+                return FindingLifecycle.OPEN
             return FindingLifecycle.RECTIFYING
         raise WorkflowTransitionError(
             f"Finding cannot perform {operation.value!r} from lifecycle {lifecycle.value!r}"

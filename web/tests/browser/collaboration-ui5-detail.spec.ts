@@ -112,7 +112,7 @@ async function stubFindingWorld(page: Page, world: FindingWorld) {
       } else if (command === 'verification-submissions') {
         world.lifecycle = body.action === 'approve' ? 'closed' : 'rectifying'
       } else {
-        world.lifecycle = 'rectifying'
+        world.lifecycle = world.findingType === 'observation' ? 'open' : 'rectifying'
       }
       return fulfillJson(route, 200, findingResponse(world.scenarioKey, world.lifecycle, world.findingType))
     })
@@ -140,8 +140,17 @@ test('compliance_review@1 observation closes directly after an explicit confirma
 
   await expect(header(page).getByText('已关闭', { exact: true })).toBeVisible()
   await expect(page.getByText('观察项已接受并闭环。')).toBeVisible()
-  await expect(page.getByRole('button', { name: '重新打开', exact: true })).toHaveCount(0)
-  expect(world.posts).toEqual([{ path: 'transitions', body: { action: 'accept_observation', reason: null } }])
+  const reopenButton = page.getByRole('button', { name: '重新打开', exact: true })
+  await reopenButton.click()
+  const reopen = page.getByRole('dialog', { name: '重新打开发现项' })
+  await reopen.getByLabel('重新打开原因').fill('follow-up')
+  await reopen.getByRole('button', { name: '确认重新打开' }).click()
+
+  // 重开后回到待处理，可再次接受，不进入整改
+  await expect(header(page).getByText('待处理', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '接受观察项' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '填写整改计划' })).toHaveCount(0)
+  expect(world.posts.map((post) => post.path)).toEqual(['transitions', 'reopen'])
 })
 
 test('compliance_review@1 nonconformity goes issue → plan/completion → approve → reopen', async ({ page }) => {

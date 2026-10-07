@@ -91,6 +91,7 @@ class FindingTransitionContext:
     reason: str | None = None
     non_cancelled_action_count: int = 0
     all_non_cancelled_actions_done: bool = False
+    scenario_data: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

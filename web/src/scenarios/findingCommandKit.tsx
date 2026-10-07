@@ -67,7 +67,12 @@ export function VoidCommand({ commands, execute, disabled }: CommandProps) {
   )
 }
 
-export function ReopenCommand({ commands, execute, disabled }: CommandProps) {
+export function ReopenCommand({
+  commands,
+  execute,
+  disabled,
+  description = '重新打开后发现项回到整改中，请说明原因。',
+}: CommandProps & { description?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -84,7 +89,7 @@ export function ReopenCommand({ commands, execute, disabled }: CommandProps) {
         open={open}
         onClose={() => setOpen(false)}
         title="重新打开发现项"
-        description="重新打开后发现项回到整改中，请说明原因。"
+        description={description}
         fieldName="reason"
         fieldLabel="重新打开原因"
         okText="确认重新打开"

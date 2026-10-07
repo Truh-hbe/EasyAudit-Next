@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, select
+from sqlalchemy import Engine, create_engine, func, select
 from sqlalchemy.orm import Session
 
 from easyaudit_next.api.dependencies import (
@@ -35,6 +35,7 @@ from easyaudit_next.review_core.application.review_verification import (
 )
 from easyaudit_next.review_core.domain.ids import FindingId, ReviewCaseId
 from easyaudit_next.review_core.persistence.models import (
+    ActionItemRecord,
     ActivityRecord,
     CaseMemberRecord,
     FindingRecord,
@@ -359,3 +360,80 @@ def test_generic_http_transition_endpoint_accepts_compliance_observation(
         assert finding_lifecycle == "closed"
         assert transition_activity is not None
         assert transition_activity.metadata_json["action"] == "accept_observation"
+
+
+def test_reopened_observation_returns_to_open_and_can_be_accepted_again(
+    postgres_engine: Engine,
+) -> None:
+    organization_id, _, finding_id, _, reviewer_id = _seed_observation_case(
+        postgres_engine
+    )
+    with Session(postgres_engine) as session:
+        reviewer = SqlAlchemyUserRepository(session).get(reviewer_id)
+        assert reviewer is not None
+
+    identity = CurrentIdentity(
+        auth_session=AuthSession(
+            id=AuthSessionId(uuid4()),
+            organization_id=organization_id,
+            user_id=reviewer_id,
+            token_hash="0" * 64,
+            expires_at=NOW + timedelta(hours=1),
+            created_at=NOW,
+        ),
+        user=reviewer,
+    )
+    app = create_app()
+
+    def database_session() -> Iterator[Session]:
+        with Session(postgres_engine) as session:
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    app.dependency_overrides[get_database_session] = database_session
+    app.dependency_overrides[require_business_identity] = lambda: identity
+
+    with TestClient(app, base_url="https://testserver") as client:
+        accept = client.post(
+            f"/api/v1/findings/{finding_id}/transitions",
+            json={"action": "accept_observation"},
+        )
+        assert accept.status_code == 200
+        assert accept.json()["lifecycle"] == "closed"
+
+        reopen = client.post(
+            f"/api/v1/findings/{finding_id}/reopen",
+            json={"reason": "New evidence contradicts the acceptance"},
+        )
+        assert reopen.status_code == 200
+        assert reopen.json()["lifecycle"] == "open"
+
+        accept_again = client.post(
+            f"/api/v1/findings/{finding_id}/transitions",
+            json={"action": "accept_observation"},
+        )
+        assert accept_again.status_code == 200
+        assert accept_again.json()["lifecycle"] == "closed"
+
+    with Session(postgres_engine) as verification:
+        assert verification.scalar(
+            select(FindingRecord.lifecycle).where(FindingRecord.id == finding_id)
+        ) == "closed"
+        assert verification.scalar(
+            select(func.count())
+            .select_from(ActionItemRecord)
+            .where(ActionItemRecord.finding_id == finding_id)
+        ) == 0
+        reopened = verification.scalar(
+            select(ActivityRecord).where(
+                ActivityRecord.finding_id == finding_id,
+                ActivityRecord.event_type == "finding.reopened",
+            )
+        )
+        assert reopened is not None
+        assert reopened.metadata_json["from_lifecycle"] == "closed"
+        assert reopened.metadata_json["to_lifecycle"] == "open"

@@ -154,6 +154,9 @@ export function ComplianceReviewV1FindingInteraction(props: ScenarioFindingInter
         {finding.lifecycle === 'rectifying' ? <RectificationCommands {...shared} /> : null}
         {finding.lifecycle === 'verifying' ? <VerificationCommands {...shared} /> : null}
         {finding.lifecycle === 'closed' && findingType === 'nonconformity' ? <ReopenCommand {...shared} /> : null}
+        {finding.lifecycle === 'closed' && findingType === 'observation' ? (
+          <ReopenCommand {...shared} description="重新打开后观察项回到待处理，可再次接受，请说明原因。" />
+        ) : null}
       </CommandRow>
       {finding.lifecycle === 'open' && !interpretable ? (
         <CommandNote>当前发现项类型无法解释，业务操作已关闭。</CommandNote>

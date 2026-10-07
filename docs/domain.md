@@ -76,6 +76,7 @@ open --void(reason)--> voided
 closed --reopen(reason)--> rectifying
 ```
 
+- `reopen` 的目标状态由 Scenario 按 Finding 类型决定。compliance_review 的 `observation` 从未进入整改，重开后回到 `open`（可再次 `accept_observation`，不产生 ActionItem 或整改记录）；`nonconformity` 重开后进入 `rectifying`。
 - 只能在 Case `in_progress` 时新建 Finding；`in_progress` 或 `awaiting_closure` 时可 issue / void。
 - `issue` 需要已有 `owner`（User）和 `responsible_department`（Department）。
 - `submit_plan` 是 `rectifying` 状态下的计划提交，不改变生命周期。

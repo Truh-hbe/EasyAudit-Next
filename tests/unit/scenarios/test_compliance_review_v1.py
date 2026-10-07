@@ -21,7 +21,10 @@ from easyaudit_next.review_core.domain.models import (
     ScenarioKey,
     ScenarioVersion,
 )
-from easyaudit_next.review_core.domain.scenario_capabilities import FindingOperationContext
+from easyaudit_next.review_core.domain.scenario_capabilities import (
+    FindingOperationContext,
+    FindingTransitionContext,
+)
 from easyaudit_next.scenarios.compliance_review import (
     COMPLIANCE_REVIEW_V1,
     ComplianceReviewPermission,
@@ -365,3 +368,25 @@ def test_invisible_actor_cannot_observe_scenario_validation_through_transition()
             "issue",
             occurred_at=NOW,
         )
+
+
+@pytest.mark.parametrize(
+    ("finding_type", "expected"),
+    [
+        ("observation", FindingLifecycle.OPEN),
+        ("nonconformity", FindingLifecycle.RECTIFYING),
+    ],
+)
+def test_reopening_a_closed_finding_target_depends_on_finding_type(
+    finding_type: str,
+    expected: FindingLifecycle,
+) -> None:
+    target = COMPLIANCE_REVIEW_V1.finding_workflow.transition(
+        FindingLifecycle.CLOSED,
+        "reopen",
+        FindingTransitionContext(
+            reason="new evidence",
+            scenario_data={"finding_type": finding_type},
+        ),
+    )
+    assert target is expected
