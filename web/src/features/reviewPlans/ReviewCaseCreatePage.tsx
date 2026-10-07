@@ -70,7 +70,7 @@ function timeRules(label: string, getStart?: () => string | undefined) {
         if (getStart !== undefined && parsed.iso !== null) {
           const start = parseOptionalDisplayZoneText(getStart() ?? '')
           if (start.valid && start.iso !== null && Date.parse(parsed.iso) < Date.parse(start.iso)) {
-            return Promise.reject(<FieldError>{label}不能早于计划开始时间。</FieldError>)
+            return Promise.reject(<FieldError>{label}不能早于活动开始时间。</FieldError>)
           }
         }
         return Promise.resolve()

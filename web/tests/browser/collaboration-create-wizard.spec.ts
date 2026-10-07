@@ -579,7 +579,7 @@ test.describe('case step', () => {
     await enterDateTime(page, '活动开始时间（可选）', '2026/09/30 18:00')
     await enterDateTime(page, '活动结束时间（可选）', '2026/09/01 09:00')
     await page.getByRole('button', { name: '创建审查活动' }).click()
-    await expect(page.getByText('活动结束时间不能早于计划开始时间。')).toBeVisible()
+    await expect(page.getByText('活动结束时间不能早于活动开始时间。')).toBeVisible()
     await expect(page.getByLabel('活动结束时间（可选）')).toBeFocused()
     expect(requests).toHaveLength(0)
     await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
@@ -632,6 +632,29 @@ test.describe('case step', () => {
     expect(requests[1].key).toBe(requests[0].key)
     expect(requests[1].body).toEqual(requests[0].body)
     expect(requests[1].body).toMatchObject({ planned_end_at: '2026-09-30T10:00:00.000Z' })
+  })
+
+  test('unknown outcome, then editing a date: the retry reuses the key, a 409 key reuse says the content differs, keeps the draft and never replays by itself', async ({ page }) => {
+    await stubShell(page)
+    const requests = await stubCreate(page, 'review-cases', ['abort', 'key-reuse'], { id: 'case-1' })
+    await fillCase(page)
+    await enterDateTime(page, '活动开始时间（可选）', '2026/09/01 09:00')
+    await enterDateTime(page, '活动结束时间（可选）', '2026/09/30 18:00')
+    await page.getByRole('button', { name: '创建审查活动' }).click()
+    await expect(page.getByRole('alert').filter({ hasText: '未确认是否成功' })).toBeVisible()
+
+    await enterDateTime(page, '活动结束时间（可选）', '2026/10/15 18:00')
+    await page.getByRole('button', { name: '重试创建审查活动' }).click()
+    await expect(page.getByRole('alert')).toContainText('当前内容与之前提交的创建请求不一致')
+    expect(requests).toHaveLength(2)
+    expect(requests[1].key).toBe(requests[0].key)
+    expect(requests[1].body).toMatchObject({ planned_end_at: '2026-10-15T10:00:00.000Z' })
+    await expect(page.getByLabel('活动结束时间（可选）')).toHaveValue('2026/10/15 18:00')
+    await expect(page.getByLabel('活动开始时间（可选）')).toHaveValue('2026/09/01 09:00')
+    await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
+    await page.waitForTimeout(1500)
+    expect(requests).toHaveLength(2)
+    await expect(page).toHaveURL(/\/review-plans\/plan-1\/review-cases\/new$/)
   })
 
   test('a blank or padded name is rejected on the field without a request', async ({ page }) => {
