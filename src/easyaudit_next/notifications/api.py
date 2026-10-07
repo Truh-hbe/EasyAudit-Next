@@ -4,10 +4,14 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
-from easyaudit_next.composition import build_notification_service
+from easyaudit_next.composition import (
+    build_notification_service,
+    build_notification_subject_context_resolver,
+)
 from easyaudit_next.notifications.models import (
     ActionItemNotificationSubject,
     FindingNotificationSubject,
+    NotificationId,
     NotificationItem,
     NotificationSubjectKind,
     ReviewCaseNotificationSubject,
@@ -15,13 +19,18 @@ from easyaudit_next.notifications.models import (
 from easyaudit_next.notifications.schemas import (
     NotificationInboxResponse,
     NotificationResponse,
+    NotificationSubjectContextResponse,
     NotificationSubjectResponse,
 )
+from easyaudit_next.notifications.subject_context import NotificationSubjectContext
 
 notification_router = APIRouter(prefix="/api/v1", tags=["notifications"])
 
 
-def _notification_response(item: NotificationItem) -> NotificationResponse:
+def _notification_response(
+    item: NotificationItem,
+    contexts: dict[NotificationId, NotificationSubjectContext],
+) -> NotificationResponse:
     if isinstance(item.subject, ReviewCaseNotificationSubject):
         subject = NotificationSubjectResponse(
             kind=NotificationSubjectKind.REVIEW_CASE,
@@ -39,6 +48,18 @@ def _notification_response(item: NotificationItem) -> NotificationResponse:
         )
     else:
         raise RuntimeError("Unsupported Notification subject")
+    context = contexts.get(item.id)
+    if context is not None:
+        subject = subject.model_copy(
+            update={
+                "context": NotificationSubjectContextResponse(
+                    title=context.title,
+                    finding_title=context.finding_title,
+                    case_title=context.case_title,
+                    role_keys=context.role_keys,
+                )
+            }
+        )
     return NotificationResponse(
         id=item.id,
         kind=item.kind,
@@ -73,8 +94,12 @@ def list_my_notifications(
         offset=offset,
         unread_only=unread_only,
     )
+    contexts = build_notification_subject_context_resolver(session).resolve(
+        identity.user,
+        page.items,
+    )
     return NotificationInboxResponse(
-        items=tuple(_notification_response(item) for item in page.items),
+        items=tuple(_notification_response(item, contexts) for item in page.items),
         unread_count=page.unread_count,
         limit=page.limit,
         offset=page.offset,
@@ -103,4 +128,8 @@ def mark_my_notification_read(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Notification not found",
         ) from exc
-    return _notification_response(item)
+    contexts = build_notification_subject_context_resolver(session).resolve(
+        identity.user,
+        (item,),
+    )
+    return _notification_response(item, contexts)

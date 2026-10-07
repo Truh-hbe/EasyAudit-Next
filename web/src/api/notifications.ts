@@ -13,9 +13,18 @@ export type NotificationKind =
 export type NotificationOriginKind = 'activity' | 'automatic_reminder'
 export type NotificationSubjectKind = 'review_case' | 'finding' | 'action_item'
 
+// 读取时按收件人当前的可见性解析；目标已不可见时为 null，不含任何业务事实。
+export interface NotificationSubjectContextResponse {
+  title: string
+  finding_title: string | null
+  case_title: string | null
+  role_keys: string[]
+}
+
 export interface NotificationSubjectResponse {
   kind: NotificationSubjectKind
   id: string
+  context?: NotificationSubjectContextResponse | null
 }
 
 export interface NotificationResponse {

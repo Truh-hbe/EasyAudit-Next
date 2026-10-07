@@ -12,6 +12,7 @@ import type {
   NotificationSubjectResponse,
 } from '../../api/notifications'
 import { formatDateTime } from '../../product/format'
+import { assignmentRoleName, caseRoleName, participantRoleName } from '../../product/terms'
 import { ButtonLink } from '../../ui/ButtonLink'
 import { InitialLoading } from '../../ui/InitialLoading'
 import { ItemList } from '../../ui/ItemList'
@@ -72,6 +73,42 @@ function subjectText(subject: NotificationSubjectResponse): string {
     default:
       return '未知目标'
   }
+}
+
+function roleText(subject: NotificationSubjectResponse, roleKey: string): string {
+  switch (subject.kind) {
+    case 'review_case':
+      return caseRoleName(roleKey)
+    case 'finding':
+      return participantRoleName(roleKey)
+    case 'action_item':
+      return assignmentRoleName(roleKey)
+    default:
+      return '未知角色'
+  }
+}
+
+// 通知本身是不可变的历史文案；目标名称和角色由服务器按当前权限解析，不可见时没有 context。
+function renderSubjectContext(subject: NotificationSubjectResponse) {
+  const context = subject.context
+  if (!context) return null
+  const parents = [
+    context.finding_title === null ? null : `所属发现项：${context.finding_title}`,
+    context.case_title === null ? null : `所属审查活动：${context.case_title}`,
+  ].filter((text) => text !== null)
+  return (
+    <Flex vertical gap={4}>
+      <Typography.Text strong>
+        {subjectText(subject)}：{context.title}
+      </Typography.Text>
+      {parents.length === 0 ? null : <Typography.Text type="secondary">{parents.join(' · ')}</Typography.Text>}
+      {context.role_keys.length === 0 ? null : (
+        <Typography.Text type="secondary">
+          您的角色：{context.role_keys.map((roleKey) => roleText(subject, roleKey)).join('、')}
+        </Typography.Text>
+      )}
+    </Flex>
+  )
 }
 
 const ACCESS_LOST_TEXT = '内容不存在或无权访问'
@@ -208,6 +245,7 @@ export function NotificationCenterPage() {
         <Flex vertical gap={4}>
           <Typography.Text strong>{item.title}</Typography.Text>
           <Typography.Text>{item.body}</Typography.Text>
+          {renderSubjectContext(item.subject)}
         </Flex>
         <Flex align="center" wrap gap={8}>
           {item.read_at === null ? (
@@ -268,7 +306,7 @@ export function NotificationCenterPage() {
             ]}
           />
           <Typography.Text type="secondary">
-            通知是历史投递记录，不代表当前责任或访问权限；打开目标后仍会重新校验权限。
+            通知是历史投递记录，不代表当前责任或访问权限；目标名称和角色按您当前的权限显示，打开目标后仍会重新校验权限。
           </Typography.Text>
         </Flex>
       </Card>

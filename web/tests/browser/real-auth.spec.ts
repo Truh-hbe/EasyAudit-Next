@@ -562,6 +562,20 @@ test('real M3.5.5 Lead Owner Reviewer journey preserves server truth through nud
   expect((await addAssigneeResponsePromise).status()).toBe(201)
   await expect(assigneeSection.getByText(JOURNEY_OWNER_DISPLAY_NAME, { exact: true })).toBeVisible()
 
+  // 被指派后，通知中心按当前权限显示具体整改项、所属上下文和角色，并能跳回该整改项。
+  await page.getByRole('navigation', { name: '主要导航' }).getByRole('link', { name: '通知' }).click()
+  await expect(page.getByRole('heading', { name: '通知' })).toBeVisible()
+  const assignmentNotification = page
+    .getByRole('listitem')
+    .filter({ hasText: `整改项：${JOURNEY_ACTION_TITLE}` })
+  await expect(assignmentNotification).toHaveCount(1)
+  await expect(assignmentNotification).toContainText('指派整改项')
+  await expect(assignmentNotification).toContainText(`所属发现项：${JOURNEY_FINDING_TITLE}`)
+  await expect(assignmentNotification).toContainText(`所属审查活动：${JOURNEY_CASE_TITLE}`)
+  await expect(assignmentNotification).toContainText('您的角色：')
+  await assignmentNotification.getByRole('link', { name: '打开当前目标' }).click()
+  await expect(page.getByRole('heading', { name: JOURNEY_ACTION_TITLE })).toBeVisible()
+
   const startResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()) === `/api/v1/action-items/${createdAction.id}/transitions` &&
