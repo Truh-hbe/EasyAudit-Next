@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -6,7 +7,10 @@ from uuid import uuid4
 from easyaudit_next.platform.domain.ids import DepartmentId, UserId
 from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import DepartmentRepository, UserRepository
-from easyaudit_next.review_core.application.authorization import build_authorization_context
+from easyaudit_next.review_core.application.authorization import (
+    build_authorization_context,
+    lock_case_and_build_context,
+)
 from easyaudit_next.review_core.application.mutation_results import FindingParticipantAddedResult
 from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
 from easyaudit_next.review_core.domain.ids import ActivityId, FindingId, ReviewCaseId
@@ -25,6 +29,7 @@ from easyaudit_next.review_core.domain.repositories import ReviewCoreRepository
 from easyaudit_next.review_core.domain.scenario_capabilities import (
     ActorKind,
     AuthorizationContext,
+    DirectFindingTransitionDecision,
     FindingOperationContext,
     PermissionSource,
     RoleGrant,
@@ -169,13 +174,17 @@ class FindingLifecycleService:
         occurred_at: datetime | None = None,
     ) -> FindingParticipantAddedResult:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
-        if not policy.authorization.allows(
-            MANAGE_FINDING_PARTICIPANTS_PERMISSION,
-            context,
-        ):
-            raise ReviewAuthorizationError(
-                "lead or auditor role required to manage FindingParticipant"
-            )
+
+        def authorize(_case: ReviewCase, current: AuthorizationContext) -> None:
+            if not policy.authorization.allows(MANAGE_FINDING_PARTICIPANTS_PERMISSION, current):
+                raise ReviewAuthorizationError(
+                    "lead or auditor role required to manage FindingParticipant"
+                )
+
+        authorize(review_case, context)
+        review_case, context, _ = self._lock_case_context(
+            actor, review_case, finding, authorize
+        )
         policy.finding_operations.validate_participant_management(
             self._finding_operation_context(review_case, finding)
         )
@@ -228,22 +237,37 @@ class FindingLifecycleService:
         occurred_at: datetime | None = None,
     ) -> Finding:
         finding, review_case, policy, context = self._finding_context(actor, finding_id)
-        if not policy.authorization.allows(VIEW_FINDING_PERMISSION, context):
-            raise ReviewAuthorizationError("Finding is not visible to this user")
-        operation_context = replace(
-            self._finding_operation_context(
-                review_case,
-                finding,
-                reason=reason,
-            ),
-            scenario_data=MappingProxyType(dict(finding.scenario_data)),
-        )
-        decision = policy.finding_direct_transitions.decide(action, operation_context)
-        if not policy.authorization.allows(decision.required_permission, context):
-            raise ReviewAuthorizationError(
-                "Finding transition requires Scenario permission "
-                f"{decision.required_permission!r}"
+
+        def authorize(
+            current_case: ReviewCase,
+            current: AuthorizationContext,
+        ) -> DirectFindingTransitionDecision:
+            if not policy.authorization.allows(VIEW_FINDING_PERMISSION, current):
+                raise ReviewAuthorizationError("Finding is not visible to this user")
+            operation_context = replace(
+                self._finding_operation_context(
+                    current_case,
+                    finding,
+                    reason=reason,
+                ),
+                scenario_data=MappingProxyType(dict(finding.scenario_data)),
             )
+            decision = policy.finding_direct_transitions.decide(action, operation_context)
+            if not policy.authorization.allows(decision.required_permission, current):
+                raise ReviewAuthorizationError(
+                    "Finding transition requires Scenario permission "
+                    f"{decision.required_permission!r}"
+                )
+            return decision
+
+        # Pre-lock refusal, then the same decision again on post-lock state.
+        authorize(review_case, context)
+        review_case, context, decision = self._lock_case_context(
+            actor,
+            review_case,
+            finding,
+            authorize,
+        )
         target = decision.target_lifecycle
 
         updated = replace(finding, lifecycle=target)
@@ -307,6 +331,36 @@ class FindingLifecycleService:
             finding_id=finding.id,
         )
         return finding, review_case, policy, context
+
+    def _lock_case_context[T](
+        self,
+        actor: User,
+        review_case: ReviewCase,
+        finding: Finding,
+        authorize: Callable[[ReviewCase, AuthorizationContext], T],
+    ) -> tuple[ReviewCase, AuthorizationContext, T]:
+        """Case lock, then grants as visible after it (see docs/architecture.md)."""
+        return lock_case_and_build_context(
+            self._repository,
+            self._users,
+            actor,
+            review_case,
+            lambda fresh: self._grants(fresh, review_case, finding),
+            authorize,
+        )
+
+    def _grants(
+        self,
+        actor: User,
+        review_case: ReviewCase,
+        finding: Finding,
+    ) -> AuthorizationContext:
+        return build_authorization_context(
+            self._repository,
+            actor,
+            review_case.id,
+            finding_id=finding.id,
+        )
 
     def _finding_operation_context(
         self,

@@ -33,6 +33,7 @@ def test_verification_submission_rejects_update_and_delete_in_postgresql(
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         submission, _ = service.submit_verification(
             reviewer,

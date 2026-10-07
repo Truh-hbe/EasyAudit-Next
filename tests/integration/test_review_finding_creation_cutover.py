@@ -37,6 +37,7 @@ from easyaudit_next.review_core.persistence.repositories import (
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 
 NOW = datetime(2026, 8, 26, 15, 30, tzinfo=UTC)
 
@@ -127,16 +128,16 @@ class _SynchronizedCaseGuardRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def lock_case_for_closure(self, organization_id, case_id):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().lock_case_for_closure(organization_id, case_id)
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def test_finding_create_racing_fieldwork_finish_cannot_arrive_after_case_cutover(
     postgres_engine: Engine,
 ) -> None:
     organization_id, case_id, lead_id = _seed_in_progress_case(postgres_engine)
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_create() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -184,6 +185,7 @@ def test_finding_create_racing_fieldwork_finish_cannot_arrive_after_case_cutover
         finish_future = executor.submit(attempt_finish)
         outcomes = {create_future.result(), finish_future.result()}
 
+    assert barrier.hits == 2
     assert outcomes in (
         {"create_success", "finish_success"},
         {"create_conflict", "finish_success"},

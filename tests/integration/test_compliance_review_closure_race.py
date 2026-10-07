@@ -48,6 +48,7 @@ from easyaudit_next.review_core.persistence.repositories import (
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 
 NOW = datetime(2026, 8, 29, 11, 0, tzinfo=UTC)
 
@@ -183,9 +184,9 @@ class _CloseBarrierRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def lock_case_for_closure(self, organization_id, case_id):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().lock_case_for_closure(organization_id, case_id)
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 class _AcceptBarrierRepository(SqlAlchemyVerificationClosureRepository):
@@ -193,12 +194,9 @@ class _AcceptBarrierRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def update_finding(self, finding, *, expected_lifecycle):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().update_finding(
-            finding,
-            expected_lifecycle=expected_lifecycle,
-        )
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def test_case_close_racing_accept_observation_preserves_committed_terminality(
@@ -207,7 +205,7 @@ def test_case_close_racing_accept_observation_preserves_committed_terminality(
     organization_id, case_id, finding_id, lead_id, reviewer_id = (
         _seed_observation_case(postgres_engine)
     )
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_close() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -256,6 +254,7 @@ def test_case_close_racing_accept_observation_preserves_committed_terminality(
         accept_future = executor.submit(attempt_accept_observation)
         outcomes = {close_future.result(), accept_future.result()}
 
+    assert barrier.hits == 2
     assert outcomes in (
         {"close_success", "accept_success"},
         {"close_invalid", "accept_success"},

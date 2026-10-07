@@ -37,6 +37,7 @@ def test_reopen_closed_finding_returns_to_rectifying_without_submission(
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         reopened = service.reopen_finding(
             lead,
@@ -83,6 +84,7 @@ def test_reopen_requires_non_blank_reason(postgres_engine: Engine) -> None:
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(ValueError, match="reason"):
             service.reopen_finding(
@@ -121,6 +123,7 @@ def test_reopen_is_rejected_after_parent_case_commits_closed(
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(ValueError, match="after ReviewCase closure"):
             service.reopen_finding(

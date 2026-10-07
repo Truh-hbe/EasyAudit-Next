@@ -168,6 +168,7 @@ def build_verification_closure_service(session: Session) -> VerificationClosureS
     return VerificationClosureService(
         SqlAlchemyVerificationClosureRepository(session),
         build_scenario_registry(),
+        SqlAlchemyUserRepository(session),
     )
 
 

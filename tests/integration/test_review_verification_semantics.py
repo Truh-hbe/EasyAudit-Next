@@ -38,6 +38,7 @@ from easyaudit_next.review_core.persistence.repositories import (
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 
 NOW = datetime(2026, 8, 26, 16, 0, tzinfo=UTC)
 
@@ -200,6 +201,7 @@ def test_verification_reject_is_atomic_submission_and_activity(postgres_engine: 
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         submission, finding = service.submit_verification(
             reviewer,
@@ -300,6 +302,7 @@ def test_verification_persistence_failure_rolls_back_finding_submission_and_acti
         service = VerificationClosureService(
             _FailAfterSubmissionRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(IntegrityError, match="forced verification persistence failure"):
             service.submit_verification(
@@ -349,6 +352,7 @@ def test_unrelated_user_fails_authorization_before_verification_validation(
         service = VerificationClosureService(
             SqlAlchemyVerificationClosureRepository(session),
             build_scenario_registry(),
+            SqlAlchemyUserRepository(session),
         )
         with pytest.raises(ReviewAuthorizationError, match="not visible"):
             service.submit_verification(
@@ -366,9 +370,9 @@ class _SynchronizedCaseGuardRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def lock_case_for_closure(self, organization_id, case_id):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().lock_case_for_closure(organization_id, case_id)
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def test_two_concurrent_case_close_callers_keep_case_cas_semantics(
@@ -378,7 +382,7 @@ def test_two_concurrent_case_close_callers_keep_case_cas_semantics(
         postgres_engine,
         finding_lifecycle="closed",
     )
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_close() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -399,6 +403,7 @@ def test_two_concurrent_case_close_callers_keep_case_cas_semantics(
         second = executor.submit(attempt_close)
         outcomes = sorted([first.result(), second.result()])
 
+    assert barrier.hits == 2
     assert outcomes == ["conflict", "success"]
     with Session(postgres_engine) as verification:
         assert verification.scalar(

@@ -1,6 +1,9 @@
+from collections.abc import Callable
+
 from easyaudit_next.platform.domain.models import User
+from easyaudit_next.platform.domain.repositories import UserRepository
 from easyaudit_next.review_core.domain.ids import ActionItemId, FindingId, ReviewCaseId
-from easyaudit_next.review_core.domain.models import DepartmentActor, UserActor
+from easyaudit_next.review_core.domain.models import DepartmentActor, ReviewCase, UserActor
 from easyaudit_next.review_core.domain.repositories import (
     RectificationRepository,
     ReviewCoreRepository,
@@ -11,6 +14,14 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     PermissionSource,
     RoleGrant,
 )
+
+
+class ReviewAuthorizationError(PermissionError):
+    """The authenticated user lacks the required business relationship."""
+
+
+class ConcurrentCaseTransitionError(RuntimeError):
+    """The persisted lifecycle no longer matches the workflow input."""
 
 
 def build_authorization_context(
@@ -137,3 +148,41 @@ def build_rectification_authorization_context(
         finding_role_grants=base.finding_role_grants,
         action_role_grants=frozenset(action_grants),
     )
+
+
+def lock_case_and_build_context[T](
+    repository: ReviewCoreRepository,
+    users: UserRepository,
+    actor: User,
+    expected_case: ReviewCase,
+    build_context: Callable[[User], AuthorizationContext],
+    authorize: Callable[[ReviewCase, AuthorizationContext], T],
+) -> tuple[ReviewCase, AuthorizationContext, T]:
+    """Take the Case lock, then authorize on what is visible after it.
+
+    Fixed order: Case lock -> re-read the actor (must be active) -> compare the Case
+    lifecycle with `expected_case` (409) -> `build_context(actor)` -> `authorize` (raises;
+    may return the decision it made). The lifecycle comparison comes before `authorize`
+    because `authorize` may validate against the locked Case, and a lifecycle that moved
+    while we waited must surface as a conflict (409), not as a validation error (422).
+    Callers run the same `authorize` before the lock as a cheap
+    refusal, so a user who may not do this never queues on the lock; the write is guarded
+    by the decision made here, never by the pre-lock one.
+    """
+
+    locked_case = repository.lock_case_for_team_management(
+        actor.organization_id,
+        expected_case.id,
+    )
+    if locked_case is None:
+        raise LookupError("ReviewCase not found")
+    # Deactivation holds this Case lock while committing, so once the lock is granted
+    # the actor row read here reflects it (Case -> User keeps the documented lock order).
+    fresh = next(iter(users.lock_users_for_update(actor.organization_id, (actor.id,))), None)
+    if fresh is None or not fresh.is_active:
+        raise ReviewAuthorizationError("Active organization user required")
+    if locked_case.lifecycle is not expected_case.lifecycle:
+        raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
+    context = build_context(fresh)
+    decision = authorize(locked_case, context)
+    return locked_case, context, decision

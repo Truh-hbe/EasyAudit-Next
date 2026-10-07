@@ -5,9 +5,9 @@ from easyaudit_next.platform.domain.models import User
 from easyaudit_next.platform.domain.repositories import DepartmentRepository, UserRepository
 from easyaudit_next.review_core.application.authorization import (
     build_rectification_authorization_context,
+    lock_case_and_build_context,
 )
 from easyaudit_next.review_core.application.review_planning import (
-    ConcurrentCaseTransitionError,
     ReviewAuthorizationError,
 )
 from easyaudit_next.review_core.application.review_rectification import (
@@ -20,8 +20,12 @@ from easyaudit_next.review_core.domain.models import (
     FindingActivitySubject,
     FindingLifecycle,
     FindingSeverity,
+    ReviewCase,
 )
-from easyaudit_next.review_core.domain.scenario_capabilities import FindingOperationContext
+from easyaudit_next.review_core.domain.scenario_capabilities import (
+    AuthorizationContext,
+    FindingOperationContext,
+)
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
 from easyaudit_next.review_core.domain.verification_repositories import (
     VerificationClosureRepository,
@@ -60,17 +64,24 @@ class ClosureAwareFindingLifecycleService(ActionAwareFindingLifecycleService):
             actor,
             review_case.id,
         )
-        if not policy.authorization.allows(CREATE_FINDING_PERMISSION, context):
-            raise ReviewAuthorizationError("lead or auditor role required to create Finding")
 
-        locked_case = self._closure_repository.lock_case_for_closure(
-            actor.organization_id,
-            review_case.id,
+        def authorize(_case: ReviewCase, current: AuthorizationContext) -> None:
+            if not policy.authorization.allows(CREATE_FINDING_PERMISSION, current):
+                raise ReviewAuthorizationError("lead or auditor role required to create Finding")
+
+        authorize(review_case, context)
+        locked_case, _, _ = lock_case_and_build_context(
+            self._closure_repository,
+            self._users,
+            actor,
+            review_case,
+            lambda fresh: build_rectification_authorization_context(
+                self._closure_repository,
+                fresh,
+                review_case.id,
+            ),
+            authorize,
         )
-        if locked_case is None:
-            raise LookupError("ReviewCase not found")
-        if locked_case.lifecycle is not review_case.lifecycle:
-            raise ConcurrentCaseTransitionError("Concurrent ReviewCase transition")
 
         policy.finding_operations.validate_create(
             FindingOperationContext(case_lifecycle=locked_case.lifecycle)

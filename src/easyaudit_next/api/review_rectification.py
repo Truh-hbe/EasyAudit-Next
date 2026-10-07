@@ -26,7 +26,10 @@ from easyaudit_next.platform.domain.ids import DepartmentId, UserId
 from easyaudit_next.review_core.application.review_findings import (
     ConcurrentFindingTransitionError,
 )
-from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
+from easyaudit_next.review_core.application.review_planning import (
+    ConcurrentCaseTransitionError,
+    ReviewAuthorizationError,
+)
 from easyaudit_next.review_core.application.review_rectification import (
     ConcurrentActionItemTransitionError,
 )
@@ -126,7 +129,11 @@ def _raise_api_error(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if isinstance(
         exc,
-        (ConcurrentActionItemTransitionError, ConcurrentFindingTransitionError),
+        (
+            ConcurrentActionItemTransitionError,
+            ConcurrentCaseTransitionError,
+            ConcurrentFindingTransitionError,
+        ),
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
@@ -161,6 +168,7 @@ def create_action_item(
             due_at=payload.due_at,
         )
     except (
+        ConcurrentCaseTransitionError,
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
         LookupError,
@@ -235,6 +243,7 @@ def add_action_assignee(
         )
         notifications.action_assignee_added(result)
     except (
+        ConcurrentCaseTransitionError,
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
         LookupError,
@@ -284,6 +293,7 @@ def transition_action_item(
         )
     except (
         ConcurrentActionItemTransitionError,
+        ConcurrentCaseTransitionError,
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
         LookupError,
@@ -335,6 +345,7 @@ def submit_rectification(
         )
         notifications.rectification_submitted(result)
     except (
+        ConcurrentCaseTransitionError,
         ConcurrentFindingTransitionError,
         ReviewAuthorizationError,
         LookupError,

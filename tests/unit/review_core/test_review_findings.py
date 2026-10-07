@@ -48,6 +48,13 @@ class InMemoryRepository:
         self.activities: list[Activity] = []
         self.reject_update = False
 
+    def lock_case_for_team_management(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> ReviewCase | None:
+        return self.get_case(organization_id, case_id)
+
     def get_case(
         self,
         organization_id: OrganizationId,
@@ -136,6 +143,11 @@ class Users:
 
     def get(self, user_id: UserId) -> User | None:
         return self.users.get(user_id)
+
+    def lock_users_for_update(
+        self, organization_id: OrganizationId, user_ids: tuple[UserId, ...]
+    ) -> tuple[User, ...]:
+        return tuple(self.users[user_id] for user_id in user_ids if user_id in self.users)
 
 
 class Departments:

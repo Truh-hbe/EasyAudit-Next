@@ -14,6 +14,7 @@ from easyaudit_next.review_core.persistence.models import ActivityRecord, Submis
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from tests.integration.barrier_support import CountingBarrier
 from tests.integration.test_review_verification_semantics import (
     NOW,
     _seed_case,
@@ -28,9 +29,9 @@ class _SynchronizedCaseGuardRepository(SqlAlchemyVerificationClosureRepository):
         super().__init__(session)
         self._barrier = barrier
 
-    def lock_case_for_closure(self, organization_id, case_id):
+    def lock_case_for_team_management(self, organization_id, case_id):
         self._barrier.wait(timeout=10)
-        return super().lock_case_for_closure(organization_id, case_id)
+        return super().lock_case_for_team_management(organization_id, case_id)
 
 
 def test_two_verification_approvals_from_same_old_state_yield_one_conflict(
@@ -40,7 +41,7 @@ def test_two_verification_approvals_from_same_old_state_yield_one_conflict(
         postgres_engine,
         finding_lifecycle="verifying",
     )
-    barrier = Barrier(2)
+    barrier = CountingBarrier()
 
     def attempt_approve() -> str:
         with Session(postgres_engine, expire_on_commit=False) as session:
@@ -49,6 +50,7 @@ def test_two_verification_approvals_from_same_old_state_yield_one_conflict(
             service = VerificationClosureService(
                 _SynchronizedCaseGuardRepository(session, barrier),
                 build_scenario_registry(),
+                SqlAlchemyUserRepository(session),
             )
             try:
                 service.submit_verification(
@@ -69,6 +71,7 @@ def test_two_verification_approvals_from_same_old_state_yield_one_conflict(
         second = executor.submit(attempt_approve)
         outcomes = sorted([first.result(), second.result()])
 
+    assert barrier.hits == 2
     assert outcomes == ["conflict", "success"]
     with Session(postgres_engine) as verification:
         assert verification.scalar(

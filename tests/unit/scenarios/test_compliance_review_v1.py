@@ -52,6 +52,13 @@ class Repository:
         ]
         self.activities: list[Activity] = []
 
+    def lock_case_for_team_management(
+        self,
+        organization_id: OrganizationId,
+        case_id: ReviewCaseId,
+    ) -> ReviewCase | None:
+        return self.get_case(organization_id, case_id)
+
     def get_case(
         self,
         organization_id: OrganizationId,
@@ -119,9 +126,17 @@ class Repository:
         self.activities.append(activity)
 
 
+_KNOWN_USERS: dict[UserId, User] = {}
+
+
 class Users:
     def get(self, user_id: UserId) -> User | None:
         return None
+
+    def lock_users_for_update(
+        self, organization_id: OrganizationId, user_ids: tuple[UserId, ...]
+    ) -> tuple[User, ...]:
+        return tuple(_KNOWN_USERS[user_id] for user_id in user_ids if user_id in _KNOWN_USERS)
 
 
 class Departments:
@@ -130,12 +145,14 @@ class Departments:
 
 
 def _user(organization_id: OrganizationId) -> User:
-    return User(
+    user = User(
         id=UserId(uuid4()),
         organization_id=organization_id,
         display_name="User",
         platform_role=PlatformRole.ORDINARY_USER,
     )
+    _KNOWN_USERS[user.id] = user
+    return user
 
 
 def _finding_service(repository: Repository) -> FindingLifecycleService:

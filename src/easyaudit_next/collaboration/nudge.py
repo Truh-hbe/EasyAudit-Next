@@ -17,7 +17,8 @@ from easyaudit_next.notifications.models import (
 )
 from easyaudit_next.notifications.service import NotificationService
 from easyaudit_next.platform.domain.models import User
-from easyaudit_next.review_core.domain.ids import ActionItemId, ActivityId, FindingId
+from easyaudit_next.platform.persistence.models import UserRecord
+from easyaudit_next.review_core.domain.ids import ActionItemId, ActivityId, FindingId, ReviewCaseId
 from easyaudit_next.review_core.domain.models import (
     ActionItemActivitySubject,
     Activity,
@@ -75,8 +76,7 @@ class ManualNudgeService:
         )
         if finding is None:
             raise LookupError("Finding not found")
-        snapshot = self._recipients.load(actor.organization_id, finding.case_id)
-        self._authorize_sender(actor, snapshot, finding.id)
+        snapshot = self._lock_and_authorize(actor, finding.case_id, finding.id)
         recipients = self._recipients.recipients(
             snapshot,
             CollaborationRecipientIntent.FINDING_RECTIFICATION,
@@ -133,8 +133,7 @@ class ManualNudgeService:
         if finding is None:
             raise LookupError("ActionItem not found")
 
-        snapshot = self._recipients.load(actor.organization_id, finding.case_id)
-        self._authorize_sender(actor, snapshot, finding.id)
+        snapshot = self._lock_and_authorize(actor, finding.case_id, finding.id)
         recipients = self._recipients.recipients(
             snapshot,
             CollaborationRecipientIntent.ACTION_EXECUTION,
@@ -168,6 +167,37 @@ class ManualNudgeService:
             created_at=now,
         )
         return NudgeResult(activity_id=activity.id, recipient_count=len(recipients))
+
+    def _lock_and_authorize(
+        self,
+        actor: User,
+        case_id: UUID,
+        finding_id: UUID,
+    ) -> RecipientSnapshot:
+        # Refuse cheaply before queueing on the Case lock, then decide again on the
+        # membership visible after it: Case roles are revoked under that lock.
+        self._authorize_sender(
+            actor, self._recipients.load(actor.organization_id, case_id), finding_id
+        )
+        if (
+            self._review_repository.lock_case_for_team_management(
+                actor.organization_id,
+                ReviewCaseId(case_id),
+            )
+            is None
+        ):
+            raise LookupError("ReviewCase not found")
+        # Deactivation commits under this Case lock, so a fresh read now sees it.
+        fresh = self._session.scalar(
+            select(UserRecord)
+            .where(UserRecord.organization_id == actor.organization_id, UserRecord.id == actor.id)
+            .execution_options(populate_existing=True)
+        )
+        if fresh is None or not fresh.is_active:
+            raise LookupError("ReviewCase not found")
+        snapshot = self._recipients.load(actor.organization_id, case_id)
+        self._authorize_sender(actor, snapshot, finding_id)
+        return snapshot
 
     @staticmethod
     def _authorize_sender(
