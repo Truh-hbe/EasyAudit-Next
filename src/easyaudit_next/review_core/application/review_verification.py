@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import MappingProxyType
 from uuid import uuid4
 
 from easyaudit_next.platform.domain.models import User
@@ -282,7 +283,10 @@ class VerificationClosureService:
         target = policy.finding_workflow.transition(
             finding.lifecycle,
             "reopen",
-            FindingTransitionContext(reason=reason),
+            FindingTransitionContext(
+                reason=reason,
+                scenario_data=MappingProxyType(dict(finding.scenario_data)),
+            ),
         )
         updated = replace(finding, lifecycle=target)
         if not self._repository.update_finding(

@@ -80,6 +80,13 @@ describe('exact Scenario Finding interaction adapters', () => {
     expect(markup).not.toContain('data-scenario-action="accept_observation"')
   })
 
+  it('compliance_review@1 closed observation offers reopen back to open, not rectification', () => {
+    const markup = interactionMarkup('compliance_review', finding('observation', 'closed'))
+
+    expect(markup).toContain('data-scenario-action="reopen"')
+    expect(markup).not.toContain('data-scenario-action="issue"')
+  })
+
   it('unknown exact versions fail closed before rendering Scenario interactions', () => {
     expect(resolveFindingScenarioAdapter('process_review', 99)).toBeUndefined()
     expect(resolveFindingScenarioAdapter('compliance_review', 99)).toBeUndefined()
