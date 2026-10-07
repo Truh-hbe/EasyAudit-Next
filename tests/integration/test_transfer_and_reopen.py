@@ -738,6 +738,9 @@ def test_deactivating_the_last_active_collaborator_races_the_transfer_serially(
     try:
         _deactivate(seed, seed.collaborator)(session_a)
         with Session(postgres_engine) as session_b, session_b.begin():
+            # Same thread as session A: if the rule is broken the transfer would wait on A's
+            # row lock forever, so fail fast instead (LockNotAvailable).
+            session_b.execute(text("SET LOCAL lock_timeout = '3s'"))
             with pytest.raises(ActionItemOperationError, match="active executor"):
                 seed.transfer(session_b, seed.owner, seed.new1)
         transaction.commit()
