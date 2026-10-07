@@ -209,7 +209,7 @@ export function AdminPage() {
     const primaryDepartmentId = userDepartmentId.trim() === '' ? null : userDepartmentId
     if (userId === null) {
       if (userLoginName.trim().length === 0 || userInitialPassword.length < 12 || userInitialPassword.length > 1000) {
-        setActionMessage('新用户需要登录名和12 至 1000 个字符的初始密码。')
+        setActionMessage('新用户需要登录名和 12 至 1000 个字符的初始密码。')
         return
       }
       await refreshAfter(
