@@ -161,6 +161,13 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   await page.getByLabel('审查活动名称').fill('M5.2 Compliance Case')
   await page.getByLabel('标准 / 依据').fill('standard-a')
   await page.getByLabel('范围摘要').fill('pilot scope')
+  for (const [label, text] of [
+    ['活动开始时间（可选）', '2026/09/01 09:00'],
+    ['活动结束时间（可选）', '2026/09/30 18:00'],
+  ]) {
+    await page.getByLabel(label).fill(text)
+    await page.getByLabel(label).press('Enter')
+  }
 
   const secondCaseResponsePromise = page.waitForResponse(
     (response) =>
@@ -180,8 +187,13 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
     scenario_key: string
     scenario_version: number
     scenario_data: Record<string, string>
+    planned_start_at: string | null
+    planned_end_at: string | null
   }
   expect(secondCase.plan_id).toBe(secondPlan.id)
+  // 日期按上海墙上时间提交并原样持久化（UTC+8），计划没有日期也不影响。
+  expect(new Date(secondCase.planned_start_at ?? '').toISOString()).toBe('2026-09-01T01:00:00.000Z')
+  expect(new Date(secondCase.planned_end_at ?? '').toISOString()).toBe('2026-09-30T10:00:00.000Z')
   expect(secondCase.scenario_key).toBe('compliance_review')
   expect(secondCase.scenario_version).toBe(1)
   expect(secondCase.scenario_data).toEqual({
@@ -191,5 +203,7 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   expect(new URL(page.url()).pathname).toBe(`/review-cases/${secondCase.id}`)
   expect((await secondDetailResponsePromise).status()).toBe(200)
   await expect(page.getByRole('heading', { name: 'M5.2 Compliance Case' })).toBeVisible()
+  await expect(page.getByText('2026/09/01 09:00').first()).toBeVisible()
+  await expect(page.getByText('2026/09/30 18:00').first()).toBeVisible()
   expect(planPostCount).toBe(2)
 })
