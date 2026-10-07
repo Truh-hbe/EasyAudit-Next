@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  advanceSessionGeneration,
+  currentSessionGeneration,
   installSessionUnauthorizedHandler,
   publicApiRequest,
   sessionApiDownload,
@@ -55,6 +57,70 @@ describe('shared API boundary', () => {
     await expect(sessionApiRequest('/api/v1/me')).rejects.toMatchObject({ status: 401 })
     expect(unauthorized).toHaveBeenCalledOnce()
     uninstall()
+  })
+
+  describe('session generation', () => {
+    function deferredFetch() {
+      let release!: (response: Response) => void
+      const pending = new Promise<Response>((resolve) => {
+        release = resolve
+      })
+      vi.stubGlobal('fetch', vi.fn(() => pending))
+      return () =>
+        release(
+          new Response(JSON.stringify({ detail: 'Authentication required' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+    }
+
+    it('advances monotonically', () => {
+      const before = currentSessionGeneration()
+      expect(advanceSessionGeneration()).toBe(before + 1)
+      expect(currentSessionGeneration()).toBe(before + 1)
+    })
+
+    it('ignores a late 401 from a previous generation', async () => {
+      const unauthorized = vi.fn()
+      const uninstall = installSessionUnauthorizedHandler(unauthorized)
+      const release = deferredFetch()
+
+      const stale = sessionApiRequest('/api/v1/me/workbench')
+      advanceSessionGeneration()
+      release()
+
+      await expect(stale).rejects.toMatchObject({ status: 401 })
+      expect(unauthorized).not.toHaveBeenCalled()
+      uninstall()
+    })
+
+    it('ignores a late download 401 from a previous generation', async () => {
+      const unauthorized = vi.fn()
+      const uninstall = installSessionUnauthorizedHandler(unauthorized)
+      const release = deferredFetch()
+
+      const stale = sessionApiDownload('/api/v1/export', 'export.csv')
+      advanceSessionGeneration()
+      release()
+
+      await expect(stale).rejects.toMatchObject({ status: 401 })
+      expect(unauthorized).not.toHaveBeenCalled()
+      uninstall()
+    })
+
+    it('still signals a 401 from the current generation', async () => {
+      const unauthorized = vi.fn()
+      const uninstall = installSessionUnauthorizedHandler(unauthorized)
+      const release = deferredFetch()
+
+      const current = sessionApiRequest('/api/v1/me/workbench')
+      release()
+
+      await expect(current).rejects.toMatchObject({ status: 401 })
+      expect(unauthorized).toHaveBeenCalledOnce()
+      uninstall()
+    })
   })
 
   it('does not turn login 401 into a session-expiry signal', async () => {

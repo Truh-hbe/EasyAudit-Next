@@ -61,6 +61,25 @@ export function installSessionUnauthorizedHandler(
   }
 }
 
+// 会话代次：登录、退出、401 清理时递增。请求发起时记录代次，响应返回时
+// 代次已变化说明它属于旧会话，不得再触发会话清理。
+let sessionGeneration = 0
+
+export function currentSessionGeneration(): number {
+  return sessionGeneration
+}
+
+export function advanceSessionGeneration(): number {
+  sessionGeneration += 1
+  return sessionGeneration
+}
+
+function signalSessionUnauthorized(requestGeneration: number): void {
+  if (requestGeneration === sessionGeneration) {
+    sessionUnauthorizedHandler?.()
+  }
+}
+
 function assertApiPath(path: string): void {
   if (!path.startsWith('/api/v1/')) {
     throw new Error('EasyAudit API requests must use relative /api/v1/* paths')
@@ -103,6 +122,7 @@ async function request<T>(
     headers.set('Content-Type', 'application/json')
   }
 
+  const requestGeneration = sessionGeneration
   const response = await fetch(path, {
     ...init,
     headers,
@@ -111,7 +131,7 @@ async function request<T>(
 
   if (!response.ok) {
     if (signalSession401 && response.status === 401) {
-      sessionUnauthorizedHandler?.()
+      signalSessionUnauthorized(requestGeneration)
     }
     throw new ApiError(
       response.status,
@@ -162,10 +182,11 @@ export async function sessionApiDownload(
   init: RequestInit = {},
 ): Promise<DownloadedFile> {
   assertApiPath(path)
+  const requestGeneration = sessionGeneration
   const response = await fetch(path, init)
   if (!response.ok) {
     if (response.status === 401) {
-      sessionUnauthorizedHandler?.()
+      signalSessionUnauthorized(requestGeneration)
     }
     throw new ApiError(
       response.status,

@@ -12,7 +12,7 @@
     "typecheck": "tsc -b",
     "lint": "oxlint .",
     "test": "vitest run",
-    "test:browser": "playwright test tests/browser/foundation.spec.ts tests/browser/collaboration*.spec.ts",
+    "test:browser": "playwright test tests/browser/foundation.spec.ts tests/browser/auth-session-generation.spec.ts tests/browser/collaboration*.spec.ts",
     "test:browser:real": "playwright test tests/browser/real-auth.spec.ts tests/browser/real-m4-1.spec.ts tests/browser/real-m5-2.spec.ts tests/browser/real-m5-3.spec.ts tests/browser/real-m5-4.spec.ts tests/browser/real-m5-5.spec.ts tests/browser/real-pilot-3.spec.ts tests/browser/real-case-lifecycle.spec.ts",
     "build": "tsc -b && vite build",
     "check:entry": "node scripts/check-entry-chunk.mjs",
