@@ -4,6 +4,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from easyaudit_next.platform.application.password_policy import (
+    MAX_PASSWORD_LENGTH,
+    MIN_PASSWORD_LENGTH,
+)
 from easyaudit_next.platform.domain.models import PlatformRole
 
 
@@ -40,7 +44,7 @@ class DomainModelResponse(BaseModel):
 
 class LoginRequest(BaseModel):
     login_name: str = Field(min_length=1, max_length=200)
-    password: str = Field(min_length=1, max_length=1_000)
+    password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UserResponse(BaseModel):
@@ -63,8 +67,8 @@ class LoginResponse(BaseModel):
 
 
 class PasswordChangeRequest(BaseModel):
-    current_password: str = Field(min_length=1, max_length=1_000)
-    new_password: str = Field(min_length=1, max_length=1_000)
+    current_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
+    new_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
 
 
 class SessionResponse(BaseModel):
@@ -104,7 +108,7 @@ class DepartmentPatchRequest(BaseModel):
 class UserCreateRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
     login_name: str = Field(min_length=1, max_length=200)
-    initial_password: str = Field(min_length=12, max_length=1_000)
+    initial_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
     platform_role: PlatformRole = PlatformRole.ORDINARY_USER
     primary_department_id: UUID | None = None
     must_change_password: bool = True
@@ -118,9 +122,9 @@ class UserPatchRequest(BaseModel):
 
 
 class CredentialResetRequest(BaseModel):
-    """Opaque reset input; the service owns the authoritative password policy."""
+    """The upper bound mirrors the policy; the service owns the full password policy."""
 
-    temporary_password: str
+    temporary_password: str = Field(max_length=MAX_PASSWORD_LENGTH)
 
 
 class ScenarioResponse(BaseModel):

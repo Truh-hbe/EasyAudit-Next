@@ -22,6 +22,7 @@ from easyaudit_next.platform.application.authentication import (
     AuthenticationService,
     InvalidCredentialsError,
 )
+from easyaudit_next.platform.application.password_policy import PasswordPolicyError
 from easyaudit_next.platform.application.services import IdentityOrganizationService
 from easyaudit_next.platform.domain.ids import UserId
 from easyaudit_next.platform.persistence.models import (
@@ -600,3 +601,73 @@ def test_duplicate_login_name_returns_safe_409(postgres_engine: Engine) -> None:
     assert response.status_code == 409
     for marker in ("INSERT", "SELECT", "password_hash", "$argon2", "parameters", "psycopg"):
         assert marker not in response.text
+
+
+def test_reset_rejects_1001_char_password_without_credential_session_or_audit_change(
+    postgres_engine: Engine,
+) -> None:
+    fixture = _seed(postgres_engine)
+    admin = _client(postgres_engine)
+    target = _client(postgres_engine)
+    assert admin.post(
+        "/api/v1/auth/login",
+        json={"login_name": fixture.admin_login, "password": ADMIN_PASSWORD},
+    ).status_code == 200
+    assert target.post(
+        "/api/v1/auth/login",
+        json={"login_name": fixture.target_login, "password": TARGET_PASSWORD},
+    ).status_code == 200
+
+    def snapshot() -> tuple[object, ...]:
+        with Session(postgres_engine) as session:
+            credential = session.get(LocalCredentialRecord, fixture.target_id)
+            assert credential is not None
+            sessions = session.scalars(
+                select(AuthSessionRecord)
+                .where(AuthSessionRecord.user_id == fixture.target_id)
+                .order_by(AuthSessionRecord.id)
+            ).all()
+            audits = session.scalars(
+                select(PlatformAuditEventRecord.id).where(
+                    PlatformAuditEventRecord.organization_id == fixture.organization_id
+                )
+            ).all()
+            return (
+                credential.password_hash,
+                credential.password_changed_at,
+                credential.must_change_password,
+                [(item.id, item.revoked_at) for item in sessions],
+                sorted(audits),
+            )
+
+    before = snapshot()
+    too_long = "a" * 1001
+    response = admin.post(
+        f"/api/v1/admin/users/{fixture.target_id}/credential-reset",
+        json={"temporary_password": too_long},
+    )
+    assert response.status_code == 422
+    assert too_long not in response.text
+    assert snapshot() == before
+    assert target.get("/api/v1/me").status_code == 200
+
+    # The service enforces the same bound for callers that bypass the request model.
+    with Session(postgres_engine) as session:
+        service = _administration_service(session)
+        admin_user = SqlAlchemyUserRepository(session).get(fixture.admin_id)
+        assert admin_user is not None
+        with pytest.raises(PasswordPolicyError):
+            service.reset_local_credential(admin_user, fixture.target_id, too_long, now=NOW)
+        session.rollback()
+    assert snapshot() == before
+
+    # 1000 characters is accepted and can log in.
+    boundary = "b" * 1000
+    assert admin.post(
+        f"/api/v1/admin/users/{fixture.target_id}/credential-reset",
+        json={"temporary_password": boundary},
+    ).status_code == 200
+    assert _client(postgres_engine).post(
+        "/api/v1/auth/login",
+        json={"login_name": fixture.target_login, "password": boundary},
+    ).status_code == 200
