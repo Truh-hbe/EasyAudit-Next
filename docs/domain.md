@@ -60,10 +60,11 @@ flowchart TD
 
 ```text
 draft --schedule--> scheduled --start--> in_progress --finish_fieldwork--> awaiting_closure --close--> closed
+awaiting_closure --reopen_fieldwork(reason)--> in_progress
 draft / scheduled --cancel(reason)--> cancelled
 ```
 
-`close` 要求所有 Finding 为终态。
+`close` 要求所有 Finding 为终态。`reopen_fieldwork` 用于误点“完成现场工作”或需要补录发现项：原因必填，权限与其他 Case 流转相同（`transition_case`），Activity（`review_case.transitioned`）记录原因；`fieldwork_completed_at` 清空（再次完成时重新记录），`started_at` 保持首次开始时间。`closed` / `cancelled` 仍是终态。自动提醒按当前 lifecycle 计算，恢复后活动重新成为逾期提醒候选，不需要撤销任何已排期提醒。
 
 **Finding**
 
@@ -116,7 +117,7 @@ done --reopen--> in_progress
 
 ## compliance_review@1
 
-与 process_review@1 共享 Case 与 ActionItem 生命周期、角色集合和大部分权限，区别在于：
+与 process_review@1 共享 Case（含 `reopen_fieldwork`）与 ActionItem 生命周期、角色集合和大部分权限，区别在于：
 
 - Finding 必须声明 `finding_type`：`nonconformity` 或 `observation`。
   - `nonconformity` 走整改 → 验证的完整路径。

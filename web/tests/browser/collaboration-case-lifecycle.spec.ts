@@ -20,6 +20,7 @@ const NEXT: Record<string, Record<string, string>> = {
   finish_fieldwork: { from: 'in_progress', to: 'awaiting_closure' },
   close: { from: 'awaiting_closure', to: 'closed' },
   cancel: { from: 'draft', to: 'cancelled' },
+  reopen_fieldwork: { from: 'awaiting_closure', to: 'in_progress' },
 }
 
 interface Command {
@@ -27,6 +28,8 @@ interface Command {
   button: string
   // confirm 对应的确认框标题与确认按钮；reason 对应的弹层。
   dialog?: { title: string; ok: string }
+  // 需要原因的命令：弹层里的原因输入框标签。
+  reasonLabel?: string
 }
 
 const COMMANDS: Command[] = [
@@ -34,7 +37,8 @@ const COMMANDS: Command[] = [
   { action: 'start', button: '开始活动' },
   { action: 'finish_fieldwork', button: '完成现场工作', dialog: { title: '完成现场工作', ok: '确认完成' } },
   { action: 'close', button: '关闭活动', dialog: { title: '关闭活动', ok: '确认关闭' } },
-  { action: 'cancel', button: '取消活动', dialog: { title: '取消活动', ok: '确认取消' } },
+  { action: 'cancel', button: '取消活动', dialog: { title: '取消活动', ok: '确认取消' }, reasonLabel: '取消原因' },
+  { action: 'reopen_fieldwork', button: '恢复现场', dialog: { title: '恢复现场', ok: '确认恢复' }, reasonLabel: '恢复原因' },
 ]
 
 interface World {
@@ -141,7 +145,7 @@ async function invoke(page: Page, command: Command) {
   await button(page, command.button).click()
   if (command.dialog === undefined) return
   const dialog = page.getByRole('dialog', { name: command.dialog.title })
-  if (command.action === 'cancel') await dialog.getByLabel('取消原因').fill('计划调整')
+  if (command.reasonLabel !== undefined) await dialog.getByLabel(command.reasonLabel).fill('计划调整')
   await dialog.getByRole('button', { name: command.dialog.ok }).click()
 }
 
@@ -188,6 +192,34 @@ for (const scenario of SCENARIOS) {
       ])
     })
 
+    test('reopen_fieldwork asks for a reason, returns to in_progress, re-enables findings, then finishes and closes again', async ({ page }) => {
+      const world = await mockWorld(page, scenario, 'awaiting_closure')
+      await open(page)
+      await expect(button(page, '关闭活动')).toBeVisible()
+      await expect(page.getByText('后才能新建发现项')).toBeVisible()
+      expect(await page.getByRole('button', { name: '新建发现项' }).count()).toBe(0)
+
+      await button(page, '恢复现场').click()
+      const dialog = page.getByRole('dialog', { name: '恢复现场' })
+      expect(world.posts).toHaveLength(0) // 提交前不发请求
+      await dialog.getByLabel('恢复原因').fill('漏记一处缺陷')
+      await dialog.getByRole('button', { name: '确认恢复' }).click()
+      await expect(header(page).getByText('审查中', { exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: '新建发现项' })).toBeVisible()
+      expect(await button(page, '恢复现场').count()).toBe(0)
+      expect(await button(page, '关闭活动').count()).toBe(0)
+
+      await invoke(page, COMMANDS[2])
+      await expect(header(page).getByText('待关闭', { exact: true })).toBeVisible()
+      await invoke(page, COMMANDS[3])
+      await expect(header(page).getByText('已关闭', { exact: true })).toBeVisible()
+      expect(world.posts).toEqual([
+        { action: 'reopen_fieldwork', reason: '漏记一处缺陷' },
+        { action: 'finish_fieldwork', reason: null },
+        { action: 'close', reason: null },
+      ])
+    })
+
     test('cancel asks for a reason in a dialog and sends it', async ({ page }) => {
       const world = await mockWorld(page, scenario, 'scheduled')
       await open(page)
@@ -205,7 +237,7 @@ for (const scenario of SCENARIOS) {
 // 每个命令的失败分类：409 / 422 / 403 / 结果未知。
 for (const command of COMMANDS) {
   const from = NEXT[command.action].from
-  const scenario: Scenario = command.action === 'close' ? 'compliance_review' : 'process_review'
+  const scenario: Scenario = command.action === 'close' || command.action === 'reopen_fieldwork' ? 'compliance_review' : 'process_review'
 
   test.describe(`${command.action} failures`, () => {
     test('409 says the state changed, refreshes silently and does not replay', async ({ page }) => {
@@ -221,7 +253,11 @@ for (const command of COMMANDS) {
       // 先等静默重读落地（命令集已按新状态变化），再断言提示：不依赖重读与断言之间的先后。
       await expect.poll(() => world.caseReads).toBeGreaterThan(readsBefore) // 静默重读，页面不回到加载态
       await expect(header(page).getByText(from === 'draft' ? '已排期' : '已关闭', { exact: true })).toBeVisible()
-      if (command.action === 'cancel') {
+      if (command.action === 'reopen_fieldwork') {
+        // 别人已把活动推进走：恢复现场不再可用，弹层随命令卸载，页面级提示保留。
+        await expect(page.getByRole('dialog', { name: '恢复现场' })).toBeHidden()
+        await expect(page.getByRole('status').filter({ hasText: '数据已变化' })).toBeVisible()
+      } else if (command.action === 'cancel') {
         // 取消在新状态下仍然可用：弹层保留，显示 409 提示，并保留已填写的原因。
         const dialog = page.getByRole('dialog', { name: '取消活动' })
         await expect(dialog.getByText('数据已变化')).toBeVisible()
@@ -235,10 +271,15 @@ for (const command of COMMANDS) {
     test('422 shows the server message for the business rule', async ({ page }) => {
       const world = await mockWorld(page, scenario, from)
       world.postStatus = 422
-      world.postDetail = command.action === 'cancel' ? 'Cancelling a ReviewCase requires a reason' : 'ReviewCase cannot close until every Finding is closed or voided'
+      world.postDetail =
+        command.action === 'cancel'
+          ? 'Cancelling a ReviewCase requires a reason'
+          : command.action === 'reopen_fieldwork'
+            ? 'Reopening fieldwork requires a reason'
+            : 'ReviewCase cannot close until every Finding is closed or voided'
       await open(page)
       await invoke(page, command)
-      const where = command.action === 'cancel' ? page.getByRole('dialog', { name: '取消活动' }) : commands(page)
+      const where = command.dialog !== undefined && command.reasonLabel !== undefined ? page.getByRole('dialog', { name: command.dialog.title }) : commands(page)
       await expect(where.getByText(world.postDetail)).toBeVisible()
       expect(world.posts).toHaveLength(1)
       await expect(header(page).getByText(from === 'draft' ? '草稿' : from === 'scheduled' ? '已排期' : from === 'in_progress' ? '审查中' : '待关闭', { exact: true })).toBeVisible()
@@ -250,7 +291,7 @@ for (const command of COMMANDS) {
       world.postDetail = 'Missing role lead for transition_case'
       await open(page)
       await invoke(page, command)
-      const where = command.action === 'cancel' ? page.getByRole('dialog', { name: '取消活动' }) : commands(page)
+      const where = command.dialog !== undefined && command.reasonLabel !== undefined ? page.getByRole('dialog', { name: command.dialog.title }) : commands(page)
       await expect(where.getByText('当前账号没有执行此操作的权限。')).toBeVisible()
       expect(await page.getByText('Missing role').count()).toBe(0)
       expect(world.posts).toHaveLength(1)
@@ -263,7 +304,7 @@ for (const command of COMMANDS) {
       await open(page)
       const readsBefore = world.caseReads
       await invoke(page, command)
-      const where = command.action === 'cancel' ? page.getByRole('dialog', { name: '取消活动' }) : commands(page)
+      const where = command.dialog !== undefined && command.reasonLabel !== undefined ? page.getByRole('dialog', { name: command.dialog.title }) : commands(page)
       await expect(where.getByText(/未确认.*是否成功/)).toBeVisible()
       await expect.poll(() => world.caseReads).toBeGreaterThan(readsBefore)
       expect(world.posts).toHaveLength(1)
@@ -299,6 +340,25 @@ test.describe('in-flight protection', () => {
       expect(world.posts).toHaveLength(1)
     })
   }
+
+  test('reopen_fieldwork dialog: double submit sends one request and the dialog cannot be dismissed while in flight', async ({ page }) => {
+    const world = await mockWorld(page, 'process_review', 'awaiting_closure')
+    let release: () => void = () => {}
+    world.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await open(page)
+    await button(page, '恢复现场').click()
+    const dialog = page.getByRole('dialog', { name: '恢复现场' })
+    await dialog.getByLabel('恢复原因').fill('误操作')
+    await dialog.getByRole('button', { name: '确认恢复' }).dblclick()
+    await expect.poll(() => world.posts.length).toBe(1)
+    await expect(dialog.getByRole('button', { name: /^取\s*消$/ })).toBeDisabled()
+    for (const other of await commands(page).getByRole('button').all()) await expect(other).toBeDisabled()
+    release()
+    await expect(header(page).getByText('审查中', { exact: true })).toBeVisible()
+    expect(world.posts).toEqual([{ action: 'reopen_fieldwork', reason: '误操作' }])
+  })
 
   test('cancel dialog: double submit sends one request and the dialog cannot be dismissed while in flight', async ({ page }) => {
     const world = await mockWorld(page, 'compliance_review', 'draft')

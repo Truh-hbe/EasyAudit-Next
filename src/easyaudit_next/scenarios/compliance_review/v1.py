@@ -48,6 +48,7 @@ class ComplianceReviewCaseAction(StrEnum):
     SCHEDULE = "schedule"
     START = "start"
     FINISH_FIELDWORK = "finish_fieldwork"
+    REOPEN_FIELDWORK = "reopen_fieldwork"
     CLOSE = "close"
     CANCEL = "cancel"
 
@@ -222,6 +223,13 @@ class ComplianceReviewCaseWorkflow:
             and operation is ComplianceReviewCaseAction.FINISH_FIELDWORK
         ):
             return ReviewCaseLifecycle.AWAITING_CLOSURE
+        if (
+            lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE
+            and operation is ComplianceReviewCaseAction.REOPEN_FIELDWORK
+        ):
+            if not _has_reason(context.reason):
+                raise WorkflowTransitionError("Reopening fieldwork requires a reason")
+            return ReviewCaseLifecycle.IN_PROGRESS
         if (
             lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE
             and operation is ComplianceReviewCaseAction.CLOSE
