@@ -162,6 +162,21 @@ class SqlAlchemyUserRepository:
             return None
         return self._to_domain(record)
 
+    def get_current(self, organization_id: OrganizationId, user_id: UserId) -> User | None:
+        """Read the committed row without locking it (bypasses the identity map).
+
+        Only valid under the Organization lock: every writer of `platform_role` / `is_active`
+        holds it, so the row cannot change underneath the caller. Use it where a User row lock
+        would break the Organization -> Case -> User order.
+        """
+
+        record = self._session.scalar(
+            select(UserRecord)
+            .where(UserRecord.organization_id == organization_id, UserRecord.id == user_id)
+            .execution_options(populate_existing=True)
+        )
+        return self._to_domain(record) if record is not None else None
+
     def update(self, user: User) -> None:
         record = self._session.get(UserRecord, user.id)
         if record is None:

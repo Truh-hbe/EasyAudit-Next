@@ -109,8 +109,22 @@ class PlatformAdministrationService:
         now: datetime | None = None,
     ) -> User:
         self._require_system_admin(actor)
-        user = self._users.get(user_id)
-        if user is None or user.organization_id != actor.organization_id:
+        # Organization -> User, the global order. Everything below decides from the rows read
+        # under these locks (populate_existing), never from the caller's snapshot of the actor
+        # or from an earlier read of the target; only the fields the request names are changed.
+        self._organizations.lock_for_update(actor.organization_id)
+        locked_users = self._users.lock_users_for_update(
+            actor.organization_id,
+            tuple(sorted({actor.id, user_id}, key=str)),
+        )
+        fresh_actor = next((item for item in locked_users if item.id == actor.id), None)
+        if fresh_actor is None:
+            raise LookupError(f"User {actor.id} does not exist")
+        if not fresh_actor.is_active:
+            raise PermissionError("an active user is required")
+        self._require_system_admin(fresh_actor)
+        user = next((item for item in locked_users if item.id == user_id), None)
+        if user is None:
             raise LookupError(f"User {user_id} does not exist")
         updated = replace(
             user,
@@ -126,10 +140,10 @@ class PlatformAdministrationService:
             and user.platform_role is PlatformRole.SYSTEM_ADMIN
             and (not updated.is_active or updated.platform_role is not PlatformRole.SYSTEM_ADMIN)
         )
-        if removes_active_admin:
-            self._organizations.lock_for_update(user.organization_id)
-            if self._users.count_active_system_admins(user.organization_id) <= 1:
-                raise LastSystemAdminError("Cannot disable or demote the last active system_admin")
+        if removes_active_admin and (
+            self._users.count_active_system_admins(user.organization_id) <= 1
+        ):
+            raise LastSystemAdminError("Cannot disable or demote the last active system_admin")
         if set_primary_department and primary_department_id is not None:
             department = self._departments.get(primary_department_id)
             if department is None or department.organization_id != actor.organization_id:

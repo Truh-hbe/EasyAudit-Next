@@ -154,6 +154,17 @@ class CaseTeamUserCoordinator:
         if actor.platform_role is not PlatformRole.SYSTEM_ADMIN:
             raise PermissionError("system_admin platform role is required")
         self._organizations.lock_for_update(actor.organization_id)
+        # Authorize against the current actor row before touching any target or Case fact, so a
+        # concurrently demoted/deactivated admin gets 403 rather than a 404/409 that leaks state.
+        # No User row lock here: that would precede the Case locks taken below.
+        current_actor = self._users.get_current(actor.organization_id, actor.id)
+        if current_actor is None:
+            raise LookupError(f"User {actor.id} does not exist")
+        if (
+            not current_actor.is_active
+            or current_actor.platform_role is not PlatformRole.SYSTEM_ADMIN
+        ):
+            raise PermissionError("system_admin platform role is required")
         target = self._users.get(user_id)
         if target is None or target.organization_id != actor.organization_id:
             raise LookupError(f"User {user_id} does not exist")
