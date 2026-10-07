@@ -73,21 +73,22 @@ async function login(page: Page, name: string) {
 }
 
 // 用与应用相同的模块实例发出一个会话请求，模拟页面里其它在途请求。
-function fireSessionRequest(page: Page, path: string, { wait = true } = {}) {
+// 首检/refresh 在途时界面处于 resolving，没有可点击的真实入口能再发请求，
+// 所以这里依赖 Vite dev server 的源码路径（本项目 test:browser 只跑 dev server）。
+function fireSessionRequest(page: Page, path: string) {
   return page.evaluate(
-    async ({ p, wait: awaited }) => {
+    async (p) => {
       const modulePath = '/src/api/client.ts'
       const client = (await import(modulePath)) as typeof import('../../src/api/client.js')
-      const pending = client.sessionApiRequest(p).catch(() => undefined)
-      if (awaited) await pending
+      await client.sessionApiRequest(p).catch(() => undefined)
     },
-    { p: path, wait },
+    path,
   )
 }
 
 test('late 401 from a logged-out session does not kick the new session out', async ({ page }) => {
-  let identity: typeof userA | null = userA
-  const staleProbe = gate()
+  let identity: typeof userA | null = { ...userA, must_change_password: true }
+  const stalePasswordChange = gate()
 
   await page.route('**/api/v1/me', (route) =>
     identity === null
@@ -95,10 +96,10 @@ test('late 401 from a logged-out session does not kick the new session out', asy
       : fulfillJson(route, 200, identity),
   )
   await page.route('**/api/v1/me/workbench', (route) => fulfillJson(route, 200, emptyWorkbench))
-  // 不带 AbortSignal 的在途请求（例如提交中的 mutation）：退出后才返回 401
-  await page.route('**/api/v1/stale-probe', async (route) => {
-    staleProbe.arrive()
-    await staleProbe.released
+  // 改密请求不带 AbortSignal：提交中退出并换账号登录后，它才返回 401
+  await page.route('**/api/v1/me/password', async (route) => {
+    stalePasswordChange.arrive()
+    await stalePasswordChange.released
     await fulfillJson(route, 401, { detail: 'Authentication required' })
   })
   await page.route('**/api/v1/auth/logout', (route) => {
@@ -110,19 +111,49 @@ test('late 401 from a logged-out session does not kick the new session out', asy
     return fulfillJson(route, 200, loginResponse(userB))
   })
 
-  await page.goto('/me/workbench')
-  await expect(page.getByText('Session User A').first()).toBeVisible()
-  await fireSessionRequest(page, '/api/v1/stale-probe', { wait: false })
-  await staleProbe.arrived
+  await page.goto('/me/credential-remediation')
+  await page.getByLabel('当前密码').fill('initial-password')
+  await page.getByLabel('新密码', { exact: true }).fill('replacement-password')
+  await page.getByLabel('确认新密码').fill('replacement-password')
+  await page.getByRole('button', { name: '修改密码' }).click()
+  await stalePasswordChange.arrived
   await page.getByRole('button', { name: '退出登录' }).click()
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
   await login(page, 'user-b')
   await expect(page.getByText('Session User B').first()).toBeVisible()
 
-  await settleAfter(page, '/api/v1/stale-probe', staleProbe.release)
+  await settleAfter(page, '/api/v1/me/password', stalePasswordChange.release)
 
   expect(await page.getByRole('heading', { name: '登录' }).count()).toBe(0)
   expect(await page.getByText('Session User B').count()).toBeGreaterThan(0)
+})
+
+test('initial /me result after the session was cleared does not restore the old identity', async ({ page }) => {
+  const staleMe = gate()
+
+  await page.route('**/api/v1/me', async (route) => {
+    // 首次挂载的会话检查（dev 下 StrictMode 会发两次）：全部挂起，随后返回用户 A
+    staleMe.arrive()
+    await staleMe.released
+    await fulfillJson(route, 200, userA)
+  })
+  await page.route('**/api/v1/me/workbench', (route) =>
+    fulfillJson(route, 401, { detail: 'Authentication required' }),
+  )
+
+  await page.goto('/me/workbench')
+  await staleMe.arrived
+  await expect(page.getByRole('heading', { name: '正在确认服务器会话' })).toBeVisible()
+
+  // 首检在途时另一个请求收到 401，会话被清理
+  await fireSessionRequest(page, '/api/v1/me/workbench')
+  await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
+
+  await settleAfter(page, '/api/v1/me', staleMe.release)
+
+  expect(await page.getByRole('heading', { name: '登录' }).count()).toBe(1)
+  expect(await page.getByText('Session User A').count()).toBe(0)
+  expect(await page.getByRole('navigation', { name: '主要导航' }).count()).toBe(0)
 })
 
 test('old /me result after the session was cleared does not restore the old identity', async ({ page }) => {
