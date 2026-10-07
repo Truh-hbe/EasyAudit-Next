@@ -301,7 +301,7 @@ EASYAUDIT_BACKUP_DIR=/srv/easyaudit-backups deploy/backup/backup.sh
 | 3 | integrity=degraded，完整目录仍发布并保留 | 数据库快照保留，但引用对象有完整性问题；看 manifest 清单，修复来源或由维护者决定受损数据恢复，不能当成正常健康成功 |
 | 1 | 流程失败 | 看失败阶段/日志；发布前的失败会清理当前 .partial，发布后的目录存在也不能替代 exit 与 manifest 检查。不凭目录名认定有可用恢复点 |
 
-restore 的 `check_bundle` 使用不带 --fail-degraded 的 verify-bundle：包文件仍须与 manifest 相符；通过后 `show-integrity` 会在第一次写入前向 stderr 打印 degraded 问题且返回 0，允许继续。`verify.sh` 始终先带 --fail-degraded 校验包，degraded 会退出 1（不会继续 live 检查）；environment restore 在已写入并启动应用之后调用它，因而可能最终失败。
+restore 的 `check_bundle` 先用不带 --fail-degraded 的 verify-bundle 核对包文件与 manifest。`environment` 随后再带 --fail-degraded 校验：degraded 包在 build、启动和任何写入之前被拒绝（退出 1，无 opt-in 开关），因为最终 `verify.sh` 始终带 --fail-degraded，degraded 包注定通不过。`database` / `objects` 分步模式不开放流量，仍允许 degraded 包并在首次写入前向 stderr 打印问题清单，仅用于调查。
 
 ### 安装和验证备份调度
 
@@ -367,7 +367,7 @@ python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print({k:m[k] for k
 deploy/backup/verify.sh "$BACKUP_DIR" --bundle-only
 ```
 
-替换所有尖括号输入为人工确认的真实身份，不保留示例字符串。如果包为 degraded，此次 bundle-only verify 会失败：不要误认为完全不能读取包，也不要把失败当健康成功；受损恢复须维护者明确接受问题清单，并使用 restore 本身的不带 fail-degraded 的文件校验，预期 environment 最终验证仍失败。
+替换所有尖括号输入为人工确认的真实身份，不保留示例字符串。如果包为 degraded，此次 bundle-only verify 会失败：不要误认为完全不能读取包，也不要把失败当健康成功；degraded 包会被 `restore.sh environment` 直接拒绝；受损数据的调查须维护者明确接受问题清单，改用 `restore.sh database` / `objects` 分步写入独立目标，不能得到 `RESTORE OK`，也不开放服务。
 
 在**目标专用干净检出**（不是修改 source checkout）取 manifest 指定的版本，export release；按第 1 节在 target 的新目录准备新 secrets 和有效 TLS 证书。禁止先 migrate/bootstrap：恢复数据库需要空库。
 
@@ -391,9 +391,8 @@ $DC run --rm -T object-tool lsf --max-depth 1 ea:easyaudit-evidence
 
 ```bash
 deploy/backup/restore.sh environment "$BACKUP_DIR"
-# 仅在最终成功后，在同一 target 验证；此时仍不开放业务流量。
-deploy/backup/verify.sh "$BACKUP_DIR"
-$DC run --rm --no-deps -T api easyaudit-next verify-evidence
+# 成功时 verify.sh 与 verify-evidence 已在脚本内通过，gateway 最后才启动；
+# 失败时 gateway/web/api 已被自动停止，退出码非零。
 ```
 
 ### 分阶段写入、启动与失败含义
@@ -408,11 +407,12 @@ $DC run --rm --no-deps -T api easyaudit-next verify-evidence
 | database write | 重做 DB 空检查；pg_restore --single-transaction --exit-on-error；之后比较 DB revision 与 manifest | pg_restore 成功后 DB 已写，对象尚未拷；revision 不符会失败但不删除已恢复 DB。pg_restore 失败查日志/实际状态，不把所有阶段当一个事务 |
 | object write | 重做 bucket 空检查，然后 copy objects | DB 已写；copy 失败可能留部分 target 对象，应用未启动；不做自动跨存储回滚，再试可能被 empty guard 拒绝 |
 | revision validation | 写入后比较 alembic current = manifest revision = release head | DB/对象已写，应用尚未启动；不符退出，不自动 downgrade/清理卷 |
-| application start | up -d --wait gateway，带 api/web 依赖 | DB/对象已写；部分或全部应用可能已经运行；启动失败还没做最终 verify，脚本没有自动停应用保证 |
-| post-restore verification | verify.sh 首先带 --fail-degraded 检查包，再核对 live revision、bucket 全 key/size/sha256 和 DB Evidence 引用 | 应用已启动；degraded 包在这一步失败，或 live 不符退出 1；失败不撤销写入、不自动停止应用 |
-| final result | 只有 verify 成功才打印 RESTORE OK，正常退出 0 | 到达 application start 不等于成功；非零退出查看停点，不能因容器 healthy 就开放服务 |
+| data verification | verify.sh（只需 postgres/object-storage）：--fail-degraded 检查包，再核对 live revision、bucket 全 key/size/sha256 和 DB Evidence 引用 | DB/对象已写，**没有任何入口在运行**；失败退出 1，不开放服务，不撤销写入、不删卷 |
+| internal application start | up -d --wait api web（仅内部网络，不发布端口），再 run api `easyaudit-next verify-evidence` | 失败时 EXIT trap 执行 `stop gateway web api`（不是 down -v），打印这三个服务的日志尾部，数据卷、日志、manifest 全部保留，退出非零 |
+| gateway | up -d --wait gateway | 唯一发布 443 的入口，仅在上述全部通过后启动；启动失败同样自动 stop 并非零退出 |
+| final result | 只有以上全部成功才打印 RESTORE OK，退出 0 | 非零退出查看停点；入口服务已停止，需要人工排查后再决定是否重新开放，不能因容器 healthy 就开放服务 |
 
-分步模式：`deploy/backup/restore.sh database "$BACKUP_DIR"` 只要求 postgres running、DB 空，校验包并写 DB，随后核对 manifest revision；不写对象、不启动应用、不检查 release head 相等。`restore.sh objects` 只要求 object-storage running、bucket 空，校验包并写对象，不写 DB/检查其 revision/启动应用。两者仍先核对 release，均允许包文件一致的 degraded 资料并提前警告；命令退出 0 只表示该子步骤完成，不能替代整环境最终 verify 和业务验收。
+分步模式：`deploy/backup/restore.sh database "$BACKUP_DIR"` 只要求 postgres running、DB 空，校验包并写 DB，随后核对 manifest revision；不写对象、不启动应用、不检查 release head 相等。`restore.sh objects` 只要求 object-storage running、bucket 空，校验包并写对象，不写 DB/检查其 revision/启动应用。两者仍先核对 release，均允许包文件一致的 degraded 资料并提前警告（`environment` 则拒绝 degraded 包）；命令退出 0 只表示该子步骤完成，不能替代整环境最终 verify 和业务验收。
 
 `verify.sh BACKUP_DIR --bundle-only` 不访问部署，只查包（含 degraded 问题）；无该参数还需要 EASYAUDIT_RELEASE、postgres/object-storage，核对 live revision 与 manifest，完整列举/读回对象和 Evidence 引用。有多余 live key 也会失败，所以部署重新开放写入或清理了备份带来的孤儿之后，不再要求 live bucket 永远等于旧 manifest；日常 DB↔对象校验使用 verify-evidence。
 

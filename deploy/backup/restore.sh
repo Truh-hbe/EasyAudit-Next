@@ -4,9 +4,11 @@
 #
 #   restore.sh database    BACKUP_DIR   pg_restore into the empty database of the running postgres
 #   restore.sh objects     BACKUP_DIR   copy the bundle's objects into the empty bucket
-#   restore.sh environment BACKUP_DIR   whole new environment: release check, build, start
-#                                       postgres+object-storage, database, objects, alembic check,
-#                                       start api+web+gateway, verify
+#   restore.sh environment BACKUP_DIR   whole new environment: release check, degraded-backup
+#                                       rejection, build, start postgres+object-storage, database,
+#                                       objects, alembic check, full verify (data only, no entry
+#                                       point running), start api+web internally and check them,
+#                                       and only then the gateway
 #
 # `environment` needs new secrets and certificates already in place (README section 1); they are
 # not part of a backup.
@@ -21,13 +23,21 @@ COMMAND="$1"
 BACKUP="$(backup_dir_of "$2")"
 
 BUNDLE_CHECKED=false
+# `environment` ends in verify.sh --fail-degraded, which a degraded backup can never pass, so it
+# refuses one before writing anything. The `database` and `objects` sub-steps never open traffic
+# and still accept a degraded bundle (with its problems shown first) for investigation.
+REJECT_DEGRADED=false
 check_bundle() {
   $BUNDLE_CHECKED && return 0
   step "checking the bundle against its manifest"
   BUNDLE_CHECKED=true
   python3 "$MANIFEST_PY" verify-bundle "$BACKUP" || fail "bundle does not match its manifest; not restoring"
-  # A degraded backup may be restored (it is the best data there is); its problems are shown first.
-  python3 "$MANIFEST_PY" show-integrity "$BACKUP"
+  if $REJECT_DEGRADED; then
+    python3 "$MANIFEST_PY" verify-bundle "$BACKUP" --fail-degraded \
+      || fail "degraded backup: an environment restore would end in a failed final verification; nothing was written. Restore the parts separately (restore.sh database / objects) to investigate, or use an integrity-ok backup"
+  else
+    python3 "$MANIFEST_PY" show-integrity "$BACKUP"
+  fi
 }
 
 restore_database() {
@@ -56,8 +66,25 @@ alembic_revision() {
   "${DC[@]}" run --rm -T migrate alembic "$1" 2>/dev/null | awk '/^[0-9A-Za-z_]+( \(head\))?$/ {print $1; exit}'
 }
 
+# The entrypoints (gateway, and api/web that it depends on) must not stay up after a failed restore.
+# Stop, never `down -v`: containers are kept for inspection, database and object volumes untouched.
+ENTRYPOINTS_STARTED=false
+isolate_entrypoints() {
+  echo "restore: ERROR: restore failed after the application was started; stopping gateway, web and api." >&2
+  "${DC[@]}" stop gateway web api >&2 || echo "restore: ERROR: could not stop the entrypoints; stop gateway, web and api by hand" >&2
+  "${DC[@]}" logs --no-color --tail=100 gateway web api >&2 || true
+  echo "restore: database and object volumes, logs and $BACKUP/manifest.json are kept; nothing was deleted. Investigate before opening traffic." >&2
+}
+on_exit() {
+  local status=$?
+  trap - EXIT INT TERM # isolate at most once; no re-entry from a second signal
+  if [ "$status" -ne 0 ] && $ENTRYPOINTS_STARTED; then isolate_entrypoints; fi
+  exit "$status"
+}
+
 restore_environment() {
   require_commands git
+  REJECT_DEGRADED=true
   local head
   head="$(git -C "$REPO_DIR" rev-parse HEAD)"
   # A new environment builds from this checkout, so it defaults to (and must equal) HEAD.
@@ -89,9 +116,24 @@ restore_environment() {
   [ -n "$current" ] && [ "$current" = "$expected" ] || fail "alembic current is '$current', manifest says '$expected'"
   [ "$current" = "$heads" ] || fail "alembic current '$current' is not this release's head '$heads'; not starting the application"
 
-  step "start api, web, gateway"
-  "${DC[@]}" up -d --wait gateway
+  # verify.sh needs only postgres and object-storage, so the whole data verification (bundle,
+  # revision, every object, every Evidence row) runs while no entry point exists.
+  step "verify the restored data before any entry point is started"
   "$BACKUP_DIR_SRC/verify.sh" "$BACKUP"
+
+  # A signal must also end in a non-zero status through on_exit (it can otherwise see the 0 of the
+  # last successful command), so Ctrl-C / SIGTERM leave the entrypoints stopped.
+  trap on_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  ENTRYPOINTS_STARTED=true
+  step "start api and web (internal network only) and check the application"
+  "${DC[@]}" up -d --wait api web
+  "${DC[@]}" run --rm -T api easyaudit-next verify-evidence
+  step "open the gateway"
+  "${DC[@]}" up -d --wait gateway
+  trap - EXIT INT TERM
+  ENTRYPOINTS_STARTED=false
   echo "RESTORE OK: release $head, alembic $current"
 }
 
