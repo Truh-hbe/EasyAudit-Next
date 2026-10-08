@@ -56,7 +56,7 @@ describe('M5.4 administrator contracts', () => {
 
   it('renders only the HTTP status for failed reads and exact scenario labels', () => {
     const secret = 'secret-that-must-not-be-rendered'
-    expect(adminErrorMessage(new ApiError(500, secret), 'fallback')).toBe('请求失败（HTTP 500）。')
+    expect(adminErrorMessage(new ApiError(500, secret), 'fallback')).toBe('请求失败（状态码 500）。')
     expect(adminErrorMessage(new Error('network down'), 'fallback')).toBe('network down')
     expect(adminErrorMessage('x', 'fallback')).toBe('fallback')
     expect(scenarioVersionLabel('process_review', 1)).toBe('process_review@1')

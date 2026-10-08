@@ -57,7 +57,7 @@ type LoadState =
   | { status: 'denied' }
 
 export function adminErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return `请求失败（HTTP ${error.status}）。`
+  if (error instanceof ApiError) return `请求失败（状态码 ${error.status}）。`
   return error instanceof Error ? error.message : fallback
 }
 
@@ -494,7 +494,7 @@ export function AdminPage() {
                     <Flex vertical gap={4}>
                       <Flex align="baseline" wrap gap={8}>
                         <strong>{scenario.display_name}</strong>
-                        <Typography.Text type="secondary">{`${scenario.scenario_key} · ${scenario.is_active ? '组织启用' : '组织停用'}`}</Typography.Text>
+                        <Typography.Text type="secondary">{scenario.is_active ? '组织启用' : '组织停用'}</Typography.Text>
                       </Flex>
                       {scenario.versions.length === 0 ? (
                         <Typography.Text type="secondary">没有已发布版本</Typography.Text>

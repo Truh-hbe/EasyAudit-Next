@@ -1,3 +1,4 @@
+import { Alert, Button, Card, Flex, Typography } from 'antd'
 import { Navigate, useLocation, useSearchParams } from 'react-router'
 
 import { CredentialRemediationPage } from './app/auth/CredentialRemediationPage'
@@ -12,18 +13,28 @@ import { ProductShell } from './app/shell/ProductShell'
 function ResolvingPage() {
   const { resolutionError, refresh } = useSession()
   return (
-    <main className="foundation" aria-labelledby="resolving-title">
-      <h1 id="resolving-title">正在确认服务器会话</h1>
-      <p>受保护界面会在服务器确认登录状态与密码状态确认后再决定是否呈现。</p>
-      {resolutionError === null ? null : (
-        <div role="alert">
-          <p>{resolutionError}</p>
-          <button type="button" onClick={() => void refresh()}>
-            重试
-          </button>
-        </div>
-      )}
-    </main>
+    <Flex component="main" aria-labelledby="resolving-title" justify="center" align="center" className="auth-page">
+      <Card className="auth-panel">
+        <Flex vertical gap={16}>
+          <h1 id="resolving-title">正在确认服务器会话</h1>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            受保护界面会在服务器确认登录状态与密码状态确认后再决定是否呈现。
+          </Typography.Paragraph>
+          {resolutionError === null ? null : (
+            <Alert
+              type="error"
+              showIcon
+              title={resolutionError}
+              action={
+                <Button size="small" autoInsertSpace={false} onClick={() => void refresh()}>
+                  重试
+                </Button>
+              }
+            />
+          )}
+        </Flex>
+      </Card>
+    </Flex>
   )
 }
 

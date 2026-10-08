@@ -259,18 +259,12 @@ antd 预设的 `success` / `warning` / `error` 状态 Tag 文字对比度只有 
   不要两者混用（`beforeUpload` 返回 `false` 后 `customRequest` 不会执行）。禁止使用 `Upload.action`。没有真实进度来源时不显示百分比；网络中断后不自动重传。
 - **证据下载与导出**：下载保留同源附件链接 `/api/v1/evidences/{id}/content`，不读成 Blob；管理导出沿用现有下载适配器和筛选参数。
 - **创建幂等**：一次创建尝试的草稿和 `Idempotency-Key` 由页面级业务状态持有，不随 `Modal`、`Drawer`、`Steps`、`Tabs` 的卸载而重建。只有明确成功后才结束这次尝试；结果未知时保留键和请求内容。不为此引入全局状态库，也不把草稿写入浏览器长期存储。
-- **遗留样式隔离**：`styles.css` 中的遗留元素规则（`form`、`label`、`input`、`button`、`[role="alert"]` 等）只作用于旧页面容器 `.surface-page` / `.auth-card` / `.foundation` 内部，且不进入 `.ui-modern` 边界。
-  - 混合页面中的新组件放在 `<div className="ui-modern">` 内。
-  - 整页迁移后，根节点不再使用旧容器类，也就不需要这层包裹。
-  - 已迁移页面里若还嵌着与未迁移页面共用的遗留子组件（如场景适配器、发现项创建面板），只在该子组件外包一层 `<div className="surface-page">` 作为遗留孤岛；页面根节点不用旧容器类。子组件迁移后删除这层包裹。
-  - antd 弹层渲染到 `body`，本来就不受影响。
-  - 浏览器测试 `legacy element styles stay inside legacy page containers…` 守护这条边界。
 
 ## 可访问性
 
 - 每页一个 `<h1>`，区块标题用 `<h2>`。
 - 表单控件必须有可见的 label（`Form.Item label`），测试依赖 `getByLabel`。placeholder 只给示例，不能替代 label，对比度要求同正文。
-- 保留全局 `:focus-visible` 描边（`final-polish.css`）。
+- 保留全局 `:focus-visible` 描边（`styles.css`）。
 - 对比度目标为 WCAG 2.2 AA，按最终组合实测（见[主题](#主题)）。颜色不能是唯一的信息载体。
 - 地标：`<nav aria-label="主要导航">`、`<main>`。
 - 动效遵循 `prefers-reduced-motion`。
@@ -283,12 +277,12 @@ antd 预设的 `success` / `warning` / `error` 状态 Tag 文字对比度只有 
 - 不覆盖 `.ant-*` 内部 class，不用 `!important`。需要定制时用组件 token 或语义接口。
 - 确需覆盖 antd 组件自带样式（如 `StatusTag` 的配色）时，选择器挂在 `.app-root` 下以提高优先级，例如 `.app-root .status-tag.status-tag--*`，不依赖样式注入顺序，也不用 `!important`。
 - 不用内联 `style` 设置颜色和字号。
-- **遗留样式**：`.surface-*`、`.command-*`、`.fact-grid`、`.status-pill`、`.eyebrow` 等 class 和上节的元素规则是迁移前的遗留，新代码不得使用。迁移一页就删除一页不再使用的规则，UI-7 做最后清理。
+- **自定义样式**：`web/src/styles.css` 只保留全局基础（字体、焦点可见、溢出）、App Shell、`StatusTag` 和少数共享组件的规则。新增 class 前先用 antd 组件和 `Flex`/`Space` 解决；规则没有使用者时一并删除。
 
 ## 测试约定
 
 - 浏览器测试用 `getByRole` / `getByLabel` / `getByText` 定位元素，不依赖 `.ant-*` class 或 DOM 层级。迁移页面时，同步把测试中的遗留 class 选择器（如 `.status-pill`）换成语义选择器。
-- 已有覆盖，不得删除：375px 和 320px 无横向溢出；992px 断点切换导航布局；管理员五项导航可用 Tab 遍历、Enter 打开；遗留样式边界。
+- 已有覆盖，不得删除：375px 和 320px 无横向溢出；992px 断点切换导航布局；管理员五项导航可用 Tab 遍历、Enter 打开。
 - 每个迁移 PR 的描述附同一数据状态下的桌面和 375px 截图，并检查 200% 缩放（相当于 640px 宽）。
 - 新增颜色组合时附实测对比度。
 - 浏览器项目目前只有 Chromium；试点终端的浏览器版本以实际设备为准并记录在 PR 中。

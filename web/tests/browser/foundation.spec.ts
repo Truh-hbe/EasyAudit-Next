@@ -150,6 +150,27 @@ test('resolves the server session before choosing anonymous UI', async ({ page }
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
 })
 
+for (const failure of ['503', 'network'] as const) {
+  test(`session resolution failure (${failure}) shows fixed Chinese text and retry recovers`, async ({ page }) => {
+    let failing = true
+    await page.route('**/api/v1/me', async (route) => {
+      if (!failing) return fulfillJson(route, 200, { ...user, platform_role: 'ordinary_user', must_change_password: false })
+      if (failure === 'network') return route.abort('connectionrefused')
+      return fulfillJson(route, 503, { detail: 'unavailable-backend-detail' })
+    })
+    await stubEmptyWorkbench(page)
+    await page.goto('/me/workbench')
+    const alert = page.getByRole('alert')
+    await expect(alert).toContainText(failure === '503' ? '服务器暂不可用，请稍后重试。' : '无法连接到服务器，请检查网络后重试。')
+    expect(await page.getByText('unavailable-backend-detail').count()).toBe(0)
+    expect(await page.getByText(/Failed to fetch|Request failed|HTTP/).count()).toBe(0)
+    failing = false
+    await alert.getByRole('button', { name: '重试' }).click()
+    await expect(page.getByRole('heading', { name: '正在确认服务器会话' })).toHaveCount(0)
+    await expect(page.getByRole('navigation', { name: '主要导航' })).toBeVisible()
+  })
+}
+
 test('login 401 stays an ordinary credential error', async ({ page }) => {
   await page.route('**/api/v1/me', (route) =>
     fulfillJson(route, 401, { detail: 'Authentication required' }),
@@ -366,6 +387,9 @@ test('审查活动列表：新建入口是链接，状态显示为中文 StatusT
   await expect(tag).toBeVisible()
   await expect(tag).toHaveCSS('color', 'rgb(9, 88, 217)')
   await expect(page.getByText('in_progress')).toHaveCount(0)
+  // 列表只显示场景中文名，精确版本留给详情页。
+  await expect(page.getByRole('cell', { name: '过程审查', exact: true })).toBeVisible()
+  expect(await page.getByText('process_review').count()).toBe(0)
 
   await create.click()
   await expect(page).toHaveURL(/\/review-plans\/new$/)
@@ -653,52 +677,6 @@ test.describe('device time zone differs from the display time zone', () => {
       planned_end_at: '2026-09-01T01:30:00.000Z',
     })
   })
-})
-
-test('legacy element styles stay inside legacy page containers and never cross the ui-modern boundary', async ({ page }) => {
-  await stubReadySession(page)
-  await stubEmptyWorkbench(page)
-  // 不依赖具体业务页面：任何页面都已加载全局样式表，边界由注入的 fixture 验证。
-  await page.goto('/me/workbench')
-  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
-
-  const styles = await page.evaluate(() => {
-    const browser = globalThis as unknown as {
-      document: {
-        querySelector: (selector: string) => { insertAdjacentHTML: (where: string, html: string) => void }
-        getElementById: (id: string) => unknown
-      }
-      getComputedStyle: (element: unknown) => Record<string, string>
-    }
-    const fixture = (prefix: string) =>
-      `<form id="${prefix}-form"><label id="${prefix}-label">名称<input id="${prefix}-input" /></label>` +
-      `<button id="${prefix}-button" type="button" disabled>提交</button></form>`
-    browser.document
-      .querySelector('body')
-      .insertAdjacentHTML(
-        'beforeend',
-        `<div class="surface-page">${fixture('legacy')}<div class="ui-modern">${fixture('modern')}</div></div>`,
-      )
-    const read = (id: string) => browser.getComputedStyle(browser.document.getElementById(id))
-    const pick = (prefix: string) => ({
-      formDisplay: read(`${prefix}-form`).display,
-      labelWeight: read(`${prefix}-label`).fontWeight,
-      inputPadding: read(`${prefix}-input`).padding,
-      buttonOpacity: read(`${prefix}-button`).opacity,
-    })
-    return { legacy: pick('legacy'), modern: pick('modern') }
-  })
-
-  expect(styles.legacy).toEqual({
-    formDisplay: 'grid',
-    labelWeight: '650',
-    inputPadding: '12px 14px',
-    buttonOpacity: '0.5',
-  })
-  expect(styles.modern.formDisplay).toBe('block')
-  expect(styles.modern.labelWeight).not.toBe('650')
-  expect(styles.modern.inputPadding).not.toBe('12px 14px')
-  expect(styles.modern.buttonOpacity).toBe('1')
 })
 
 test('shell switches navigation layout at the 992px breakpoint without document overflow', async ({ page }) => {

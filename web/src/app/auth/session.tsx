@@ -45,6 +45,16 @@ export async function resolveServerSession(
   }
 }
 
+// 只显示固定中文，不透传后端 detail 或 fetch 的英文错误原文。
+export function resolutionErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    return error.status === 503
+      ? '服务器暂不可用，请稍后重试。'
+      : `无法确认登录状态（状态码 ${error.status}），请重试。`
+  }
+  return '无法连接到服务器，请检查网络后重试。'
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: 'resolving' })
   const [resolutionError, setResolutionError] = useState<string | null>(null)
@@ -67,9 +77,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return next
     } catch (error) {
       if (currentSessionGeneration() === generation) {
-        setResolutionError(
-          error instanceof Error ? error.message : '无法确认登录状态',
-        )
+        setResolutionError(resolutionErrorMessage(error))
       }
       throw error
     }
@@ -98,9 +106,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           currentSessionGeneration() === generation &&
           !(error instanceof DOMException && error.name === 'AbortError')
         ) {
-          setResolutionError(
-            error instanceof Error ? error.message : '无法确认登录状态',
-          )
+          setResolutionError(resolutionErrorMessage(error))
         }
       })
 

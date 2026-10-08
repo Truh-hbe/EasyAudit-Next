@@ -31,6 +31,6 @@ M3.5 到 M5 的前端全部手写：只依赖 React 和 react-router，约 45 �
 
 - 前端包体积增加：主 JS 从 352 kB（gzip 97 kB）增长到 660 kB（gzip 204 kB），Vite 会提示 chunk 过大。是否可以接受以试点终端的实测首屏时间为准（UI-3 记录），明显退化时提前做路由代码分割。代码分割无法消除根部 `ConfigProvider` / `App` 的公共成本。
 - antd 在运行时注入 `<style>`。网关将来如果加 CSP，需要允许 `style-src 'unsafe-inline'`，或者通过 `ConfigProvider csp={{ nonce }}` 传入 nonce。
-- 现有页面逐页迁移，期间新旧样式并存。遗留元素规则限定在旧页面容器内且不进入 `.ui-modern` 边界，由浏览器测试守护；遗留 class 只减不增，迁移完成后删除。
+- 现有页面逐页迁移，期间新旧样式并存；遗留样式已在 UI-7 全部删除。
 - antd 预设的状态色文字对比度不足，状态 Tag 使用显式的达标配色（见 design.md）。
 - 升级 antd 主版本需要新的 ADR 或修订本文。

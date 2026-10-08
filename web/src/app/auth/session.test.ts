@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { resolveServerSession } from './session'
+import { ApiError } from '../../api/client'
+import { resolveServerSession, resolutionErrorMessage } from './session'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -44,5 +45,13 @@ describe('resolveServerSession', () => {
       status: 'authenticated',
       user: { must_change_password: true },
     })
+  })
+})
+
+describe('resolutionErrorMessage', () => {
+  it('maps failures to fixed Chinese text without backend detail', () => {
+    expect(resolutionErrorMessage(new ApiError(503, 'unavailable'))).toBe('服务器暂不可用，请稍后重试。')
+    expect(resolutionErrorMessage(new ApiError(500, 'boom'))).toBe('无法确认登录状态（状态码 500），请重试。')
+    expect(resolutionErrorMessage(new TypeError('Failed to fetch'))).toBe('无法连接到服务器，请检查网络后重试。')
   })
 })

@@ -122,6 +122,9 @@ test('部门与用户通过抽屉创建，场景精确版本来自服务器', as
   await expect(page.getByRole('heading', { name: '管理设置', level: 1 })).toBeVisible()
   await expect(page.getByText('Initial Org · 启用')).toBeVisible()
   await expect(page.getByText('process_review@1 · 2026/08/28 18:00 · 代码已注册 · 可用')).toBeVisible()
+  // 精确版本只出现一次，不再重复显示场景 key。
+  expect(await page.getByText('process_review', { exact: false }).count()).toBe(1)
+  await expect(page.getByText('组织启用')).toBeVisible()
   // 用户本来需要看的登录名之外，界面不出现内部 ID。
   expect(await page.getByText('user-1').count()).toBe(0)
   expect(await page.getByText('dept-1').count()).toBe(0)
@@ -258,7 +261,7 @@ test('结果未知后重新读取也失败：保留未确认提示，成功提�
   await page.getByRole('button', { name: '重置凭据' }).click()
   await confirmDialog(page, '重置凭据').getByRole('button', { name: '确认重置' }).click()
 
-  await expect(page.getByRole('alert').filter({ hasText: '请求失败（HTTP 500）。' })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: '请求失败（状态码 500）。' })).toBeVisible()
   await expect(page.getByRole('alert').filter({ hasText: '未确认重置凭据是否成功' })).toBeVisible()
   expect(await page.getByText('Initial Org').count()).toBe(0)
   expect(harness.writes).toHaveLength(1)
@@ -371,7 +374,7 @@ async function triggerGatedRefresh(page: Page) {
 
 async function expectContentRemoved(page: Page, status: number) {
   if (status === 403) await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
-  else await expect(page.getByRole('alert').filter({ hasText: '请求失败（HTTP 500）。' })).toBeVisible()
+  else await expect(page.getByRole('alert').filter({ hasText: '请求失败（状态码 500）。' })).toBeVisible()
 }
 
 for (const status of [403, 500]) {
@@ -439,7 +442,7 @@ test('抽屉写操作结果未知且重新读取也失败：页面级保留“�
   await drawer.getByLabel('初始密码').fill('initial-password-123')
   await drawer.getByRole('button', { name: '创建用户' }).click()
 
-  await expect(page.getByRole('alert').filter({ hasText: '请求失败（HTTP 500）。' })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: '请求失败（状态码 500）。' })).toBeVisible()
   const unknown = page.getByRole('alert').filter({ hasText: '未确认创建用户是否成功' })
   await expect(unknown).toBeVisible()
   await expect(unknown).toContainText('初始密码已清空')
@@ -563,7 +566,7 @@ test('刷新返回 500：移除内容与成功提示，显示读取失败并可�
   await expect(page.getByText('正在刷新')).toBeVisible()
   harness.release()
 
-  await expect(page.getByRole('alert').filter({ hasText: '请求失败（HTTP 500）。' })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: '请求失败（状态码 500）。' })).toBeVisible()
   expect(await page.getByRole('main').getByText('Initial User').count()).toBe(0)
   await expect(page.getByText(RESET_SUCCESS)).toHaveCount(0)
   await expect(page.getByRole('button', { name: '重新加载' })).toBeVisible()
