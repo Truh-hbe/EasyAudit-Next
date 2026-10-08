@@ -150,6 +150,27 @@ test('resolves the server session before choosing anonymous UI', async ({ page }
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
 })
 
+for (const failure of ['503', 'network'] as const) {
+  test(`session resolution failure (${failure}) shows fixed Chinese text and retry recovers`, async ({ page }) => {
+    let failing = true
+    await page.route('**/api/v1/me', async (route) => {
+      if (!failing) return fulfillJson(route, 200, { ...user, platform_role: 'ordinary_user', must_change_password: false })
+      if (failure === 'network') return route.abort('connectionrefused')
+      return fulfillJson(route, 503, { detail: 'unavailable-backend-detail' })
+    })
+    await stubEmptyWorkbench(page)
+    await page.goto('/me/workbench')
+    const alert = page.getByRole('alert')
+    await expect(alert).toContainText(failure === '503' ? '服务器暂不可用，请稍后重试。' : '无法连接到服务器，请检查网络后重试。')
+    expect(await page.getByText('unavailable-backend-detail').count()).toBe(0)
+    expect(await page.getByText(/Failed to fetch|Request failed|HTTP/).count()).toBe(0)
+    failing = false
+    await alert.getByRole('button', { name: '重试' }).click()
+    await expect(page.getByRole('heading', { name: '正在确认服务器会话' })).toHaveCount(0)
+    await expect(page.getByRole('navigation', { name: '主要导航' })).toBeVisible()
+  })
+}
+
 test('login 401 stays an ordinary credential error', async ({ page }) => {
   await page.route('**/api/v1/me', (route) =>
     fulfillJson(route, 401, { detail: 'Authentication required' }),

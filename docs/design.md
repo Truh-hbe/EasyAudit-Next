@@ -264,7 +264,7 @@ antd 预设的 `success` / `warning` / `error` 状态 Tag 文字对比度只有 
 
 - 每页一个 `<h1>`，区块标题用 `<h2>`。
 - 表单控件必须有可见的 label（`Form.Item label`），测试依赖 `getByLabel`。placeholder 只给示例，不能替代 label，对比度要求同正文。
-- 保留全局 `:focus-visible` 描边（`final-polish.css`）。
+- 保留全局 `:focus-visible` 描边（`styles.css`）。
 - 对比度目标为 WCAG 2.2 AA，按最终组合实测（见[主题](#主题)）。颜色不能是唯一的信息载体。
 - 地标：`<nav aria-label="主要导航">`、`<main>`。
 - 动效遵循 `prefers-reduced-motion`。
