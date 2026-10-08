@@ -57,7 +57,7 @@ async function submitFailedLogin(page: Page, loginName: string, password: string
   await page.getByLabel('密码').fill(password)
   await page.getByRole('button', { name: '登录' }).click()
   expect((await responsePromise).status()).toBe(401)
-  await expect(page.getByRole('alert')).toContainText('登录名或密码无效')
+  await expect(page.getByRole('alert').filter({ hasText: '登录名或密码无效' })).toBeVisible()
 }
 
 async function submitPasswordChange(page: Page, currentPassword: string, newPassword: string) {
@@ -370,7 +370,7 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     const beforeAmbiguousCasePosts = casePostCount
     try {
       await firstPage.getByRole('button', { name: '创建审查活动' }).click()
-      await expect(firstPage.getByRole('alert')).toContainText('结果未知')
+      await expect(firstPage.getByRole('alert').filter({ hasText: '结果未知' })).toBeVisible()
       expect(casePostCount).toBe(beforeAmbiguousCasePosts + 1)
       // Pilot-3: an unknown outcome is retried by hand (same Idempotency-Key), never automatically.
       await expect(firstPage.getByRole('button', { name: '重试创建审查活动' })).toBeEnabled()
