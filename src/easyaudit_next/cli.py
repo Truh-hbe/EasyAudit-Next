@@ -146,12 +146,17 @@ def bootstrap_admin(organization_name: str, admin_name: str, login_name: str) ->
     engine = create_database_engine()
     factory = create_session_factory(engine)
     try:
+        # Prompting can take arbitrarily long: never hold a transaction open across it. The
+        # pre-check only spares an already-initialized database the prompt; the locked re-check
+        # inside bootstrap_admin_in_session stays authoritative.
         with session_scope(factory) as session:
             _ensure_bootstrap_available(session)
-            password = getpass.getpass("Initial admin password: ")
-            confirmation = getpass.getpass("Confirm password: ")
-            if password != confirmation:
-                raise PasswordPolicyError("Password confirmation does not match")
+        password = getpass.getpass("Initial admin password: ")
+        confirmation = getpass.getpass("Confirm password: ")
+        if password != confirmation:
+            raise PasswordPolicyError("Password confirmation does not match")
+        validate_local_password(password)
+        with session_scope(factory) as session:
             bootstrap_admin_in_session(
                 session,
                 organization_name,
