@@ -9,6 +9,7 @@ import {
 
 import { openAssignDrawer, searchCandidate } from './assignmentDrawer.js'
 import { notificationViewLabel } from './notificationView.js'
+import { apiPath, submitLogin, submitLogout } from './realSession.js'
 
 const COOKIE_NAME = '__Host-easyaudit_session'
 const BASE_URL = `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`
@@ -49,35 +50,6 @@ const STALE_CASE_TITLE = 'Viewer Stale Case'
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 }
 const NARROW_VIEWPORT = { width: 390, height: 844 }
-
-function apiPath(url: string): string {
-  return new URL(url).pathname
-}
-
-async function submitLogin(page: Page, loginName: string, password: string) {
-  const responsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === '/api/v1/auth/login' &&
-      response.request().method() === 'POST',
-  )
-  await page.getByLabel('登录名').fill(loginName)
-  await page.getByLabel('密码').fill(password)
-  await page.getByRole('button', { name: '登录' }).click()
-  const response = await responsePromise
-  expect(response.status()).toBe(200)
-  return response
-}
-
-async function submitLogout(page: Page) {
-  const responsePromise = page.waitForResponse(
-    (response) =>
-      apiPath(response.url()) === '/api/v1/auth/logout' &&
-      response.request().method() === 'POST',
-  )
-  await page.getByRole('button', { name: '退出登录' }).click()
-  const response = await responsePromise
-  expect(response.status()).toBe(204)
-}
 
 async function expectLoginAtViewport(
   page: Page,
