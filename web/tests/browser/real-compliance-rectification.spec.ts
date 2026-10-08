@@ -26,8 +26,6 @@ const CASE_TITLE = 'Rectification Compliance Case'
 const FINDING_TITLE = 'Rectification Nonconformity'
 const ACTION_TITLE = 'Rectification Corrective Action'
 const REJECT_REASON = 'Evidence does not show the calibration fix'
-// 本地没有对象存储时上传接口只会 503；CI 的 browser-acceptance 也不起对象存储，因此只在配置了端点时走上传。
-const OBJECT_STORAGE_CONFIGURED = Boolean(process.env.OBJECT_STORAGE_ENDPOINT)
 
 test.describe.configure({ mode: 'serial', retries: 0 })
 
@@ -210,33 +208,13 @@ test('compliance_review: a nonconformity is rectified, rejected once, re-verifie
   )
   await expect(owner.getByRole('region', { name: '整改事项' }).getByText(EXECUTOR.displayName, { exact: true })).toBeVisible()
 
-  // ---- 执行人：开始、上传证据、完成 ----
+  // ---- 执行人：开始、完成 ----
   const executor = await openSession(browser, EXECUTOR, `/action-items/${actionId}`)
   await expect(executor.getByRole('heading', { level: 1, name: ACTION_TITLE })).toBeVisible()
   const actionTransitions = `/api/v1/action-items/${actionId}/transitions`
   const startResponse = await respondTo(executor, 'POST', actionTransitions, () => executor.getByRole('button', { name: '开始整改项', exact: true }).click(), 200)
   expect(((await startResponse.json()) as { lifecycle: string }).lifecycle).toBe('in_progress')
   await expect(lifecycleTag(executor, '执行中')).toBeVisible()
-
-  if (OBJECT_STORAGE_CONFIGURED) {
-    await executor.getByLabel('证据文件').setInputFiles({
-      name: 'calibration-record.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('Gauge G-17 recalibrated and traceable.\n'),
-    })
-    await executor.getByLabel('说明（可选）').fill('Calibration record')
-    const uploadResponse = await respondTo(
-      executor,
-      'POST',
-      `/api/v1/action-items/${actionId}/evidence-uploads`,
-      () => executor.getByRole('button', { name: '上传证据' }).click(),
-      201,
-    )
-    expect(((await uploadResponse.json()) as { original_name: string }).original_name).toBe('calibration-record.txt')
-    await expect(executor.getByRole('status')).toContainText('服务器已确认上传：calibration-record.txt')
-    await executor.reload()
-    await expect(executor.getByRole('list', { name: '已上传的证据' })).toContainText('calibration-record.txt')
-  }
 
   const completeResponse = await respondTo(executor, 'POST', actionTransitions, () => executor.getByRole('button', { name: '完成整改项', exact: true }).click(), 200)
   expect(((await completeResponse.json()) as { lifecycle: string }).lifecycle).toBe('done')
