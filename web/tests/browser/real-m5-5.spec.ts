@@ -84,31 +84,36 @@ async function createAdminUser(
       apiPath(response.url()) === '/api/v1/admin/users' &&
       response.request().method() === 'POST',
   )
-  await page.getByLabel('显示名称').fill(displayName)
-  await page.getByLabel('登录名').fill(loginName)
-  await page.getByLabel('初始密码').fill(initialPassword)
-  await page.getByLabel('主要部门').selectOption({ label: EDITED_DEPARTMENT_NAME })
-  await page.getByRole('button', { name: '创建用户' }).click()
+  await page.getByRole('button', { name: '新建用户' }).click()
+  const drawer = page.getByRole('dialog', { name: '新建用户' })
+  await drawer.getByLabel('显示名称').fill(displayName)
+  await drawer.getByLabel('登录名').fill(loginName)
+  await drawer.getByLabel('初始密码').fill(initialPassword)
+  await drawer.getByLabel('主要部门').click()
+  await page.getByTitle(EDITED_DEPARTMENT_NAME, { exact: true }).last().click()
+  await drawer.getByRole('button', { name: '创建用户' }).click()
   const response = await responsePromise
   expect(response.status()).toBe(201)
   const body = (await response.json()) as { id: string }
   await expect(
-    page.getByRole('region', { name: '用户' }).getByRole('listitem').filter({ hasText: displayName }),
+    page.getByRole('region', { name: '用户' }).getByRole('row').filter({ hasText: displayName }),
   ).toBeVisible()
   return body.id
 }
 
 async function deactivateAdminUser(page: Page, displayName: string) {
   const users = page.getByRole('region', { name: '用户' })
-  const row = users.getByRole('listitem').filter({ hasText: displayName })
+  const row = users.getByRole('row').filter({ hasText: displayName })
   await row.getByRole('button', { name: '编辑' }).click()
-  await page.getByLabel('用户启用').uncheck()
+  const drawer = page.getByRole('dialog', { name: '编辑用户' })
+  await drawer.getByRole('checkbox', { name: '用户启用' }).uncheck()
   const responsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()).includes('/api/v1/admin/users/') &&
       response.request().method() === 'PATCH',
   )
-  await page.getByRole('button', { name: '保存用户' }).click()
+  await drawer.getByRole('button', { name: '保存用户' }).click()
+  await page.getByRole('dialog', { name: '停用用户' }).getByRole('button', { name: '确认停用' }).click()
   expect((await responsePromise).status()).toBe(200)
   await expect(row).toContainText('停用')
 }
@@ -188,6 +193,9 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
   page,
   browser,
 }) => {
+  // 长旅程：管理员侧用抽屉创建 3 个用户（每个约 1.4s，含抽屉与下拉动画）并停用 1 个，
+  // 实测比改用抽屉前多约 6s（main 约 21s，现约 28s），逼近默认 30s。各步骤耗时正常，没有遮罩或确认框残留阻塞。
+  test.slow()
   await page.goto('/admin')
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
   await submitLogin(page, ADMIN_LOGIN_NAME, ADMIN_PASSWORD)
@@ -203,22 +211,25 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
       apiPath(response.url()) === '/api/v1/admin/departments' &&
       response.request().method() === 'POST',
   )
-  await page.getByLabel('部门名称').fill(DEPARTMENT_NAME)
-  await page.getByRole('button', { name: '创建部门' }).click()
+  await page.getByRole('button', { name: '新建部门' }).click()
+  const departmentDrawer = page.getByRole('dialog', { name: '新建部门' })
+  await departmentDrawer.getByLabel('部门名称').fill(DEPARTMENT_NAME)
+  await departmentDrawer.getByRole('button', { name: '创建部门' }).click()
   expect((await departmentResponsePromise).status()).toBe(201)
   const departments = page.getByRole('region', { name: '部门' })
-  const departmentRow = departments.getByRole('listitem').filter({ hasText: DEPARTMENT_NAME })
+  const departmentRow = departments.getByRole('row').filter({ hasText: DEPARTMENT_NAME })
   await expect(departmentRow).toBeVisible()
   await departmentRow.getByRole('button', { name: '编辑' }).click()
-  await departments.getByLabel('部门名称').fill(EDITED_DEPARTMENT_NAME)
+  const departmentEditDrawer = page.getByRole('dialog', { name: '编辑部门' })
+  await departmentEditDrawer.getByLabel('部门名称').fill(EDITED_DEPARTMENT_NAME)
   const departmentEditResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()).startsWith('/api/v1/admin/departments/') &&
       response.request().method() === 'PATCH',
   )
-  await departments.getByRole('button', { name: '保存部门' }).click()
+  await departmentEditDrawer.getByRole('button', { name: '保存部门' }).click()
   expect((await departmentEditResponsePromise).status()).toBe(200)
-  await expect(departments.getByRole('listitem').filter({ hasText: EDITED_DEPARTMENT_NAME })).toBeVisible()
+  await expect(departments.getByRole('row').filter({ hasText: EDITED_DEPARTMENT_NAME })).toBeVisible()
 
   const firstUserId = await createAdminUser(
     page,
@@ -428,12 +439,14 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     await expect(secondPage.getByRole('heading', { name: '我的工作' })).toBeVisible()
     await expect(secondPage.getByRole('link', { name: 'M5.5 Process Case' })).toBeVisible()
 
-    await page.getByLabel('目标用户').selectOption({ label: FIRST_DISPLAY_NAME })
+    await page.getByLabel('目标用户').click()
+    await page.getByTitle(FIRST_DISPLAY_NAME, { exact: true }).last().click()
     await page.getByLabel('临时密码').fill(FIRST_RESET_PASSWORD)
     const resetResponsePromise = page.waitForResponse(
       (response) => apiPath(response.url()).includes('/credential-reset') && response.request().method() === 'POST',
     )
     await page.getByRole('button', { name: '重置凭据' }).click()
+    await page.getByRole('dialog', { name: '重置凭据' }).getByRole('button', { name: '确认重置' }).click()
     const resetResponse = await resetResponsePromise
     expect(resetResponse.status()).toBe(200)
     const resetBody = (await resetResponse.json()) as Record<string, unknown>

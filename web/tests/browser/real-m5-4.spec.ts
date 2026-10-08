@@ -50,6 +50,10 @@ async function submitPasswordChange(page: Page, currentPassword: string, newPass
   expect((await responsePromise).status()).toBe(200)
 }
 
+async function confirmDisableUser(page: Page) {
+  await page.getByRole('dialog', { name: '停用用户' }).getByRole('button', { name: '确认停用' }).click()
+}
+
 async function addLeadMember(page: Page, search: string, displayName: string) {
   const { drawer, response } = await searchCandidates(page, CASE_ID, 'lead', search)
   expect(response.status()).toBe(200)
@@ -90,23 +94,26 @@ test('real administrator configures users, protects Case managers, and resets cr
       apiPath(response.url()) === '/api/v1/admin/departments' &&
       response.request().method() === 'POST',
   )
-  await page.getByLabel('部门名称').fill(DEPARTMENT_NAME)
-  await page.getByRole('button', { name: '创建部门' }).click()
+  await page.getByRole('button', { name: '新建部门' }).click()
+  const departmentDrawer = page.getByRole('dialog', { name: '新建部门' })
+  await departmentDrawer.getByLabel('部门名称').fill(DEPARTMENT_NAME)
+  await departmentDrawer.getByRole('button', { name: '创建部门' }).click()
   expect((await departmentResponsePromise).status()).toBe(201)
   const departments = page.getByRole('region', { name: '部门' })
-  const departmentRow = departments.getByRole('listitem').filter({ hasText: DEPARTMENT_NAME })
+  const departmentRow = departments.getByRole('row').filter({ hasText: DEPARTMENT_NAME })
   await expect(departmentRow).toBeVisible()
 
   await departmentRow.getByRole('button', { name: '编辑' }).click()
-  await departments.getByLabel('部门名称').fill(EDITED_DEPARTMENT_NAME)
+  const departmentEditDrawer = page.getByRole('dialog', { name: '编辑部门' })
+  await departmentEditDrawer.getByLabel('部门名称').fill(EDITED_DEPARTMENT_NAME)
   const departmentEditResponsePromise = page.waitForResponse(
     (response) =>
       apiPath(response.url()).startsWith('/api/v1/admin/departments/') &&
       response.request().method() === 'PATCH',
   )
-  await departments.getByRole('button', { name: '保存部门' }).click()
+  await departmentEditDrawer.getByRole('button', { name: '保存部门' }).click()
   expect((await departmentEditResponsePromise).status()).toBe(200)
-  const editedDepartmentRow = departments.getByRole('listitem').filter({ hasText: EDITED_DEPARTMENT_NAME })
+  const editedDepartmentRow = departments.getByRole('row').filter({ hasText: EDITED_DEPARTMENT_NAME })
   await expect(editedDepartmentRow).toBeVisible()
 
   const userResponsePromise = page.waitForResponse(
@@ -114,14 +121,17 @@ test('real administrator configures users, protects Case managers, and resets cr
       apiPath(response.url()) === '/api/v1/admin/users' &&
       response.request().method() === 'POST',
   )
-  await page.getByLabel('显示名称').fill(NEW_USER_DISPLAY_NAME)
-  await page.getByLabel('登录名').fill(NEW_USER_LOGIN_NAME)
-  await page.getByLabel('初始密码').fill(NEW_USER_INITIAL_PASSWORD)
-  await page.getByLabel('主要部门').selectOption({ label: EDITED_DEPARTMENT_NAME })
-  await page.getByRole('button', { name: '创建用户' }).click()
+  await page.getByRole('button', { name: '新建用户' }).click()
+  const userDrawer = page.getByRole('dialog', { name: '新建用户' })
+  await userDrawer.getByLabel('显示名称').fill(NEW_USER_DISPLAY_NAME)
+  await userDrawer.getByLabel('登录名').fill(NEW_USER_LOGIN_NAME)
+  await userDrawer.getByLabel('初始密码').fill(NEW_USER_INITIAL_PASSWORD)
+  await userDrawer.getByLabel('主要部门').click()
+  await page.getByTitle(EDITED_DEPARTMENT_NAME, { exact: true }).last().click()
+  await userDrawer.getByRole('button', { name: '创建用户' }).click()
   expect((await userResponsePromise).status()).toBe(201)
   const users = page.getByRole('region', { name: '用户' })
-  await expect(users.getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME })).toBeVisible()
+  await expect(users.getByRole('row').filter({ hasText: NEW_USER_DISPLAY_NAME })).toBeVisible()
 
   const targetContext = await browser.newContext({
     baseURL: `https://127.0.0.1:${process.env.EASYAUDIT_WEB_PORT ?? '4173'}`,
@@ -148,17 +158,19 @@ test('real administrator configures users, protects Case managers, and resets cr
     await addLeadMember(managerPage, NEW_USER_DISPLAY_NAME, NEW_USER_DISPLAY_NAME)
     await removeMember(managerPage, MANAGER_USER_ID, MANAGER_DISPLAY_NAME)
 
-    const createdUserRow = page.getByRole('region', { name: '用户' }).getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME })
+    const createdUserRow = users.getByRole('row').filter({ hasText: NEW_USER_DISPLAY_NAME })
     await createdUserRow.getByRole('button', { name: '编辑' }).click()
-    await page.getByRole('checkbox', { name: '用户启用' }).uncheck()
+    const userEditDrawer = page.getByRole('dialog', { name: '编辑用户' })
+    await userEditDrawer.getByRole('checkbox', { name: '用户启用' }).uncheck()
     const conflictResponsePromise = page.waitForResponse(
       (response) =>
         apiPath(response.url()).includes('/api/v1/admin/users/') &&
         response.request().method() === 'PATCH',
     )
-    await page.getByRole('button', { name: '保存用户' }).click()
+    await userEditDrawer.getByRole('button', { name: '保存用户' }).click()
+    await confirmDisableUser(page)
     expect((await conflictResponsePromise).status()).toBe(409)
-    await expect(page.getByRole('status')).toContainText('状态冲突')
+    await expect(userEditDrawer.getByRole('alert').filter({ hasText: '状态冲突' })).toBeVisible()
 
     await targetPage.goto(`/review-cases/${CASE_ID}`)
     await expect(targetPage.getByRole('heading', { name: 'M5.4 Browser Manager Case' })).toBeVisible()
@@ -169,21 +181,24 @@ test('real administrator configures users, protects Case managers, and resets cr
         apiPath(response.url()).includes('/api/v1/admin/users/') &&
         response.request().method() === 'PATCH',
     )
-    await page.getByRole('button', { name: '保存用户' }).click()
+    await userEditDrawer.getByRole('button', { name: '保存用户' }).click()
+    await confirmDisableUser(page)
     expect((await disableUserPromise).status()).toBe(200)
-    await expect(users.getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME })).toBeVisible()
+    await expect(users.getByRole('row').filter({ hasText: NEW_USER_DISPLAY_NAME })).toBeVisible()
 
-    await users.getByRole('listitem').filter({ hasText: NEW_USER_DISPLAY_NAME }).getByRole('button', { name: '编辑' }).click()
-    await page.getByRole('checkbox', { name: '用户启用' }).check()
+    await users.getByRole('row').filter({ hasText: NEW_USER_DISPLAY_NAME }).getByRole('button', { name: '编辑' }).click()
+    await userEditDrawer.getByRole('checkbox', { name: '用户启用' }).check()
     const enableUserPromise = page.waitForResponse(
       (response) =>
         apiPath(response.url()).includes('/api/v1/admin/users/') &&
         response.request().method() === 'PATCH',
     )
-    await page.getByRole('button', { name: '保存用户' }).click()
+    await userEditDrawer.getByRole('button', { name: '保存用户' }).click()
     expect((await enableUserPromise).status()).toBe(200)
+    await expect(userEditDrawer).toHaveCount(0)
 
-    await page.getByLabel('目标用户').selectOption({ label: NEW_USER_DISPLAY_NAME })
+    await page.getByLabel('目标用户').click()
+    await page.getByTitle(NEW_USER_DISPLAY_NAME, { exact: true }).last().click()
     await page.getByLabel('临时密码').fill(RESET_PASSWORD)
     const resetResponsePromise = page.waitForResponse(
       (response) =>
@@ -191,8 +206,9 @@ test('real administrator configures users, protects Case managers, and resets cr
         response.request().method() === 'POST',
     )
     await page.getByRole('button', { name: '重置凭据' }).click()
+    await page.getByRole('dialog', { name: '重置凭据' }).getByRole('button', { name: '确认重置' }).click()
     expect((await resetResponsePromise).status()).toBe(200)
-    await expect(page.getByRole('status')).toContainText('临时凭据已重置')
+    await expect(page.getByText('临时凭据已重置')).toBeVisible()
     await expect(page.getByLabel('临时密码')).toHaveValue('')
 
     await targetPage.reload()

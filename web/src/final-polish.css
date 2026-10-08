@@ -5,22 +5,13 @@
 
 .app-shell,
 .app-content,
-.surface-page,
-.surface-card,
-.surface-list li,
 .activity-list li,
-.subsurface,
-.command-stack,
-.form-grid > * {
+.subsurface {
   min-width: 0;
 }
 
-.surface-page,
-.surface-card,
-.surface-list li,
 .activity-list li,
 .app-brand-context,
-.empty-note,
 [role="alert"],
 [role="status"] {
   overflow-wrap: anywhere;
@@ -34,7 +25,6 @@ canvas {
 }
 
 @media (max-width: 640px) {
-  .surface-card,
   .subsurface {
     padding: 18px;
   }
@@ -49,7 +39,6 @@ canvas {
     padding-right: 12px;
   }
 
-  .surface-card,
   .subsurface {
     padding: 15px;
   }
