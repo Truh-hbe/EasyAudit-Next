@@ -232,7 +232,7 @@ systemctl list-timers easyaudit-reminder-sweep.timer     # 确认下次触发时
 ```
 
 - 手动运行：`$DC run --rm --no-deps -T api easyaudit-next run-reminder-sweep [--as-of 2026-10-02T01:00:00Z] [--occurrence-key daily:2026-10-02]`。默认 `as_of` 是当前 UTC 时间，默认 key 是 `daily:<as_of 在 REMINDER_TIMEZONE（默认 Asia/Shanghai）下的日期>`，所以**同一天重跑是安全的**：已发出的提醒被数据库唯一约束去重，失败的候选会补上。stdout 是一行 JSON（`status`、`scanned_count`、`created_count`、`deduped_count`、`failed_count`、`error_summary`）；有候选失败或整体无法运行时退出码为 1，unit 会显示 failed。
-- 查看状态：`$DC run --rm --no-deps -T api easyaudit-next scheduler-status [--job automatic_reminder_sweep] [--max-age-hours 26]` 输出最近一次运行和最近一次成功的 JSON。最近一次失败、最近一次成功早于 26 小时、或从未运行，退出码为 1。`easyaudit-reminder-status.service/.timer` 是每小时执行它的示例（先让 sweep 至少成功运行一次再启用，否则会报 `never_run`）；Pilot-7 上线检查清单的"提醒调度"就用它。
+- 查看状态：`$DC run --rm --no-deps -T api easyaudit-next scheduler-status [--job automatic_reminder_sweep] [--max-age-hours 26]` 输出最近一次运行和最近一次成功的 JSON。最近一次失败、最近一次成功早于 26 小时、或从未运行，退出码为 1。`easyaudit-reminder-status.service/.timer` 是每小时执行它的示例（先让 sweep 至少成功运行一次再启用，否则会报 `never_run`）；[试点上线检查清单](../docs/operations/pilot-launch.md)的"提醒调度"就用它。
 - 运行记录在表 `scheduler_runs`（运维记录，不影响业务，也不决定是否跳过运行）。进程崩溃会留下一条 `running` 记录，它不会阻止下一次运行；`scheduler-status` 不把它当作失败，只看最近一次成功。
 - 排障：先看 `journalctl -u easyaudit-reminder-sweep` 里最近一次的 JSON，`error_summary` 只含异常类型和 SQLSTATE（如 `OperationalError/55P03` 是锁等待超时、`/40P01` 是死锁），不含 SQL 或数据；重跑即可补齐。
 
@@ -292,7 +292,7 @@ EASYAUDIT_BACKUP_DIR=/srv/easyaudit-backups deploy/backup/backup.sh
 - **manifest**：`backup_timestamp`（UTC，dump 开始时刻）、`release_sha`（读运行中 api 镜像的 revision label，不信任环境变量；api/web/object-storage 三个镜像的 label 必须一致且等于 `EASYAUDIT_RELEASE`；脚本不读取 HEAD，检出是否对齐由操作者核对）、`alembic_revision`（取自 dump 内的 `alembic_version`）、dump 的 sha256、每个对象的 key/size/sha256、各服务的镜像 tag、开始时间与耗时。
 - **保留策略**：默认保留 14 天，`EASYAUDIT_BACKUP_RETENTION_DAYS` 可改。新包发布之后才清理过期备份，发布的包可能为 ok 或 degraded。degraded 备份照常按天数过期，但**最近一份 `integrity: ok` 的备份永远不删**（否则对象持续缺失时，14 天后会把最后一份健康备份清掉）；过期的陈旧 `.partial` 会清理，名字不符合 `easyaudit-backup-<时间戳>` 格式的目录不会被碰。
 - **退出码和产物**：见下表；timer 对非零显示 failed。预升级恢复点要求 exit 0、integrity=ok 且 bundle-only verify 通过；degraded 只能作为有已知缺失/不一致的恢复资料，不算健康恢复资格。
-- **调度与 RPO**：`easyaudit-backup.service` / `easyaudit-backup.timer` 是 systemd 示例，**每 12 小时一次**（02:30、14:30，无随机延迟），为一次失败后的下一次调度预留间隔。实际成功时间还取决于执行延迟、耗时和故障；仅靠调度并不能保证 RPO。用 `deploy/backup/check-freshness.sh`（`EASYAUDIT_BACKUP_DIR`、`EASYAUDIT_BACKUP_MAX_AGE_HOURS`，默认 24）做监控，最近一份 `integrity: ok` 备份的 `backup_timestamp` 早于 24h 就以非零退出（degraded 和 `.partial` 不算）。`easyaudit-backup-freshness.service/.timer` 是每小时执行它的示例；Pilot-7 上线检查清单的"备份新鲜度"就用它。安装：改路径和账号后 `systemctl enable --now easyaudit-backup.timer easyaudit-backup-freshness.timer`。
+- **调度与 RPO**：`easyaudit-backup.service` / `easyaudit-backup.timer` 是 systemd 示例，**每 12 小时一次**（02:30、14:30，无随机延迟），为一次失败后的下一次调度预留间隔。实际成功时间还取决于执行延迟、耗时和故障；仅靠调度并不能保证 RPO。用 `deploy/backup/check-freshness.sh`（`EASYAUDIT_BACKUP_DIR`、`EASYAUDIT_BACKUP_MAX_AGE_HOURS`，默认 24）做监控，最近一份 `integrity: ok` 备份的 `backup_timestamp` 早于 24h 就以非零退出（degraded 和 `.partial` 不算）。`easyaudit-backup-freshness.service/.timer` 是每小时执行它的示例；[试点上线检查清单](../docs/operations/pilot-launch.md)的"备份新鲜度"就用它。安装：改路径和账号后 `systemctl enable --now easyaudit-backup.timer easyaudit-backup-freshness.timer`。
 - **不进备份包**：secret 文件和 TLS 证书；source 原文件仍需单独受限保管。独立空目标可以初始化自己的新 PG/Garage/S3 凭证和证书，用户密码哈希及 Session 行来自数据库备份。它不是修改既有 source 凭证的轮换流程；证书域名与客户端信任仍须重新核对。
 
 | backup.sh exit | Manifest / 产物 | 操作含义 |
