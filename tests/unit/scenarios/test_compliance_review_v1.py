@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -122,6 +123,13 @@ class Repository:
         self,
         organization_id: OrganizationId,
         finding_id: FindingId,
+    ) -> tuple[FindingParticipant, ...]:
+        return ()
+
+    def list_finding_participants_for_findings(
+        self,
+        organization_id: OrganizationId,
+        finding_ids: Sequence[FindingId],
     ) -> tuple[FindingParticipant, ...]:
         return ()
 

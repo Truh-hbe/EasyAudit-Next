@@ -52,28 +52,27 @@ def build_authorization_context(
         )
     )
     finding_grants: set[RoleGrant] = set()
-    for current_finding_id in finding_ids:
-        for participant in repository.list_finding_participants(
-            actor.organization_id,
-            current_finding_id,
-        ):
-            if isinstance(participant.actor, UserActor):
-                if participant.actor.user_id == actor.id:
-                    finding_grants.add(
-                        RoleGrant(
-                            role_key=participant.role_key,
-                            actor_kind=ActorKind.USER,
-                            source=PermissionSource.DIRECT,
-                        )
-                    )
-            elif participant.actor.department_id == actor.primary_department_id:
+    for participant in repository.list_finding_participants_for_findings(
+        actor.organization_id,
+        finding_ids,
+    ):
+        if isinstance(participant.actor, UserActor):
+            if participant.actor.user_id == actor.id:
                 finding_grants.add(
                     RoleGrant(
                         role_key=participant.role_key,
-                        actor_kind=ActorKind.DEPARTMENT,
-                        source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                        actor_kind=ActorKind.USER,
+                        source=PermissionSource.DIRECT,
                     )
                 )
+        elif participant.actor.department_id == actor.primary_department_id:
+            finding_grants.add(
+                RoleGrant(
+                    role_key=participant.role_key,
+                    actor_kind=ActorKind.DEPARTMENT,
+                    source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                )
+            )
 
     return AuthorizationContext(
         is_active_organization_user=actor.is_active,
@@ -110,38 +109,36 @@ def build_rectification_authorization_context(
         if action_item_id is not None
         else tuple(
             action.id
-            for current_finding_id in finding_ids
-            for action in repository.list_action_items(
+            for action in repository.list_action_items_for_findings(
                 actor.organization_id,
-                current_finding_id,
+                finding_ids,
             )
         )
     )
     action_grants: set[RoleGrant] = set()
-    for current_action_id in action_ids:
-        for assignee in repository.list_action_assignees(
-            actor.organization_id,
-            current_action_id,
-        ):
-            if isinstance(assignee.actor, UserActor):
-                if assignee.actor.user_id == actor.id:
-                    action_grants.add(
-                        RoleGrant(
-                            role_key=assignee.role.value,
-                            actor_kind=ActorKind.USER,
-                            source=PermissionSource.DIRECT,
-                        )
-                    )
-            elif isinstance(assignee.actor, DepartmentActor) and (
-                assignee.actor.department_id == actor.primary_department_id
-            ):
+    for assignee in repository.list_action_assignees_for_actions(
+        actor.organization_id,
+        action_ids,
+    ):
+        if isinstance(assignee.actor, UserActor):
+            if assignee.actor.user_id == actor.id:
                 action_grants.add(
                     RoleGrant(
                         role_key=assignee.role.value,
-                        actor_kind=ActorKind.DEPARTMENT,
-                        source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                        actor_kind=ActorKind.USER,
+                        source=PermissionSource.DIRECT,
                     )
                 )
+        elif isinstance(assignee.actor, DepartmentActor) and (
+            assignee.actor.department_id == actor.primary_department_id
+        ):
+            action_grants.add(
+                RoleGrant(
+                    role_key=assignee.role.value,
+                    actor_kind=ActorKind.DEPARTMENT,
+                    source=PermissionSource.DEPARTMENT_MEMBERSHIP,
+                )
+            )
 
     return AuthorizationContext(
         is_active_organization_user=base.is_active_organization_user,

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -131,6 +132,18 @@ class InMemoryRepository:
             for participant in self.participants
             if participant.organization_id == organization_id
             and participant.finding_id == finding_id
+        )
+
+    def list_finding_participants_for_findings(
+        self,
+        organization_id: OrganizationId,
+        finding_ids: Sequence[FindingId],
+    ) -> tuple[FindingParticipant, ...]:
+        return tuple(
+            participant
+            for participant in self.participants
+            if participant.organization_id == organization_id
+            and participant.finding_id in finding_ids
         )
 
     def add_activity(self, activity: Activity) -> None:
