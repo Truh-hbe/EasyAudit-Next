@@ -30,6 +30,8 @@ interface HarnessOptions {
   gated?: boolean
   // 对写操作的响应；默认按路径成功。
   write?: (route: Route, path: string, method: string) => Promise<void> | void
+  // 用户列表；refreshed 为 true 表示写操作之后的重新读取。
+  users?: (refreshed: boolean) => unknown[]
 }
 
 async function setup(page: Page, options: HarnessOptions = {}): Promise<Harness> {
@@ -69,7 +71,7 @@ async function setup(page: Page, options: HarnessOptions = {}): Promise<Harness>
       ])
     }
     if (path === `${API}/users`) {
-      return fulfillJson(route, 200, [
+      return fulfillJson(route, 200, options.users?.(isRefresh) ?? [
         { id: 'user-1', organization_id: 'o', display_name: `${label} User`, platform_role: 'ordinary_user', is_active: true, primary_department_id: 'dept-1' },
       ])
     }
@@ -121,8 +123,8 @@ test('部门与用户通过抽屉创建，场景精确版本来自服务器', as
   await expect(page.getByText('Initial Org · 启用')).toBeVisible()
   await expect(page.getByText('process_review@1 · 2026/08/28 18:00 · 代码已注册 · 可用')).toBeVisible()
   // 用户本来需要看的登录名之外，界面不出现内部 ID。
-  await expect(page.getByText('user-1')).toHaveCount(0)
-  await expect(page.getByText('dept-1')).toHaveCount(0)
+  expect(await page.getByText('user-1').count()).toBe(0)
+  expect(await page.getByText('dept-1').count()).toBe(0)
 
   await page.getByRole('button', { name: '新建部门' }).click()
   const drawer = page.getByRole('dialog', { name: '新建部门' })
@@ -238,7 +240,7 @@ test('重置凭据遇到网络中断或 500：提示未确认，清空密码，�
     const alert = page.getByRole('alert').filter({ hasText: '未确认重置凭据是否成功' })
     await expect(alert).toContainText('临时密码已清空，重试需重新输入')
     await expect(page.getByLabel('临时密码')).toHaveValue('')
-    await expect(page.getByText('secret backend detail')).toHaveCount(0)
+    expect(await page.getByText('secret backend detail').count()).toBe(0)
     await expect.poll(() => harness.reads()).toBeGreaterThan(readsBefore)
     await expect(page.getByRole('button', { name: '重置凭据' })).toBeEnabled()
   }
@@ -258,7 +260,7 @@ test('结果未知后重新读取也失败：保留未确认提示，成功提�
 
   await expect(page.getByRole('alert').filter({ hasText: '请求失败（HTTP 500）。' })).toBeVisible()
   await expect(page.getByRole('alert').filter({ hasText: '未确认重置凭据是否成功' })).toBeVisible()
-  await expect(page.getByText('Initial Org')).toHaveCount(0)
+  expect(await page.getByText('Initial Org').count()).toBe(0)
   expect(harness.writes).toHaveLength(1)
 })
 
@@ -274,7 +276,7 @@ test('刷新期间区块显示 Spin、旧内容与成功提示保持，刷新后
   await expect(page.getByText('正在刷新')).toBeVisible()
   await expect(page.getByText(RESET_SUCCESS)).toBeVisible()
   await expect(userCell(page, 'Initial User')).toBeVisible()
-  await expect(userCell(page, 'Refreshed User')).toHaveCount(0)
+  expect(await userCell(page, 'Refreshed User').count()).toBe(0)
   await expect(page.getByLabel('临时密码')).toHaveValue('')
 
   harness.release()
@@ -296,6 +298,220 @@ test('部门创建的成功提示同样在刷新期间保持', async ({ page }) 
   harness.release()
   await expect(userCell(page, 'Refreshed User')).toBeVisible()
   await expect(page.getByText('部门已创建。')).toBeVisible()
+})
+
+const userRow = (id: string, name: string, role = 'ordinary_user') => ({
+  id, organization_id: 'o', display_name: name, platform_role: role, is_active: true, primary_department_id: 'dept-1',
+})
+
+// 同一任务里先关闭再打开：模拟关闭动画结束前就切换目标。
+async function closeThenOpen(page: Page, drawerName: string, nextButton: string) {
+  const drawer = page.getByRole('dialog', { name: drawerName })
+  const cancel = await drawer.getByRole('button', { name: /^取\s*消$/ }).elementHandle()
+  const next = await page.getByRole('button', { name: nextButton }).elementHandle()
+  await page.evaluate(([close, open]) => {
+    ;(close as unknown as { click: () => void }).click()
+    ;(open as unknown as { click: () => void }).click()
+  }, [cancel, next])
+}
+
+test('关闭“编辑 A”后立即打开“编辑 B”：表单是 B 的值，保存写给 B', async ({ page }) => {
+  const harness = await setup(page, { users: () => [userRow('user-a', 'Alpha User'), userRow('user-b', 'Beta User')] })
+  await page.goto('/admin')
+  await page.getByRole('button', { name: '编辑用户 Alpha User' }).click()
+  const drawer = page.getByRole('dialog', { name: '编辑用户' })
+  await drawer.getByLabel('显示名称').fill('Alpha Edited')
+  await closeThenOpen(page, '编辑用户', '编辑用户 Beta User')
+
+  await expect(drawer.getByLabel('显示名称')).toHaveValue('Beta User')
+  await drawer.getByRole('button', { name: '保存用户' }).click()
+  await expect(page.getByText('用户已更新。')).toBeVisible()
+  expect(harness.writes).toEqual([
+    {
+      method: 'PATCH',
+      path: `${API}/users/user-b`,
+      body: { display_name: 'Beta User', platform_role: 'ordinary_user', primary_department_id: 'dept-1', is_active: true },
+    },
+  ])
+})
+
+test('关闭“编辑部门”后立即“新建部门”：表单为空，提交是创建而不是更新', async ({ page }) => {
+  const harness = await setup(page)
+  await page.goto('/admin')
+  await page.getByRole('button', { name: '编辑部门 Audit Dept' }).click()
+  const edit = page.getByRole('dialog', { name: '编辑部门' })
+  await expect(edit.getByLabel('部门名称')).toHaveValue('Audit Dept')
+  await closeThenOpen(page, '编辑部门', '新建部门')
+
+  const drawer = page.getByRole('dialog', { name: '新建部门' })
+  await expect(drawer.getByLabel('部门名称')).toHaveValue('')
+  await drawer.getByLabel('部门名称').fill('Fresh Dept')
+  await drawer.getByRole('button', { name: '创建部门' }).click()
+  await expect(page.getByText('部门已创建。')).toBeVisible()
+  expect(harness.writes).toEqual([{ method: 'POST', path: `${API}/departments`, body: { name: 'Fresh Dept', parent_id: null } }])
+})
+
+test('同一目标再次打开是新的编辑会话，不带上次未保存的内容', async ({ page }) => {
+  await setup(page)
+  await page.goto('/admin')
+  await page.getByRole('button', { name: '编辑部门 Audit Dept' }).click()
+  const drawer = page.getByRole('dialog', { name: '编辑部门' })
+  await drawer.getByLabel('部门名称').fill('Unsaved')
+  await closeThenOpen(page, '编辑部门', '编辑部门 Audit Dept')
+  await expect(drawer.getByLabel('部门名称')).toHaveValue('Audit Dept')
+})
+
+async function triggerGatedRefresh(page: Page) {
+  await page.getByRole('button', { name: '新建部门' }).click()
+  const drawer = page.getByRole('dialog', { name: '新建部门' })
+  await drawer.getByLabel('部门名称').fill('Trigger Dept')
+  await drawer.getByRole('button', { name: '创建部门' }).click()
+  await expect(page.getByText('正在刷新')).toBeVisible()
+}
+
+async function expectContentRemoved(page: Page, status: number) {
+  if (status === 403) await expect(page.getByText('内容不存在或无权访问')).toBeVisible()
+  else await expect(page.getByRole('alert').filter({ hasText: '请求失败（HTTP 500）。' })).toBeVisible()
+}
+
+for (const status of [403, 500]) {
+  test(`重置确认框打开时刷新返回 ${status}：确认框消失，不发写请求`, async ({ page }) => {
+    const harness = await setup(page, { gated: true, refresh: { status } })
+    await page.goto('/admin')
+    await fillReset(page)
+    await triggerGatedRefresh(page)
+
+    // 刷新期间遮罩会拦截指针，用键盘打开确认框。
+    await page.getByRole('button', { name: '重置凭据' }).press('Enter')
+    const confirm = confirmDialog(page, '重置凭据')
+    await expect(confirm).toBeVisible()
+    harness.release()
+
+    await expectContentRemoved(page, status)
+    await expect(confirm).toHaveCount(0)
+    expect(harness.writes).toHaveLength(1)
+  })
+
+  test(`停用确认框打开时刷新返回 ${status}：抽屉与确认框都消失，不发写请求`, async ({ page }) => {
+    const harness = await setup(page, { gated: true, refresh: { status } })
+    await page.goto('/admin')
+    await triggerGatedRefresh(page)
+
+    await page.getByRole('button', { name: '编辑用户 Initial User' }).press('Enter')
+    const drawer = page.getByRole('dialog', { name: '编辑用户' })
+    await drawer.getByRole('checkbox', { name: '用户启用' }).uncheck()
+    await drawer.getByRole('button', { name: '保存用户' }).click()
+    const confirm = confirmDialog(page, '停用用户')
+    await expect(confirm).toBeVisible()
+    harness.release()
+
+    await expectContentRemoved(page, status)
+    await expect(confirm).toHaveCount(0)
+    await expect(drawer).toHaveCount(0)
+    expect(harness.writes).toHaveLength(1)
+  })
+}
+
+test('刷新后编辑目标消失：抽屉随之关闭，不再提交旧目标', async ({ page }) => {
+  const harness = await setup(page, {
+    gated: true,
+    users: (refreshed) => (refreshed ? [userRow('user-b', 'Beta User')] : [userRow('user-a', 'Alpha User'), userRow('user-b', 'Beta User')]),
+  })
+  await page.goto('/admin')
+  await triggerGatedRefresh(page)
+
+  await page.getByRole('button', { name: '编辑用户 Alpha User' }).press('Enter')
+  const drawer = page.getByRole('dialog', { name: '编辑用户' })
+  await expect(drawer).toBeVisible()
+  harness.release()
+  await expect(userCell(page, 'Beta User')).toBeVisible()
+  await expect(drawer).toHaveCount(0)
+  expect(harness.writes).toHaveLength(1)
+})
+
+test('抽屉写操作结果未知且重新读取也失败：页面级保留“未确认”提示与密码已清空说明', async ({ page }) => {
+  const harness = await setup(page, { refresh: { status: 500 }, write: (route) => route.abort('connectionreset') })
+  await page.goto('/admin')
+  await page.getByRole('button', { name: '新建用户' }).click()
+  const drawer = page.getByRole('dialog', { name: '新建用户' })
+  await drawer.getByLabel('显示名称').fill('X User')
+  await drawer.getByLabel('登录名').fill('x-login')
+  await drawer.getByLabel('初始密码').fill('initial-password-123')
+  await drawer.getByRole('button', { name: '创建用户' }).click()
+
+  await expect(page.getByRole('alert').filter({ hasText: '请求失败（HTTP 500）。' })).toBeVisible()
+  const unknown = page.getByRole('alert').filter({ hasText: '未确认创建用户是否成功' })
+  await expect(unknown).toBeVisible()
+  await expect(unknown).toContainText('初始密码已清空')
+  expect(harness.writes).toHaveLength(1)
+})
+
+test('新操作或打开编辑会清除页面级提示', async ({ page }) => {
+  let fail = true
+  await setup(page, {
+    write: (route) => (fail ? route.abort('connectionreset') : fulfillJson(route, 200, { id: 'user-1' })),
+  })
+  await page.goto('/admin')
+  const unknown = page.getByRole('alert').filter({ hasText: '未确认重置凭据是否成功' })
+  const resetOnce = async (name: string) => {
+    await fillReset(page, name)
+    await page.getByRole('button', { name: '重置凭据' }).click()
+    await confirmDialog(page, '重置凭据').getByRole('button', { name: '确认重置' }).click()
+  }
+
+  await resetOnce('Initial User')
+  await expect(unknown).toBeVisible()
+  // 重新读取之后用户名变为 Refreshed User。
+  await expect(userCell(page, 'Refreshed User')).toBeVisible()
+  await page.getByRole('button', { name: '编辑用户 Refreshed User' }).click()
+  const drawer = page.getByRole('dialog', { name: '编辑用户' })
+  await expect(drawer).toBeVisible()
+  expect(await unknown.count()).toBe(0)
+  await drawer.getByRole('button', { name: /^取\s*消$/ }).click()
+  await expect(drawer).toHaveCount(0)
+
+  // 新的重置操作开始时也会清掉上一次的提示。
+  fail = false
+  await resetOnce('Refreshed User')
+  await expect(page.getByText(RESET_SUCCESS)).toBeVisible()
+  expect(await unknown.count()).toBe(0)
+})
+
+test('管理员把自己降为普通用户需要二次确认；降级他人不需要', async ({ page }) => {
+  const harness = await setup(page, {
+    users: () => [userRow(admin.id, 'UI-6 Admin', 'system_admin'), userRow('user-b', 'Other Admin', 'system_admin')],
+  })
+  await page.goto('/admin')
+
+  await page.getByRole('button', { name: '编辑用户 UI-6 Admin' }).click()
+  const drawer = page.getByRole('dialog', { name: '编辑用户' })
+  await drawer.getByLabel('平台角色').click()
+  await page.getByTitle('普通用户', { exact: true }).last().click()
+  await drawer.getByRole('button', { name: '保存用户' }).click()
+  const confirm = confirmDialog(page, '降低自己的管理权限')
+  await expect(confirm).toContainText('无法自行撤销')
+  await confirm.getByRole('button', { name: /^取\s*消$/ }).click()
+  await expect(confirm).toHaveCount(0)
+  expect(harness.writes).toHaveLength(0)
+
+  await drawer.getByRole('button', { name: '保存用户' }).click()
+  await confirmDialog(page, '降低自己的管理权限').getByRole('button', { name: '确认降权' }).click()
+  await expect(page.getByText('用户已更新。')).toBeVisible()
+  expect(harness.writes).toEqual([
+    {
+      method: 'PATCH',
+      path: `${API}/users/${admin.id}`,
+      body: { display_name: 'UI-6 Admin', platform_role: 'ordinary_user', primary_department_id: 'dept-1', is_active: true },
+    },
+  ])
+
+  await expect(drawer).toHaveCount(0)
+  await page.getByRole('button', { name: '编辑用户 Other Admin' }).click()
+  await drawer.getByLabel('平台角色').click()
+  await page.getByTitle('普通用户', { exact: true }).last().click()
+  await drawer.getByRole('button', { name: '保存用户' }).click()
+  await expect(page.getByText('用户已更新。')).toBeVisible()
+  expect(harness.writes).toHaveLength(2)
 })
 
 for (const status of [401, 403, 404]) {

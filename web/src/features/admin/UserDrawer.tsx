@@ -1,4 +1,5 @@
 import { Alert, Button, Checkbox, Drawer, Flex, Form, Grid, Input, Select } from 'antd'
+import { useEffect, useRef } from 'react'
 
 import type { DepartmentResponse } from '../../api/admin'
 import type { PlatformRole, UserResponse } from '../../api/contracts'
@@ -27,6 +28,8 @@ interface UserDrawerProps {
   open: boolean
   // null 表示新建。
   user: UserResponse | null
+  // 当前登录的管理员；只用于“降低自己的权限”的确认提示，不参与权限判断。
+  currentUserId: string | null
   departments: DepartmentResponse[]
   onClose: () => void
   create: (input: UserCreateInput) => Promise<CommandResult>
@@ -47,10 +50,16 @@ const required = (message: string) => ({
     (value ?? '').trim() === '' ? Promise.reject(<FieldError>{message}</FieldError>) : Promise.resolve(),
 })
 
-export function UserDrawer({ open, user, departments, onClose, create, update }: UserDrawerProps) {
+export function UserDrawer({ open, user, currentUserId, departments, onClose, create, update }: UserDrawerProps) {
   const screens = Grid.useBreakpoint()
   const [form] = Form.useForm<FormValues>()
-  const { confirm } = useConfirm()
+  const { confirm, destroy } = useConfirm()
+  const openRef = useRef(open)
+  openRef.current = open
+  // 抽屉关闭后确认框随之销毁；晚到的确认也不提交。
+  useEffect(() => {
+    if (!open) destroy()
+  }, [open, destroy])
   const { submitting, failure, submit, clearFieldErrors } = useDrawerCommand(open, onClose)
   const departmentOptions = [
     { value: '', label: '未分配' },
@@ -80,20 +89,28 @@ export function UserDrawer({ open, user, departments, onClose, create, update }:
   }
 
   function onFinish(values: FormValues) {
-    if (user !== null && user.is_active && !values.is_active) {
-      confirm({
-        title: '停用用户',
-        content: `停用后，${user.display_name} 将无法登录，现有登录会话立即失效；之后可以重新启用。`,
-        okText: '确认停用',
-        okButtonProps: { danger: true },
-        cancelText: '取消',
-        onOk: async () => {
-          await run(values)
-        },
-      })
+    const deactivating = user !== null && user.is_active && !values.is_active
+    const demotingSelf =
+      user !== null && user.id === currentUserId && user.platform_role === 'system_admin' && values.platform_role !== 'system_admin'
+    if (user === null || (!deactivating && !demotingSelf)) {
+      void run(values)
       return
     }
-    void run(values)
+    const consequences = [
+      deactivating ? `停用后，${user.display_name} 将无法登录，现有登录会话立即失效；之后可以重新启用。` : null,
+      demotingSelf ? '您正在降低自己的平台角色：保存后您将立即失去管理设置的访问权限，且无法自行撤销。' : null,
+    ].filter((text) => text !== null)
+    confirm({
+      title: deactivating ? '停用用户' : '降低自己的管理权限',
+      content: consequences.join(' '),
+      okText: deactivating ? '确认停用' : '确认降权',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        if (!openRef.current) return
+        await run(values)
+      },
+    })
   }
 
   return (

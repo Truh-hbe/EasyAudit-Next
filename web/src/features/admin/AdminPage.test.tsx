@@ -54,14 +54,11 @@ describe('M5.4 administrator contracts', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders status-derived safe reset errors and exact scenario labels', () => {
+  it('renders only the HTTP status for failed reads and exact scenario labels', () => {
     const secret = 'secret-that-must-not-be-rendered'
-    expect(adminErrorMessage(new ApiError(422, secret), 'fallback')).toBe(
-      '提交内容不符合当前规则，请检查后重试。',
-    )
-    expect(adminErrorMessage(new ApiError(403, secret), 'fallback')).toBe(
-      '当前账号没有管理员权限。',
-    )
+    expect(adminErrorMessage(new ApiError(500, secret), 'fallback')).toBe('请求失败（HTTP 500）。')
+    expect(adminErrorMessage(new Error('network down'), 'fallback')).toBe('network down')
+    expect(adminErrorMessage('x', 'fallback')).toBe('fallback')
     expect(scenarioVersionLabel('process_review', 1)).toBe('process_review@1')
   })
 })

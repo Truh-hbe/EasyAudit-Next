@@ -3,6 +3,7 @@ import { Alert, App, Button, Card, Flex, Form, Input, Result, Select, Spin, Tabl
 import type { TableColumnsType } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 
+import { useSession } from '../../app/auth/session'
 import { ApiError } from '../../api/client'
 import {
   createAdminDepartment,
@@ -56,16 +57,7 @@ type LoadState =
   | { status: 'denied' }
 
 export function adminErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) {
-    const messages: Record<number, string> = {
-      401: '登录状态已失效，请重新登录。',
-      403: '当前账号没有管理员权限。',
-      404: '目标数据不存在或已被移除。',
-      409: '服务器检测到状态冲突，请刷新后重试。',
-      422: '提交内容不符合当前规则，请检查后重试。',
-    }
-    return messages[error.status] ?? `请求失败（HTTP ${error.status}）。`
-  }
+  if (error instanceof ApiError) return `请求失败（HTTP ${error.status}）。`
   return error instanceof Error ? error.message : fallback
 }
 
@@ -96,6 +88,18 @@ const activeText = (active: boolean) => (active ? '启用' : '停用')
 
 const SUCCESS_KEY = 'admin-command-success'
 
+interface DrawerTarget {
+  open: boolean
+  id: string | null
+  session: number
+}
+
+const CLOSED_DRAWER: DrawerTarget = { open: false, id: null, session: 0 }
+
+function openDrawer(set: (update: (current: DrawerTarget) => DrawerTarget) => void, id: string | null) {
+  set((current) => ({ open: true, id, session: current.session + 1 }))
+}
+
 interface ResetValues {
   user_id?: string
   temporary_password?: string
@@ -103,7 +107,9 @@ interface ResetValues {
 
 export function AdminPage() {
   const { message } = App.useApp()
-  const { confirm } = useConfirm()
+  const { confirm, destroy: destroyConfirm } = useConfirm()
+  const { state: sessionState } = useSession()
+  const currentUserId = sessionState.status === 'authenticated' ? sessionState.user.id : null
   const [revision, setRevision] = useState(0)
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const requestSequence = useRef(0)
@@ -113,8 +119,10 @@ export function AdminPage() {
   const busyRef = useRef(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<CommandFailure | null>(null)
-  const [departmentDrawer, setDepartmentDrawer] = useState<{ open: boolean; department: DepartmentResponse | null }>({ open: false, department: null })
-  const [userDrawer, setUserDrawer] = useState<{ open: boolean; user: UserResponse | null }>({ open: false, user: null })
+  // id 为 null 表示新建；session 每次打开递增，抽屉按它重挂载，保证每次打开都是新的编辑会话。
+  const [departmentDrawer, setDepartmentDrawer] = useState<DrawerTarget>(CLOSED_DRAWER)
+  const [userDrawer, setUserDrawer] = useState<DrawerTarget>(CLOSED_DRAWER)
+  const dataRef = useRef<AdminData | null>(null)
   const [resetForm] = Form.useForm<ResetValues>()
 
   useEffect(
@@ -149,8 +157,8 @@ export function AdminPage() {
           deniedRef.current = true
           message.destroy(SUCCESS_KEY)
           setNotice(null)
-          setDepartmentDrawer({ open: false, department: null })
-          setUserDrawer({ open: false, user: null })
+          setDepartmentDrawer((current) => ({ ...current, open: false }))
+          setUserDrawer((current) => ({ ...current, open: false }))
           setState({ status: 'denied' })
           return
         }
@@ -164,6 +172,12 @@ export function AdminPage() {
   }, [revision])
 
   const refresh = () => setRevision((value) => value + 1)
+
+  dataRef.current = state.status === 'ready' ? state.data : null
+  // 受保护内容被移除（读取失败、无权访问）时，已打开的确认框随之销毁。
+  useEffect(() => {
+    if (state.status !== 'ready') destroyConfirm()
+  }, [state.status, destroyConfirm])
 
   // 写操作：不自动重放；冲突、权限变化或结果未知时只重新读取，由管理员核对后再决定是否重试。
   async function runCommand(
@@ -189,8 +203,10 @@ export function AdminPage() {
     if (result.ok) {
       void message.success({ key: SUCCESS_KEY, content: options.successText })
       refresh()
-    } else if (failureNeedsRefresh(result.failure)) {
-      refresh()
+    } else {
+      // 结果未知的提示留在页面级：之后重新读取失败、抽屉被卸载时，管理员仍能看到要先核对。
+      if (result.failure.kind === 'unknown-result') setNotice(result.failure)
+      if (failureNeedsRefresh(result.failure)) refresh()
     }
     return result
   }
@@ -249,6 +265,8 @@ export function AdminPage() {
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
+        // 确认框打开期间内容被移除或目标用户已不存在：不发请求。
+        if (deniedRef.current || dataRef.current?.users.some((user) => user.id === target.id) !== true) return
         // 临时密码在请求发出前就从表单清掉，不保留用于自动重试。
         resetForm.setFieldValue('temporary_password', '')
         setNotice(null)
@@ -308,6 +326,10 @@ export function AdminPage() {
 
   const { organization, departments, users, scenarios } = state.data
 
+  // 抽屉目标按 id 从最新数据派生；刷新后目标消失则抽屉关闭。
+  const editingDepartment = departmentDrawer.id === null ? undefined : departments.find((item) => item.id === departmentDrawer.id)
+  const editingUser = userDrawer.id === null ? undefined : users.find((item) => item.id === userDrawer.id)
+
   const departmentColumns: TableColumnsType<DepartmentResponse> = [
     { title: '部门名称', key: 'name', render: (_value: unknown, item) => <strong>{item.name}</strong> },
     { title: '上级部门', key: 'parent', render: (_value: unknown, item) => departmentName(departments, item.parent_id) },
@@ -323,7 +345,7 @@ export function AdminPage() {
           icon={<EditOutlined aria-hidden />}
           aria-label={`编辑部门 ${item.name}`}
           disabled={busy}
-          onClick={() => { setNotice(null); setDepartmentDrawer({ open: true, department: item }) }}
+          onClick={() => { setNotice(null); openDrawer(setDepartmentDrawer, item.id) }}
         >编辑</Button>
       ),
     },
@@ -345,7 +367,7 @@ export function AdminPage() {
           icon={<EditOutlined aria-hidden />}
           aria-label={`编辑用户 ${item.display_name}`}
           disabled={busy}
-          onClick={() => { setNotice(null); setUserDrawer({ open: true, user: item }) }}
+          onClick={() => { setNotice(null); openDrawer(setUserDrawer, item.id) }}
         >编辑</Button>
       ),
     },
@@ -372,7 +394,7 @@ export function AdminPage() {
                   <Button
                     icon={<PlusOutlined aria-hidden />}
                     disabled={busy}
-                    onClick={() => { setNotice(null); setDepartmentDrawer({ open: true, department: null }) }}
+                    onClick={() => { setNotice(null); openDrawer(setDepartmentDrawer, null) }}
                   >新建部门</Button>
                 </Flex>
               }
@@ -397,7 +419,7 @@ export function AdminPage() {
                   <Button
                     icon={<PlusOutlined aria-hidden />}
                     disabled={busy}
-                    onClick={() => { setNotice(null); setUserDrawer({ open: true, user: null }) }}
+                    onClick={() => { setNotice(null); openDrawer(setUserDrawer, null) }}
                   >新建用户</Button>
                 </Flex>
               }
@@ -486,15 +508,18 @@ export function AdminPage() {
       </Spin>
 
       <DepartmentDrawer
-        open={departmentDrawer.open}
-        department={departmentDrawer.department}
+        key={`department-${departmentDrawer.session}`}
+        open={departmentDrawer.open && (departmentDrawer.id === null || editingDepartment !== undefined)}
+        department={editingDepartment ?? null}
         departments={departments}
         onClose={() => setDepartmentDrawer((current) => ({ ...current, open: false }))}
-        save={saveDepartment(departmentDrawer.department)}
+        save={saveDepartment(editingDepartment ?? null)}
       />
       <UserDrawer
-        open={userDrawer.open}
-        user={userDrawer.user}
+        key={`user-${userDrawer.session}`}
+        open={userDrawer.open && (userDrawer.id === null || editingUser !== undefined)}
+        user={editingUser ?? null}
+        currentUserId={currentUserId}
         departments={departments}
         onClose={() => setUserDrawer((current) => ({ ...current, open: false }))}
         create={createUser}
