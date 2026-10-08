@@ -9,6 +9,8 @@ export function useDrawerCommand(open: boolean, onClose: () => void) {
   const [failure, setFailure] = useState<CommandFailure | null>(null)
   const submittingRef = useRef(false)
   const sessionRef = useRef(0)
+  const openRef = useRef(open)
+  openRef.current = open
 
   useEffect(() => {
     sessionRef.current += 1
@@ -19,7 +21,8 @@ export function useDrawerCommand(open: boolean, onClose: () => void) {
   }, [open])
 
   async function submit(run: () => Promise<CommandResult>) {
-    if (submittingRef.current) return
+    // 抽屉已关闭（含目标消失）：不再提交。
+    if (submittingRef.current || !openRef.current) return
     submittingRef.current = true
     const session = sessionRef.current
     setSubmitting(true)

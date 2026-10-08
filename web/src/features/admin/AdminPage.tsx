@@ -123,6 +123,9 @@ export function AdminPage() {
   const [departmentDrawer, setDepartmentDrawer] = useState<DrawerTarget>(CLOSED_DRAWER)
   const [userDrawer, setUserDrawer] = useState<DrawerTarget>(CLOSED_DRAWER)
   const dataRef = useRef<AdminData | null>(null)
+  // 目标消失后的关闭动画期间沿用最后一次存在的对象，编辑不会退化成新建。
+  const lastDepartment = useRef<DepartmentResponse | null>(null)
+  const lastUser = useRef<UserResponse | null>(null)
   const [resetForm] = Form.useForm<ResetValues>()
 
   useEffect(
@@ -329,6 +332,10 @@ export function AdminPage() {
   // 抽屉目标按 id 从最新数据派生；刷新后目标消失则抽屉关闭。
   const editingDepartment = departmentDrawer.id === null ? undefined : departments.find((item) => item.id === departmentDrawer.id)
   const editingUser = userDrawer.id === null ? undefined : users.find((item) => item.id === userDrawer.id)
+  if (editingDepartment !== undefined) lastDepartment.current = editingDepartment
+  if (editingUser !== undefined) lastUser.current = editingUser
+  const departmentTarget = departmentDrawer.id === null ? null : (editingDepartment ?? lastDepartment.current)
+  const userTarget = userDrawer.id === null ? null : (editingUser ?? lastUser.current)
 
   const departmentColumns: TableColumnsType<DepartmentResponse> = [
     { title: '部门名称', key: 'name', render: (_value: unknown, item) => <strong>{item.name}</strong> },
@@ -510,15 +517,15 @@ export function AdminPage() {
       <DepartmentDrawer
         key={`department-${departmentDrawer.session}`}
         open={departmentDrawer.open && (departmentDrawer.id === null || editingDepartment !== undefined)}
-        department={editingDepartment ?? null}
+        department={departmentTarget}
         departments={departments}
         onClose={() => setDepartmentDrawer((current) => ({ ...current, open: false }))}
-        save={saveDepartment(editingDepartment ?? null)}
+        save={saveDepartment(departmentTarget)}
       />
       <UserDrawer
         key={`user-${userDrawer.session}`}
         open={userDrawer.open && (userDrawer.id === null || editingUser !== undefined)}
-        user={editingUser ?? null}
+        user={userTarget}
         currentUserId={currentUserId}
         departments={departments}
         onClose={() => setUserDrawer((current) => ({ ...current, open: false }))}

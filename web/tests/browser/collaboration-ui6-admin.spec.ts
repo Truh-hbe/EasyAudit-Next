@@ -448,8 +448,17 @@ test('抽屉写操作结果未知且重新读取也失败：页面级保留“�
 
 test('新操作或打开编辑会清除页面级提示', async ({ page }) => {
   let fail = true
+  let seen!: () => void
+  let requestSeen = new Promise<void>((resolve) => { seen = resolve })
+  let release!: () => void
+  let held = Promise.resolve()
   await setup(page, {
-    write: (route) => (fail ? route.abort('connectionreset') : fulfillJson(route, 200, { id: 'user-1' })),
+    write: async (route) => {
+      if (fail) return route.abort('connectionreset')
+      seen()
+      await held
+      return fulfillJson(route, 200, { id: 'user-1' })
+    },
   })
   await page.goto('/admin')
   const unknown = page.getByRole('alert').filter({ hasText: '未确认重置凭据是否成功' })
@@ -470,11 +479,17 @@ test('新操作或打开编辑会清除页面级提示', async ({ page }) => {
   await drawer.getByRole('button', { name: /^取\s*消$/ }).click()
   await expect(drawer).toHaveCount(0)
 
-  // 新的重置操作开始时也会清掉上一次的提示。
-  fail = false
+  // 再制造一次未知结果，然后发起一个被拦住的新操作：提示在请求完成前就已被清除。
   await resetOnce('Refreshed User')
-  await expect(page.getByText(RESET_SUCCESS)).toBeVisible()
+  await expect(unknown).toBeVisible()
+  fail = false
+  held = new Promise<void>((resolve) => { release = resolve })
+  requestSeen = new Promise<void>((resolve) => { seen = resolve })
+  await resetOnce('Refreshed User')
+  await requestSeen
   expect(await unknown.count()).toBe(0)
+  release()
+  await expect(page.getByText(RESET_SUCCESS)).toBeVisible()
 })
 
 test('管理员把自己降为普通用户需要二次确认；降级他人不需要', async ({ page }) => {
