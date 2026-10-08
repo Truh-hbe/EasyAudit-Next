@@ -73,29 +73,31 @@ def _wait_until_blocked(engine: Engine, backend_pid: int) -> None:
     pytest.fail(f"backend {backend_pid} never became blocked by the target row guard")
 
 
-def test_case_deadline_pushed_forward_during_resolution_prevents_stale_delivery(
+def test_case_deadline_pushed_forward_before_the_guard_lock_prevents_stale_delivery(
     postgres_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _seed_reminder_fixture(postgres_engine)
     with Session(postgres_engine) as session:
         evaluator = build_automatic_reminder_evaluator(session)
-        original_load = evaluator._recipients.load
+        original_load_case = evaluator._load_case
 
-        def load_then_move_deadline(
+        def move_deadline_before_guard(
             organization_id: OrganizationId,
             case_id: UUID,
+            *,
+            guard: bool = False,
         ):
-            snapshot = original_load(organization_id, case_id)
-            with Session(postgres_engine) as concurrent, concurrent.begin():
-                concurrent.execute(
-                    update(ReviewCaseRecord)
-                    .where(ReviewCaseRecord.id == case_id)
-                    .values(planned_end_at=NOW + timedelta(days=1))
-                )
-            return snapshot
+            if guard:  # after the unguarded read, before the Case lock
+                with Session(postgres_engine) as concurrent, concurrent.begin():
+                    concurrent.execute(
+                        update(ReviewCaseRecord)
+                        .where(ReviewCaseRecord.id == case_id)
+                        .values(planned_end_at=NOW + timedelta(days=1))
+                    )
+            return original_load_case(organization_id, case_id, guard=guard)
 
-        monkeypatch.setattr(evaluator._recipients, "load", load_then_move_deadline)
+        monkeypatch.setattr(evaluator, "_load_case", move_deadline_before_guard)
         result = evaluator.evaluate_case_overdue(
             fixture.organization_id,
             fixture.review_case_id,
@@ -116,29 +118,31 @@ def test_case_deadline_pushed_forward_during_resolution_prevents_stale_delivery(
         )
 
 
-def test_action_deadline_cleared_during_resolution_prevents_stale_delivery(
+def test_action_deadline_cleared_before_the_guard_lock_prevents_stale_delivery(
     postgres_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _seed_reminder_fixture(postgres_engine)
     with Session(postgres_engine) as session:
         evaluator = build_automatic_reminder_evaluator(session)
-        original_load = evaluator._recipients.load
+        original_load_action = evaluator._load_action
 
-        def load_then_clear_deadline(
+        def clear_deadline_before_guard(
             organization_id: OrganizationId,
-            case_id: UUID,
+            action_item_id: UUID,
+            *,
+            guard: bool = False,
         ):
-            snapshot = original_load(organization_id, case_id)
-            with Session(postgres_engine) as concurrent, concurrent.begin():
-                concurrent.execute(
-                    update(ActionItemRecord)
-                    .where(ActionItemRecord.id == fixture.action_item_id)
-                    .values(due_at=None)
-                )
-            return snapshot
+            if guard:  # after the unguarded read; the Action row is not locked yet
+                with Session(postgres_engine) as concurrent, concurrent.begin():
+                    concurrent.execute(
+                        update(ActionItemRecord)
+                        .where(ActionItemRecord.id == action_item_id)
+                        .values(due_at=None)
+                    )
+            return original_load_action(organization_id, action_item_id, guard=guard)
 
-        monkeypatch.setattr(evaluator._recipients, "load", load_then_clear_deadline)
+        monkeypatch.setattr(evaluator, "_load_action", clear_deadline_before_guard)
         result = evaluator.evaluate_action_overdue(
             fixture.organization_id,
             fixture.action_item_id,

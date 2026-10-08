@@ -100,11 +100,16 @@ class RecipientResolver:
         self._registry = registry
 
     def load(self, organization_id: OrganizationId, case_id: UUID) -> RecipientSnapshot:
+        """Read current responsibility facts, bypassing stale identity-map state.
+
+        Call it after the Case guard lock. `populate_existing` overwrites loaded rows, so
+        the Session must not hold unflushed edits to these records.
+        """
         review_case = self._session.scalar(
             select(ReviewCaseRecord).where(
                 ReviewCaseRecord.organization_id == organization_id,
                 ReviewCaseRecord.id == case_id,
-            )
+            ).execution_options(populate_existing=True)
         )
         if review_case is None:
             raise LookupError("ReviewCase not found")
@@ -115,7 +120,7 @@ class RecipientResolver:
                 select(UserRecord).where(
                     UserRecord.organization_id == organization_id,
                     UserRecord.is_active.is_(True),
-                )
+                ).execution_options(populate_existing=True)
             )
         )
         user_ids = {record.id for record in users}
@@ -129,7 +134,7 @@ class RecipientResolver:
                 select(CaseMemberRecord).where(
                     CaseMemberRecord.organization_id == organization_id,
                     CaseMemberRecord.case_id == case_id,
-                )
+                ).execution_options(populate_existing=True)
             )
         )
         findings = tuple(
@@ -137,7 +142,7 @@ class RecipientResolver:
                 select(FindingRecord).where(
                     FindingRecord.organization_id == organization_id,
                     FindingRecord.case_id == case_id,
-                )
+                ).execution_options(populate_existing=True)
             )
         )
         finding_ids = {record.id for record in findings}
@@ -149,7 +154,7 @@ class RecipientResolver:
                     select(FindingParticipantRecord).where(
                         FindingParticipantRecord.organization_id == organization_id,
                         FindingParticipantRecord.finding_id.in_(finding_ids),
-                    )
+                    ).execution_options(populate_existing=True)
                 )
             )
             actions = tuple(
@@ -157,7 +162,7 @@ class RecipientResolver:
                     select(ActionItemRecord).where(
                         ActionItemRecord.organization_id == organization_id,
                         ActionItemRecord.finding_id.in_(finding_ids),
-                    )
+                    ).execution_options(populate_existing=True)
                 )
             )
         action_ids = {record.id for record in actions}
@@ -168,7 +173,7 @@ class RecipientResolver:
                     select(ActionAssigneeRecord).where(
                         ActionAssigneeRecord.organization_id == organization_id,
                         ActionAssigneeRecord.action_item_id.in_(action_ids),
-                    )
+                    ).execution_options(populate_existing=True)
                 )
             )
 

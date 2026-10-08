@@ -64,17 +64,18 @@ class AutomaticReminderEvaluator:
             return AutomaticReminderEvaluation(eligible=False)
         assert review_case is not None
 
-        snapshot = self._recipients.load(organization_id, review_case.id)
-        recipients = self._recipients.recipients(
-            snapshot,
-            CollaborationRecipientIntent.CASE_DEADLINE,
-        )
-
         current = self._load_case(organization_id, review_case_id, guard=True)
         if not self._case_is_overdue(current, evaluated_at):
             return AutomaticReminderEvaluation(eligible=False)
         assert current is not None
         assert current.planned_end_at is not None
+
+        # Team changes commit under the Case lock, so resolve recipients only after it.
+        snapshot = self._recipients.load(organization_id, current.id)
+        recipients = self._recipients.recipients(
+            snapshot,
+            CollaborationRecipientIntent.CASE_DEADLINE,
+        )
 
         origin_key = self._origin_key(
             subject_kind="review_case",
@@ -122,19 +123,22 @@ class AutomaticReminderEvaluator:
         )
         if finding is None:
             return AutomaticReminderEvaluation(eligible=False)
-        snapshot = self._recipients.load(organization_id, finding.case_id)
-        recipients = self._recipients.recipients(
-            snapshot,
-            CollaborationRecipientIntent.ACTION_EXECUTION,
-            finding_id=finding.id,
-            action_item_id=action.id,
-        )
-
+        # Case before Action (global lock order): responsibility changes commit under the Case.
+        if self._load_case(organization_id, finding.case_id, guard=True) is None:
+            return AutomaticReminderEvaluation(eligible=False)
         current = self._load_action(organization_id, action_item_id, guard=True)
         if not self._action_is_overdue(current, evaluated_at):
             return AutomaticReminderEvaluation(eligible=False)
         assert current is not None
         assert current.due_at is not None
+
+        snapshot = self._recipients.load(organization_id, finding.case_id)
+        recipients = self._recipients.recipients(
+            snapshot,
+            CollaborationRecipientIntent.ACTION_EXECUTION,
+            finding_id=finding.id,
+            action_item_id=current.id,
+        )
 
         origin_key = self._origin_key(
             subject_kind="action_item",
