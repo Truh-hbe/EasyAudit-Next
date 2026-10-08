@@ -813,10 +813,14 @@ test('antd description text meets WCAG AA contrast on white and layout backgroun
   await stubAnonymous(page)
   await page.goto('/login')
   await page.evaluate(async () => {
-    // 变量路径：只由浏览器里的 Vite dev server 解析，不参与 tsc 模块解析。
-    const path = '/tests/browser/fixtures/theme-probe.tsx'
-    const probe: { mountThemeProbe: () => void } = await import(path)
-    probe.mountThemeProbe()
+    // 由 `vite build --mode e2e` 注入的钩子加载探针（见 tests/e2e/e2eHook.ts）。
+    const hook = (
+      globalThis as unknown as {
+        __easyauditE2E?: { loadThemeProbe: () => Promise<{ mountThemeProbe: () => void }> }
+      }
+    ).__easyauditE2E
+    if (hook === undefined) throw new Error('e2e hook missing: run against `vite build --mode e2e`')
+    ;(await hook.loadThemeProbe()).mountThemeProbe()
   })
   const ratios = await page.evaluate(measureContrast, {
     'secondary on white': { text: 'white-secondary' },
@@ -836,9 +840,13 @@ test('antd built-in interactive icons meet WCAG 1.4.11 contrast and hover never 
   await stubAnonymous(page)
   await page.goto('/login')
   await page.evaluate(async () => {
-    const path = '/tests/browser/fixtures/theme-probe.tsx'
-    const probe: { mountThemeProbe: () => void } = await import(path)
-    probe.mountThemeProbe()
+    const hook = (
+      globalThis as unknown as {
+        __easyauditE2E?: { loadThemeProbe: () => Promise<{ mountThemeProbe: () => void }> }
+      }
+    ).__easyauditE2E
+    if (hook === undefined) throw new Error('e2e hook missing: run against `vite build --mode e2e`')
+    ;(await hook.loadThemeProbe()).mountThemeProbe()
   })
   // hoverOn 为空时直接悬停图标本身；清除按钮需要先悬停所在控件才可交互。
   const icons: Record<string, { selector: string; hoverOn?: string }> = {
