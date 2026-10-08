@@ -271,9 +271,10 @@ export function ManagementPage() {
               }}
             />
           </Form.Item>
-          <Form.Item label="审查计划 ID" htmlFor="management-plan-id">
+          <Form.Item label="审查计划 ID" htmlFor="management-plan-id" style={{ maxWidth: '100%' }}>
             <Input
               id="management-plan-id"
+              style={{ width: 240, maxWidth: '100%' }}
               value={reviewPlanInput}
               onChange={(event) => setReviewPlanInput(event.target.value)}
               placeholder="可选，填写审查计划 ID"

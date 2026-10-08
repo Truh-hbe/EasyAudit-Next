@@ -309,3 +309,16 @@ test('1280px 下管理视图操作列链接在视口内且不显示内部场景�
   await expect(page.getByText('process_review', { exact: false })).toHaveCount(0)
   await expectNoDocumentOverflow(page)
 })
+
+test('320px 下换成更宽的字体（如 CI 的 Linux 字体回退）筛选区也不撑出页面', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 })
+  await stubSession(page)
+  await page.route((url) => url.pathname === LIST_PATH, (route) =>
+    fulfillJson(route, 200, listBody([managementCase('case-1', 'Wide font case')])),
+  )
+  await page.goto('/management')
+  await expect(page.getByText('Wide font case')).toBeVisible()
+  await page.addStyleTag({ content: '* { font-family: monospace !important }' })
+  await expectNoDocumentOverflow(page)
+  await expect(page.getByLabel('审查计划 ID')).toBeInViewport()
+})
