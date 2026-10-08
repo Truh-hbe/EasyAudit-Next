@@ -41,7 +41,6 @@ def test_planning_create_rejects_datetime_without_offset(
     response = TestClient(app).post(path, json=payload)
 
     assert response.status_code == 422
-    assert any(
-        error["loc"][-1] == field_name
-        for error in response.json()["detail"]
-    )
+    body = response.json()
+    assert body["code"] == "request.invalid"
+    assert {"field": field_name, "code": "invalid_datetime", "params": {}} in body["errors"]

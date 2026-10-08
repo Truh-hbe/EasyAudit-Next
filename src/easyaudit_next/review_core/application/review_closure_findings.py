@@ -30,6 +30,7 @@ from easyaudit_next.review_core.domain.scenario_registry import ScenarioRegistry
 from easyaudit_next.review_core.domain.verification_repositories import (
     VerificationClosureRepository,
 )
+from easyaudit_next.rules import RuleViolation, request_invalid
 
 CREATE_FINDING_PERMISSION = "create_finding"
 
@@ -89,7 +90,7 @@ class ClosureAwareFindingLifecycleService(ActionAwareFindingLifecycleService):
         self._validate_title(title)
         errors = policy.validate_finding_input(scenario_data)
         if errors:
-            raise ValueError("; ".join(errors))
+            raise request_invalid(errors, RuleViolation)
 
         now = occurred_at or datetime.now(UTC)
         finding = Finding(

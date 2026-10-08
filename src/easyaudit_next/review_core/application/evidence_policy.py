@@ -9,6 +9,8 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import unquote
 
+from easyaudit_next.rules import RuleCode, RuleViolation
+
 MAX_FILENAME_CHARS = 255
 _MAX_EXTENSION_CHARS = 16
 _BAD_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
@@ -42,8 +44,9 @@ class UnsupportedEvidenceTypeError(Exception):
     """The declared type is not allowed, or the file extension does not match it."""
 
 
-class InvalidEvidenceFilenameError(ValueError):
-    pass
+class InvalidEvidenceFilenameError(RuleViolation):
+    def __init__(self, message: str, reason: str) -> None:
+        super().__init__(RuleCode.EVIDENCE_FILENAME_INVALID, message, params={"reason": reason})
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,17 +58,19 @@ class ValidatedEvidenceFile:
 def sanitize_filename(raw_header: str) -> str:
     """Percent-encoded UTF-8 header value -> a display-safe file name (no path, no controls)."""
     if _BAD_PERCENT.search(raw_header):  # `unquote` would silently keep these as literals
-        raise InvalidEvidenceFilenameError("File name has an invalid percent-encoding")
+        raise InvalidEvidenceFilenameError("File name has an invalid percent-encoding", "encoding")
     try:
         decoded = unquote(raw_header, encoding="utf-8", errors="strict")
     except UnicodeDecodeError as exc:
-        raise InvalidEvidenceFilenameError("File name must be percent-encoded UTF-8") from exc
+        raise InvalidEvidenceFilenameError(
+            "File name must be percent-encoded UTF-8", "encoding"
+        ) from exc
     normalized = unicodedata.normalize("NFC", decoded).replace("\\", "/")
     name = normalized.rsplit("/", 1)[-1]
     name = "".join(ch for ch in name if unicodedata.category(ch) not in _REMOVED_CATEGORIES)
     name = name.strip()
     if not name or set(name) == {"."}:
-        raise InvalidEvidenceFilenameError("File name is empty after sanitization")
+        raise InvalidEvidenceFilenameError("File name is empty after sanitization", "empty")
     if len(name) > MAX_FILENAME_CHARS:
         stem, dot, extension = name.rpartition(".")
         if dot and 0 < len(extension) <= _MAX_EXTENSION_CHARS and stem:

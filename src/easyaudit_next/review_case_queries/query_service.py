@@ -31,6 +31,7 @@ from easyaudit_next.review_core.persistence.models import (
     ScenarioRecord,
     ScenarioVersionRecord,
 )
+from easyaudit_next.rules import FieldErrorCode, RuleViolation, field_violation
 
 VIEW_CASE_PERMISSION = "view_case"
 
@@ -67,9 +68,21 @@ class ReviewCaseCollectionQueryService:
         if not actor.is_active:
             raise PermissionError("Active organization user required")
         if limit < 1 or limit > 100:
-            raise ValueError("limit must be between 1 and 100")
+            raise field_violation(
+                "limit",
+                FieldErrorCode.RANGE,
+                "limit must be between 1 and 100",
+                params={"min": 1, "max": 100},
+                cls=RuleViolation,
+            )
         if offset < 0:
-            raise ValueError("offset must be non-negative")
+            raise field_violation(
+                "offset",
+                FieldErrorCode.RANGE,
+                "offset must be non-negative",
+                params={"min": 0},
+                cls=RuleViolation,
+            )
 
         case_members = self._load_case_members(actor)
         finding_participants = self._load_finding_participants(actor)

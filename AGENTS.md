@@ -14,7 +14,7 @@ docker compose up -d db
 python -m pip install -e ".[dev]"
 alembic upgrade head
 
-ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py
+ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py && python scripts/check_error_codes.py
 EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
 
 cd web && npm ci && npm run typecheck && npm run lint && npm run test && npm run build && npm run check:entry

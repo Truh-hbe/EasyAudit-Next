@@ -28,6 +28,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     SubmissionRequest,
     WorkflowTransitionError,
 )
+from easyaudit_next.rules import FieldErrorCode
 from easyaudit_next.scenarios.process_review import (
     PROCESS_REVIEW_V1,
     ProcessReviewPermission,
@@ -278,15 +279,35 @@ class ProcessReviewV1Test(TestCase):
                 }
             ),
         )
-        self.assertIn(
-            "area_code must be a non-blank string",
-            PROCESS_REVIEW_V1.validate_case_input(
-                {"area_code": "", "review_type": "routine"}
-            ),
+        self.assertEqual(
+            [("area_code", FieldErrorCode.REQUIRED, "area_code must be a non-blank string")],
+            [
+                (error.field, error.code, error.message)
+                for error in PROCESS_REVIEW_V1.validate_case_input(
+                    {"area_code": "", "review_type": "routine"}
+                )
+            ],
         )
-        self.assertIn(
-            "project_category must be a non-blank string",
-            PROCESS_REVIEW_V1.validate_finding_input({"issue_type": "process_control"}),
+        self.assertEqual(
+            [
+                (
+                    "project_category",
+                    FieldErrorCode.REQUIRED,
+                    "project_category must be a non-blank string",
+                )
+            ],
+            [
+                (error.field, error.code, error.message)
+                for error in PROCESS_REVIEW_V1.validate_finding_input(
+                    {"issue_type": "process_control"}
+                )
+            ],
+        )
+        self.assertEqual(
+            FieldErrorCode.PADDED,
+            PROCESS_REVIEW_V1.validate_case_input(
+                {"area_code": " ASSY", "review_type": "routine"}
+            )[0].code,
         )
 
     def test_submission_policy_returns_atomic_plan_and_completion_decisions(self) -> None:

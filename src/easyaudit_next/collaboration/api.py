@@ -3,7 +3,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
-from easyaudit_next.collaboration.nudge import NudgeValidationError
 from easyaudit_next.collaboration.schemas import NudgeResponse
 from easyaudit_next.composition import build_manual_nudge_service
 
@@ -30,11 +29,6 @@ def nudge_finding(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Finding not found",
         ) from exc
-    except NudgeValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
     return NudgeResponse(
         activity_id=result.activity_id,
         recipient_count=result.recipient_count,
@@ -60,11 +54,6 @@ def nudge_action_item(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="ActionItem not found",
-        ) from exc
-    except NudgeValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
         ) from exc
     return NudgeResponse(
         activity_id=result.activity_id,

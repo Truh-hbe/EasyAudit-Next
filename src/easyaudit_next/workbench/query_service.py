@@ -31,6 +31,7 @@ from easyaudit_next.review_core.persistence.models import (
     ScenarioRecord,
     ScenarioVersionRecord,
 )
+from easyaudit_next.rules import FieldErrorCode, RuleViolation, field_violation
 from easyaudit_next.workbench.schemas import (
     WorkbenchActionDeadline,
     WorkbenchActionResponsibility,
@@ -76,7 +77,12 @@ class WorkbenchQueryService:
             raise PermissionError("Active organization user required")
         captured_at = as_of or datetime.now(UTC)
         if captured_at.utcoffset() is None:
-            raise ValueError("as_of must include UTC offset")
+            raise field_violation(
+                "as_of",
+                FieldErrorCode.INVALID_DATETIME,
+                "as_of must include UTC offset",
+                cls=RuleViolation,
+            )
 
         case_members = self._load_case_members(actor)
         finding_participants = self._load_finding_participants(actor)

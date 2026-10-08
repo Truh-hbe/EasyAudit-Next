@@ -33,7 +33,7 @@
       "get": {"operationId": "getMe", "tags": ["me"]}
     },
     "/api/v1/me/password": {
-      "post": {"operationId": "changeMyPassword", "tags": ["me"]}
+      "post": {"operationId": "changeMyPassword", "tags": ["me"], "responses": ["422"]}
     },
     "/api/v1/me/sessions": {
       "get": {"operationId": "listMySessions", "tags": ["me"]}
@@ -76,7 +76,7 @@
     },
     "/api/v1/review-plans": {
       "get": {"operationId": "listReviewPlans", "tags": ["review-planning"]},
-      "post": {"operationId": "createReviewPlan", "tags": ["review-planning"], "responses": ["201", "409"]}
+      "post": {"operationId": "createReviewPlan", "tags": ["review-planning"], "responses": ["201", "409", "422"]}
     },
     "/api/v1/review-catalog": {
       "get": {"operationId": "listReviewCatalog", "tags": ["review-planning"]}
@@ -86,14 +86,14 @@
     },
     "/api/v1/review-cases": {
       "get": {"operationId": "listReviewCases", "tags": ["review-planning"]},
-      "post": {"operationId": "createReviewCase", "tags": ["review-planning"], "responses": ["201", "409"]}
+      "post": {"operationId": "createReviewCase", "tags": ["review-planning"], "responses": ["201", "409", "422"]}
     },
     "/api/v1/review-cases/{case_id}": {
       "get": {"operationId": "getReviewCase", "tags": ["review-planning"]}
     },
     "/api/v1/review-cases/{case_id}/members": {
       "get": {"operationId": "listReviewCaseMembers", "tags": ["review-planning"]},
-      "post": {"operationId": "addReviewCaseMember", "tags": ["review-planning"]}
+      "post": {"operationId": "addReviewCaseMember", "tags": ["review-planning"], "responses": ["422"]}
     },
     "/api/v1/review-cases/{case_id}/member-candidates": {
       "get": {"operationId": "listReviewCaseMemberCandidates", "tags": ["review-planning"]}
@@ -102,38 +102,38 @@
       "delete": {"operationId": "removeReviewCaseMember", "tags": ["review-planning"]}
     },
     "/api/v1/review-cases/{case_id}/transitions": {
-      "post": {"operationId": "transitionReviewCase", "tags": ["review-planning"]}
+      "post": {"operationId": "transitionReviewCase", "tags": ["review-planning"], "responses": ["422"]}
     },
     "/api/v1/review-cases/{case_id}/findings": {
       "get": {"operationId": "listFindings", "tags": ["review-findings"]},
-      "post": {"operationId": "createFinding", "tags": ["review-findings"]}
+      "post": {"operationId": "createFinding", "tags": ["review-findings"], "responses": ["422"]}
     },
     "/api/v1/findings/{finding_id}": {
       "get": {"operationId": "getFinding", "tags": ["review-findings"]}
     },
     "/api/v1/findings/{finding_id}/participants": {
       "get": {"operationId": "listFindingParticipants", "tags": ["review-findings"]},
-      "post": {"operationId": "addFindingParticipant", "tags": ["review-findings"]}
+      "post": {"operationId": "addFindingParticipant", "tags": ["review-findings"], "responses": ["422"]}
     },
     "/api/v1/findings/{finding_id}/transitions": {
-      "post": {"operationId": "transitionFinding", "tags": ["review-findings"]}
+      "post": {"operationId": "transitionFinding", "tags": ["review-findings"], "responses": ["422"]}
     },
     "/api/v1/findings/{finding_id}/actions": {
       "get": {"operationId": "listActionItems", "tags": ["review-rectification"]},
-      "post": {"operationId": "createActionItem", "tags": ["review-rectification"]}
+      "post": {"operationId": "createActionItem", "tags": ["review-rectification"], "responses": ["422"]}
     },
     "/api/v1/action-items/{action_item_id}": {
       "get": {"operationId": "getActionItem", "tags": ["review-rectification"]}
     },
     "/api/v1/action-items/{action_item_id}/assignees": {
       "get": {"operationId": "listActionAssignees", "tags": ["review-rectification"]},
-      "post": {"operationId": "addActionAssignee", "tags": ["review-rectification"]}
+      "post": {"operationId": "addActionAssignee", "tags": ["review-rectification"], "responses": ["422"]}
     },
     "/api/v1/action-items/{action_item_id}/transitions": {
-      "post": {"operationId": "transitionActionItem", "tags": ["review-rectification"]}
+      "post": {"operationId": "transitionActionItem", "tags": ["review-rectification"], "responses": ["422"]}
     },
     "/api/v1/action-items/{action_item_id}/transfer-and-reopen": {
-      "post": {"operationId": "transferAndReopenActionItem", "tags": ["review-rectification"]}
+      "post": {"operationId": "transferAndReopenActionItem", "tags": ["review-rectification"], "responses": ["422"]}
     },
     "/api/v1/action-items/{action_item_id}/evidences": {
       "get": {"operationId": "listActionEvidences", "tags": ["review-rectification"]}
@@ -142,7 +142,7 @@
       "post": {
         "operationId": "uploadActionEvidence",
         "tags": ["review-rectification"],
-        "responses": ["201", "413", "415", "503"]
+        "responses": ["201", "413", "415", "503", "422"]
       }
     },
     "/api/v1/evidences/{evidence_id}/content": {
@@ -154,7 +154,7 @@
     },
     "/api/v1/findings/{finding_id}/rectification-submissions": {
       "get": {"operationId": "listRectificationSubmissions", "tags": ["review-rectification"]},
-      "post": {"operationId": "submitRectification", "tags": ["review-rectification"]}
+      "post": {"operationId": "submitRectification", "tags": ["review-rectification"], "responses": ["422"]}
     },
     "/api/v1/management/review-cases/export": {
       "get": {

@@ -31,7 +31,7 @@ from easyaudit_next.api.dependencies import (
     DatabaseSession,
     SystemAdminIdentity,
 )
-from easyaudit_next.api.errors import raise_database_conflict
+from easyaudit_next.api.errors import CodedHTTPException, raise_database_conflict
 from easyaudit_next.application.case_team_coordination import UserDeactivationConflictError
 from easyaudit_next.composition import (
     build_case_team_coordinator,
@@ -45,10 +45,8 @@ from easyaudit_next.platform.application.authentication import (
     InvalidCurrentPasswordError,
     InvalidSessionError,
     LocalCredentialUnavailableError,
-    PasswordReuseError,
 )
 from easyaudit_next.platform.application.login_throttle import LoginThrottledError
-from easyaudit_next.platform.application.password_policy import PasswordPolicyError
 from easyaudit_next.platform.domain.ids import AuthSessionId, DepartmentId, UserId
 from easyaudit_next.platform.domain.models import Department, User
 from easyaudit_next.platform.persistence.repositories import (
@@ -63,6 +61,7 @@ from easyaudit_next.review_core.domain.models import ScenarioKey, ScenarioVersio
 from easyaudit_next.review_core.persistence.repositories import (
     SqlAlchemyScenarioCatalogRepository,
 )
+from easyaudit_next.rules import RuleCode
 
 api_router = APIRouter()
 
@@ -253,14 +252,10 @@ def change_my_password(
             payload.new_password,
         )
     except InvalidCurrentPasswordError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is invalid",
-        ) from exc
-    except (PasswordPolicyError, PasswordReuseError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+        raise CodedHTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            RuleCode.PASSWORD_CURRENT_INVALID,
+            "Current password is invalid",
         ) from exc
     except LocalCredentialUnavailableError as exc:
         raise HTTPException(
@@ -538,11 +533,6 @@ def reset_admin_user_credential(
         ) from exc
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
-    except PasswordPolicyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Temporary password does not meet the local password policy",
-        ) from exc
     return _user_response(user)
 
 

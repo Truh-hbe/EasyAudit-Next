@@ -8,6 +8,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     FindingTransitionContext,
     FindingWorkflowPolicy,
 )
+from easyaudit_next.rules import RuleCode
 from easyaudit_next.scenarios.process_review.v1 import (
     ProcessReviewFindingAction,
     ProcessReviewFindingOperations,
@@ -35,19 +36,29 @@ class ProcessReviewDirectFindingTransitions:
         try:
             operation = ProcessReviewFindingAction(action)
         except ValueError as exc:
-            raise FindingOperationError(f"Unknown Finding action: {action!r}") from exc
+            raise FindingOperationError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Finding action: {action!r}",
+                params={"entity": "finding", "action": action},
+            ) from exc
         if operation not in {
             ProcessReviewFindingAction.ISSUE,
             ProcessReviewFindingAction.VOID,
         }:
             raise FindingOperationError(
-                "M2.3 only supports issuing or voiding an open Finding"
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                "M2.3 only supports issuing or voiding an open Finding",
+                params={"entity": "finding", "action": action},
             )
 
         self.finding_operations.validate_transition(action, context)
         lifecycle = context.current_finding_lifecycle
         if lifecycle is None:
-            raise FindingOperationError("Finding transition requires a current lifecycle")
+            raise FindingOperationError(
+                RuleCode.WORKFLOW_MISSING_CONTEXT,
+                "Finding transition requires a current lifecycle",
+                params={"entity": "finding"},
+            )
         target = self.finding_workflow.transition(
             lifecycle,
             action,

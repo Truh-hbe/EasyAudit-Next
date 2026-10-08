@@ -79,6 +79,7 @@ from easyaudit_next.review_core.persistence.evidence_maintenance_repository impo
     SqlAlchemyEvidenceMaintenanceRepository,
 )
 from easyaudit_next.review_core.persistence.repositories import SqlAlchemyScenarioCatalogRepository
+from easyaudit_next.rules import RuleCode
 
 # Fixed key of the transaction-level advisory lock that serializes bootstrap (docs/architecture.md).
 BOOTSTRAP_ADVISORY_LOCK_KEY = 0x45415F424F4F5453  # "EA_BOOTS"
@@ -154,7 +155,9 @@ def bootstrap_admin(organization_name: str, admin_name: str, login_name: str) ->
         password = getpass.getpass("Initial admin password: ")
         confirmation = getpass.getpass("Confirm password: ")
         if password != confirmation:
-            raise PasswordPolicyError("Password confirmation does not match")
+            raise PasswordPolicyError(
+                RuleCode.REQUEST_INVALID, "Password confirmation does not match"
+            )
         validate_local_password(password)
         with session_scope(factory) as session:
             bootstrap_admin_in_session(

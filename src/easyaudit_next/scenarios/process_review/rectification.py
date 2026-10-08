@@ -17,6 +17,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     DirectFindingTransitionPolicy,
     PermissionSource,
 )
+from easyaudit_next.rules import RuleCode, reason_required
 from easyaudit_next.scenarios.process_review.direct_transitions import (
     ProcessReviewDirectFindingTransitions,
 )
@@ -60,17 +61,21 @@ class ProcessReviewActionOperations:
     def _require_active_rectification(context: ActionItemOperationContext) -> None:
         if context.case_lifecycle not in _ACTIVE_CASE_LIFECYCLES:
             raise ActionItemOperationError(
-                "Process Review rectification requires an active ReviewCase"
+                RuleCode.ACTION_REQUIRES_ACTIVE_CASE,
+                "Process Review rectification requires an active ReviewCase",
             )
         if context.finding_lifecycle is not FindingLifecycle.RECTIFYING:
             raise ActionItemOperationError(
-                "Process Review ActionItem operations require a rectifying Finding"
+                RuleCode.ACTION_REQUIRES_RECTIFYING_FINDING,
+                "Process Review ActionItem operations require a rectifying Finding",
             )
 
     def validate_create(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
         if context.current_action_lifecycle is not None:
-            raise ActionItemOperationError("ActionItem creation requires no current ActionItem")
+            raise ActionItemOperationError(
+                RuleCode.ACTION_ALREADY_EXISTS, "ActionItem creation requires no current ActionItem"
+            )
 
     def validate_assignee_management(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
@@ -79,7 +84,8 @@ class ProcessReviewActionOperations:
             ActionItemLifecycle.IN_PROGRESS,
         }:
             raise ActionItemOperationError(
-                "ActionItem assignees can only be changed before the ActionItem is terminal"
+                RuleCode.ACTION_ASSIGNEES_LOCKED,
+                "ActionItem assignees can only be changed before the ActionItem is terminal",
             )
 
     def validate_transition(
@@ -89,11 +95,17 @@ class ProcessReviewActionOperations:
     ) -> None:
         self._require_active_rectification(context)
         if context.current_action_lifecycle is None:
-            raise ActionItemOperationError("ActionItem transition requires a current ActionItem")
+            raise ActionItemOperationError(
+                RuleCode.ACTION_MISSING, "ActionItem transition requires a current ActionItem"
+            )
         try:
             ProcessReviewActionItemAction(action)
         except ValueError as exc:
-            raise ActionItemOperationError(f"Unknown ActionItem action: {action!r}") from exc
+            raise ActionItemOperationError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown ActionItem action: {action!r}",
+                params={"entity": "action_item", "action": action},
+            ) from exc
 
     def validate_evidence_registration(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
@@ -103,25 +115,29 @@ class ProcessReviewActionOperations:
             ActionItemLifecycle.DONE,
         }:
             raise ActionItemOperationError(
-                "Evidence cannot be registered for a cancelled ActionItem"
+                RuleCode.ACTION_EVIDENCE_ON_CANCELLED,
+                "Evidence cannot be registered for a cancelled ActionItem",
             )
 
     def validate_transfer_and_reopen_state(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
         if context.current_action_lifecycle is not ActionItemLifecycle.DONE:
             raise ActionItemOperationError(
-                "Only a done ActionItem can be transferred and reopened"
+                RuleCode.ACTION_TRANSFER_REQUIRES_DONE,
+                "Only a done ActionItem can be transferred and reopened",
             )
         if context.has_active_assignee:
             raise ActionItemOperationError(
-                "ActionItem still has an active executor, who can reopen it directly"
+                RuleCode.ACTION_EXECUTOR_STILL_ACTIVE,
+                "ActionItem still has an active executor, who can reopen it directly",
             )
 
     def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
         self.validate_transfer_and_reopen_state(context)
         if context.reason is None or not context.reason.strip():
-            raise ActionItemOperationError(
-                "Transferring and reopening an ActionItem requires a reason"
+            raise reason_required(
+                ActionItemOperationError,
+                "Transferring and reopening an ActionItem requires a reason",
             )
         return ProcessReviewActionItemAction.REOPEN.value
 

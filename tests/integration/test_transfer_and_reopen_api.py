@@ -103,6 +103,9 @@ def test_error_mapping_and_no_side_effects(
     response = _post(postgres_engine, seed, getattr(seed, caller), **payload)
 
     assert response.status_code == status, response.text
+    if status == 422:
+        assert response.json()["code"] == "request.invalid"
+        assert response.json()["errors"][0]["field"] in {"reason", "new_executor_id"}
     seed.assert_untouched()
 
 
@@ -114,6 +117,7 @@ def test_a_transfer_of_an_action_that_is_no_longer_done_is_a_422(
         postgres_engine, seed, seed.owner, new_executor_id=str(seed.new1), reason="x"
     )
     assert not_done.status_code == 422
+    assert not_done.json()["code"] == "action.transfer_requires_done"
 
     done = Seed(postgres_engine)
     first = _post(postgres_engine, done, done.owner, new_executor_id=str(done.new1), reason="x")
@@ -122,6 +126,7 @@ def test_a_transfer_of_an_action_that_is_no_longer_done_is_a_422(
     # met after waiting on the Case lock is a 409, covered by the race tests.
     second = _post(postgres_engine, done, done.owner, new_executor_id=str(done.new2), reason="y")
     assert second.status_code == 422
+    assert second.json()["code"] == "action.transfer_requires_done"
 
 
 def test_candidate_search_is_owner_only_and_only_for_done_actions(

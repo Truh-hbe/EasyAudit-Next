@@ -14,6 +14,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     PermissionSource,
     RoleGrant,
 )
+from easyaudit_next.rules import FieldErrorCode, RuleCode
 from easyaudit_next.scenarios.compliance_review import COMPLIANCE_REVIEW_V1
 from easyaudit_next.scenarios.process_review import PROCESS_REVIEW_V1
 
@@ -77,8 +78,9 @@ def test_awaiting_closure_case_still_allows_the_command(policy) -> None:
     ],
 )
 def test_only_a_done_action_can_be_transferred(policy, action) -> None:
-    with pytest.raises(ActionItemOperationError, match="done ActionItem"):
+    with pytest.raises(ActionItemOperationError, match="done ActionItem") as raised:
         policy.action_operations.decide_transfer_and_reopen(_context(action=action))
+    assert raised.value.code is RuleCode.ACTION_TRANSFER_REQUIRES_DONE
 
 
 @pytest.mark.parametrize("policy", POLICIES, ids=lambda p: p.scenario.key)
@@ -92,8 +94,9 @@ def test_only_a_done_action_can_be_transferred(policy, action) -> None:
     ],
 )
 def test_finding_must_be_rectifying(policy, finding) -> None:
-    with pytest.raises(ActionItemOperationError, match="rectifying Finding"):
+    with pytest.raises(ActionItemOperationError, match="rectifying Finding") as raised:
         policy.action_operations.decide_transfer_and_reopen(_context(finding=finding))
+    assert raised.value.code is RuleCode.ACTION_REQUIRES_RECTIFYING_FINDING
 
 
 @pytest.mark.parametrize("policy", POLICIES, ids=lambda p: p.scenario.key)
@@ -102,15 +105,20 @@ def test_finding_must_be_rectifying(policy, finding) -> None:
     [ReviewCaseLifecycle.DRAFT, ReviewCaseLifecycle.CLOSED, ReviewCaseLifecycle.CANCELLED],
 )
 def test_case_must_be_active(policy, case) -> None:
-    with pytest.raises(ActionItemOperationError, match="active ReviewCase"):
+    with pytest.raises(ActionItemOperationError, match="active ReviewCase") as raised:
         policy.action_operations.decide_transfer_and_reopen(_context(case=case))
+    assert raised.value.code is RuleCode.ACTION_REQUIRES_ACTIVE_CASE
 
 
 @pytest.mark.parametrize("policy", POLICIES, ids=lambda p: p.scenario.key)
 @pytest.mark.parametrize("reason", [None, "", "   "])
 def test_reason_is_required(policy, reason) -> None:
-    with pytest.raises(ActionItemOperationError, match="requires a reason"):
+    with pytest.raises(ActionItemOperationError, match="requires a reason") as raised:
         policy.action_operations.decide_transfer_and_reopen(_context(reason=reason))
+    assert raised.value.code is RuleCode.REQUEST_INVALID
+    assert [(e.field, e.code) for e in raised.value.errors] == [
+        ("reason", FieldErrorCode.REQUIRED)
+    ]
 
 
 @pytest.mark.parametrize("policy", POLICIES, ids=lambda p: p.scenario.key)
@@ -146,12 +154,17 @@ def test_an_active_executor_blocks_the_command_and_the_state_check(policy) -> No
         policy.action_operations.decide_transfer_and_reopen,
         policy.action_operations.validate_transfer_and_reopen_state,
     ):
-        with pytest.raises(ActionItemOperationError, match="active executor"):
+        with pytest.raises(ActionItemOperationError, match="active executor") as raised:
             method(_context(active_executor=True))
+        assert raised.value.code is RuleCode.ACTION_EXECUTOR_STILL_ACTIVE
 
 
 @pytest.mark.parametrize("policy", POLICIES, ids=lambda p: p.scenario.key)
 def test_state_check_needs_no_reason_but_the_command_does(policy) -> None:
     policy.action_operations.validate_transfer_and_reopen_state(_context(reason=None))
-    with pytest.raises(ActionItemOperationError, match="requires a reason"):
+    with pytest.raises(ActionItemOperationError, match="requires a reason") as raised:
         policy.action_operations.decide_transfer_and_reopen(_context(reason=None))
+    assert raised.value.code is RuleCode.REQUEST_INVALID
+    assert [(e.field, e.code) for e in raised.value.errors] == [
+        ("reason", FieldErrorCode.REQUIRED)
+    ]

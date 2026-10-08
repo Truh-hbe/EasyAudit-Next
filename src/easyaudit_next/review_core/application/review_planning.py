@@ -48,6 +48,14 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     RoleGrant,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, ScenarioRegistry
+from easyaudit_next.rules import (
+    FieldErrorCode,
+    RuleCode,
+    RuleViolation,
+    field_violation,
+    request_invalid,
+    require_clean_text,
+)
 
 VIEW_CASE_PERMISSION = "view_case"
 MANAGE_CASE_MEMBERS_PERMISSION = "manage_case_members"
@@ -163,7 +171,7 @@ class ReviewPlanningService:
         policy = self._published_policy(actor, scenario_key, scenario_version)
         errors = policy.validate_case_input(scenario_data)
         if errors:
-            raise ValueError("; ".join(errors))
+            raise request_invalid(errors, RuleViolation)
         if (
             plan_id is not None
             and self._repository.get_plan(actor.organization_id, plan_id) is None
@@ -278,7 +286,13 @@ class ReviewPlanningService:
         ]
         candidates.sort(key=lambda user: (user.display_name.casefold(), str(user.id)))
         if limit < 1:
-            raise ValueError("limit must be at least 1")
+            raise field_violation(
+                "limit",
+                FieldErrorCode.RANGE,
+                "limit must be at least 1",
+                params={"min": 1},
+                cls=RuleViolation,
+            )
         return tuple(candidates[: min(limit, 20)])
 
     def add_case_member(
@@ -575,7 +589,11 @@ class ReviewPlanningService:
             source=PermissionSource.DIRECT,
         )
         if not any(spec.accepts_grant(grant) for spec in policy.case_role_specs):
-            raise ValueError(f"Scenario does not allow CaseMember role {role_key!r} for User")
+            raise RuleViolation(
+                RuleCode.ROLE_NOT_ALLOWED_FOR_ACTOR,
+                f"Scenario does not allow CaseMember role {role_key!r} for User",
+                params={"relation": "case_member", "role_key": role_key, "actor_kind": "user"},
+            )
 
     @staticmethod
     def _require_active(actor: User) -> None:
@@ -584,14 +602,28 @@ class ReviewPlanningService:
 
     @staticmethod
     def _validate_title(title: str) -> None:
-        if not title.strip() or title != title.strip():
-            raise ValueError("title must be a non-blank, unpadded string")
+        require_clean_text(title, "title")
 
     @staticmethod
     def _validate_dates(start: datetime | None, end: datetime | None) -> None:
         if start is not None and start.utcoffset() is None:
-            raise ValueError("planned_start_at must include UTC offset")
+            raise field_violation(
+                "planned_start_at",
+                FieldErrorCode.INVALID_DATETIME,
+                "planned_start_at must include UTC offset",
+                cls=RuleViolation,
+            )
         if end is not None and end.utcoffset() is None:
-            raise ValueError("planned_end_at must include UTC offset")
+            raise field_violation(
+                "planned_end_at",
+                FieldErrorCode.INVALID_DATETIME,
+                "planned_end_at must include UTC offset",
+                cls=RuleViolation,
+            )
         if start is not None and end is not None and end < start:
-            raise ValueError("planned_end_at must be greater than or equal to planned_start_at")
+            raise field_violation(
+                "planned_end_at",
+                FieldErrorCode.RANGE,
+                "planned_end_at must be greater than or equal to planned_start_at",
+                cls=RuleViolation,
+            )

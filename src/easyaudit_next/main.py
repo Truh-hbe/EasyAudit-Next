@@ -2,11 +2,16 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
+from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 
+from easyaudit_next.api.errors import (
+    RULE_ERROR_RESPONSES,
+    CodedHTTPException,
+    coded_http_exception_handler,
+    request_validation_handler,
+    rule_violation_handler,
+)
 from easyaudit_next.api.health import health_router
 from easyaudit_next.api.review_evidence_downloads import review_evidence_download_router
 from easyaudit_next.api.review_evidence_uploads import review_evidence_upload_router
@@ -31,6 +36,7 @@ from easyaudit_next.review_core.application.evidence_storage import (
     EvidenceObjectStore,
     ObjectStoreNotConfiguredError,
 )
+from easyaudit_next.rules import RuleViolation
 from easyaudit_next.workbench.api import workbench_router
 
 
@@ -61,16 +67,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-async def _validation_error_without_input(_request: Request, exc: Exception) -> JSONResponse:
-    # Default 422 bodies echo the offending input, which would leak submitted passwords.
-    assert isinstance(exc, RequestValidationError)
-    errors = [
-        {key: value for key, value in error.items() if key not in {"input", "ctx", "url"}}
-        for error in exc.errors()
-    ]
-    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
-
-
 def create_app() -> FastAPI:
     app = FastAPI(
         title="EasyAudit-Next API",
@@ -79,20 +75,22 @@ def create_app() -> FastAPI:
         description="Scenario-extensible review and remediation platform",
     )
     app.add_middleware(RequestContextMiddleware)
-    app.add_exception_handler(RequestValidationError, _validation_error_without_input)
+    app.add_exception_handler(RequestValidationError, request_validation_handler)
+    app.add_exception_handler(RuleViolation, rule_violation_handler)
+    app.add_exception_handler(CodedHTTPException, coded_http_exception_handler)
     app.include_router(health_router)
-    app.include_router(api_router)
-    app.include_router(review_planning_router)
-    app.include_router(review_findings_router)
-    app.include_router(review_rectification_router)
-    app.include_router(review_evidence_upload_router)
-    app.include_router(review_evidence_download_router)
-    app.include_router(review_verification_router)
-    app.include_router(review_resource_query_router)
-    app.include_router(workbench_router)
-    app.include_router(notification_router)
-    app.include_router(management_router)
-    app.include_router(collaboration_router)
+    app.include_router(api_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(review_planning_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(review_findings_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(review_rectification_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(review_evidence_upload_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(review_evidence_download_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(review_verification_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(review_resource_query_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(workbench_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(notification_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(management_router, responses=RULE_ERROR_RESPONSES)
+    app.include_router(collaboration_router, responses=RULE_ERROR_RESPONSES)
     return app
 
 

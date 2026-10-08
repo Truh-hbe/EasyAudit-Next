@@ -41,6 +41,7 @@ jobs:
       - run: mypy
       - run: python scripts/check_architecture.py
       - run: python scripts/check_openapi.py
+      - run: python scripts/check_error_codes.py
       - run: alembic upgrade head
       - run: pytest
 

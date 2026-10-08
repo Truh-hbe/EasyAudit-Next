@@ -26,6 +26,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     FindingOperationContext,
     FindingTransitionContext,
 )
+from easyaudit_next.rules import FieldErrorCode
 from easyaudit_next.scenarios.compliance_review import (
     COMPLIANCE_REVIEW_V1,
     ComplianceReviewPermission,
@@ -217,11 +218,19 @@ def test_compliance_scenario_data_validation_is_exact_and_version_owned() -> Non
     assert COMPLIANCE_REVIEW_V1.validate_finding_input(
         {"criterion_reference": "8.5.1", "finding_type": "nonconformity"}
     ) == ()
-    assert "finding_type must be 'nonconformity' or 'observation'" in (
-        COMPLIANCE_REVIEW_V1.validate_finding_input(
+    assert [
+        (error.field, error.code, error.params, error.message)
+        for error in COMPLIANCE_REVIEW_V1.validate_finding_input(
             {"criterion_reference": "8.5.1", "finding_type": "note"}
         )
-    )
+    ] == [
+        (
+            "finding_type",
+            FieldErrorCode.INVALID_CHOICE,
+            {"allowed": ("nonconformity", "observation")},
+            "finding_type must be 'nonconformity' or 'observation'",
+        )
+    ]
 
 
 def test_changing_only_finding_type_changes_exact_direct_transition_policy() -> None:

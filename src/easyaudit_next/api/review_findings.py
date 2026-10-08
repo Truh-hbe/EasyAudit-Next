@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
-from easyaudit_next.api.errors import raise_database_conflict
+from easyaudit_next.api.errors import raise_database_conflict, raise_unclassified_rule_violation
 from easyaudit_next.api.review_contracts import (
     FindingCreateRequest,
     FindingParticipantCreateRequest,
@@ -33,6 +33,7 @@ from easyaudit_next.review_core.domain.models import (
     UserActor,
 )
 from easyaudit_next.review_core.domain.scenario_capabilities import ActorKind
+from easyaudit_next.rules import RuleViolation
 
 review_findings_router = APIRouter(prefix="/api/v1", tags=["review-findings"])
 
@@ -80,11 +81,10 @@ def _raise_api_error(exc: Exception) -> NoReturn:
         (ConcurrentCaseTransitionError, ConcurrentFindingTransitionError),
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if isinstance(exc, RuleViolation):
+        raise exc
     if isinstance(exc, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
-        ) from exc
+        raise_unclassified_rule_violation(exc)
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Unexpected Finding operation failure",

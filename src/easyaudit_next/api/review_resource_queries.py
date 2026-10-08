@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
+from easyaudit_next.api.errors import raise_unclassified_rule_violation
 from easyaudit_next.api.review_contracts import SubmissionResponse
 from easyaudit_next.composition import build_review_resource_context_query_service
 from easyaudit_next.review_core.application.review_planning import ReviewAuthorizationError
@@ -23,6 +24,7 @@ from easyaudit_next.review_resource_queries.schemas import (
     FindingActivityResponse,
     FindingParticipantViewResponse,
 )
+from easyaudit_next.rules import RuleViolation
 
 review_resource_query_router = APIRouter(prefix="/api/v1", tags=["review-resource-queries"])
 
@@ -32,11 +34,10 @@ def _raise_api_error(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if isinstance(exc, RuleViolation):
+        raise exc
     if isinstance(exc, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
-        ) from exc
+        raise_unclassified_rule_violation(exc)
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Unexpected resource query failure",
