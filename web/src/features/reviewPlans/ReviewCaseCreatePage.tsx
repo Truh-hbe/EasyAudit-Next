@@ -21,6 +21,7 @@ import {
   invalidDisplayZoneInputMessage,
   parseOptionalDisplayZoneText,
 } from '../../product/format'
+import type { FieldLabels } from '../../product/commandFailure'
 import { scenarioName, scenarioVersionText } from '../../product/terms'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import { caseCreateFieldId } from '../../scenarios/CaseCreateTextField'
@@ -58,6 +59,7 @@ interface CaseFormValues {
 
 // 结束时间排在前面：服务端 "planned_end_at must be ... planned_start_at" 同时提到两个字段，挂到结束时间上。
 const DATE_FIELDS = ['planned_end_at', 'planned_start_at'] as const
+const CASE_FIELD_LABELS = { title: '审查活动名称', planned_start_at: '活动开始时间', planned_end_at: '活动结束时间' } as const
 const TIME_ZONE_HINT_ID = 'case-time-zone-hint'
 
 // 校验失败以 FieldError 元素作为提示（达标配色）；结束早于开始只在两者都有效时检查，最终以服务端 422 为准。
@@ -109,7 +111,7 @@ export function canCreateCase(
 
 export async function executeCaseSubmission(
   request: () => Promise<ReviewCaseResponse>,
-  fields: readonly string[] = [],
+  fields: FieldLabels = {},
 ): Promise<{ state: CaseSubmitState; reviewCase?: ReviewCaseResponse }> {
   try {
     return { state: { status: 'idle' }, reviewCase: await request() }
@@ -117,7 +119,7 @@ export async function executeCaseSubmission(
     if (!isDefinitiveRejection(error)) {
       return { state: { status: 'unknown', message: unknownOutcomeMessage('审查活动', '重试创建审查活动', error) } }
     }
-    const view = describeRejection(error, '审查活动创建被服务器拒绝，请修正后重试。', fields)
+    const view = describeRejection(error, '创建审查活动', fields)
     return { state: { status: 'rejected', message: view.message, fieldErrors: view.fieldErrors } }
   }
 }
@@ -240,11 +242,11 @@ export function ReviewCaseCreatePage() {
     setDateErrors({})
     setScenarioErrors({})
     setSubmitState({ status: 'submitting' })
-    const scenarioFields = Object.keys(scenarioAdapter.buildCaseScenarioData({}))
+    const scenarioFields = Object.keys(scenarioAdapter.caseFieldLabels)
     const result = await executeCaseSubmission(() => createReviewCase(
       buildCaseCreateInput(planId, selectedItem, values.title, scenarioAdapter, scenarioValues, startAt.iso, endAt.iso),
       idempotencyKey.current,
-    ), [...DATE_FIELDS, 'title', ...scenarioFields])
+    ), { ...CASE_FIELD_LABELS, ...scenarioAdapter.caseFieldLabels })
     if (result.reviewCase !== undefined) {
       idempotencyKey.current = newIdempotencyKey()
       await navigate(`/review-cases/${encodeURIComponent(result.reviewCase.id)}`)

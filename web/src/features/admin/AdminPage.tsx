@@ -69,12 +69,9 @@ function isDenied(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)
 }
 
-// 管理写操作的 422 不展示服务端原文（凭据类请求的校验信息不应被回显），其余沿用统一的失败分类。
+// 管理写操作沿用统一的失败分类：422 按错误码映射中文（不含用户输入，凭据类校验信息不会被回显）。
 function adminFailure(error: unknown, label: string, unknownHint: string): CommandFailure {
   const failure = classifyCommandFailure(error, { label })
-  if (failure.kind === 'rejected' && error instanceof ApiError && error.status === 422) {
-    return { ...failure, message: '提交内容不符合当前规则，请检查后重试。', fieldErrors: {} }
-  }
   if (failure.kind === 'unknown-result') return { ...failure, message: `${failure.message}${unknownHint}` }
   return failure
 }

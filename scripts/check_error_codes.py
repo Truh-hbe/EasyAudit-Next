@@ -3,6 +3,8 @@
 1. Business code that can surface as a 422 must raise `RuleViolation` (which requires a code),
    never a bare `ValueError` or a `ValueError` subclass without a code.
 2. Every `RuleCode` is referenced by production code, so no code is declared and forgotten.
+3. The web client has a Chinese message for every `RuleCode` and `FieldErrorCode`
+   (`web/src/product/ruleMessages.ts`), and no message for a code that does not exist.
 
 Boundary of check 1: it is syntactic. It sees `raise ValueError(...)`, classes that name
 `ValueError` as a base, and `raise X(...)` where `X` is, by name, a repository class deriving from
@@ -13,11 +15,13 @@ third-party code. Exceptions that are deliberately not request validation errors
 """
 
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "src" / "easyaudit_next"
 RULES_MODULE = SOURCE_ROOT / "rules.py"
+WEB_MESSAGES = ROOT / "web" / "src" / "product" / "ruleMessages.ts"
 
 # Packages whose ValueErrors can reach the API as 422.
 GUARDED = (
@@ -138,18 +142,50 @@ def uncoded_violations(path: Path, uncoded: set[str]) -> list[str]:
     return problems
 
 
-def declared_codes() -> list[str]:
+def enum_members(class_name: str) -> dict[str, str]:
+    """Member name -> string value of an enum declared in rules.py."""
     tree = ast.parse(RULES_MODULE.read_text(encoding="utf-8"))
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "RuleCode":
-            return [
-                target.id
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return {
+                target.id: statement.value.value
                 for statement in node.body
                 if isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
                 for target in statement.targets
                 if isinstance(target, ast.Name)
-            ]
-    raise SystemExit("RuleCode not found in rules.py")
+            }
+    raise SystemExit(f"{class_name} not found in rules.py")
+
+
+def declared_codes() -> list[str]:
+    return list(enum_members("RuleCode"))
+
+
+def web_message_keys(table: str) -> set[str]:
+    """Keys of `export const <table> ... = { ... }` in ruleMessages.ts (top-level entries)."""
+    text = WEB_MESSAGES.read_text(encoding="utf-8")
+    start = text.index(f"export const {table}")
+    body = text[text.index("= {", start) + 2 :]
+    keys: set[str] = set()
+    for line in body.splitlines():
+        if line.startswith("}"):
+            break
+        match = re.match(r"^  (?:'([a-z_.]+)'|([a-z_]+)):", line)
+        if match:
+            keys.add(match.group(1) or match.group(2))
+    return keys
+
+
+def web_mapping_problems() -> list[str]:
+    problems: list[str] = []
+    for enum_name, table in (("RuleCode", "RULE_MESSAGES"), ("FieldErrorCode", "FIELD_MESSAGES")):
+        codes = set(enum_members(enum_name).values())
+        keys = web_message_keys(table)
+        problems += [f"{table} lacks {code!r} ({enum_name})" for code in sorted(codes - keys)]
+        problems += [f"{table} has unknown code {key!r}" for key in sorted(keys - codes)]
+    return problems
 
 
 def referenced_codes() -> set[str]:
@@ -180,7 +216,14 @@ def main() -> None:
     if unused:
         raise SystemExit(f"RuleCode members never raised or mapped: {unused}")
 
-    print(f"Error code check passed ({len(declared)} rule codes, all referenced).")
+    mapping = web_mapping_problems()
+    if mapping:
+        raise SystemExit("Web messages out of sync with rules.py:\n" + "\n".join(mapping))
+
+    print(
+        f"Error code check passed ({len(declared)} rule codes, all referenced and mapped to "
+        "web messages)."
+    )
 
 
 if __name__ == "__main__":

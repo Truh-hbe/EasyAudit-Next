@@ -103,7 +103,8 @@ test('real plan-first flow creates both exact scenarios and recovers Case step',
   )
   await page.getByRole('button', { name: '创建审查活动' }).click()
   expect((await rejectedCasePromise).status()).toBe(422)
-  await expect(page.getByText(/review_type/)).toBeVisible()
+  await expect(page.getByText('请填写审查类型')).toBeVisible()
+  expect(await page.getByText(/review_type/).count()).toBe(0)
   await expect(page.getByLabel('审查类型')).toBeFocused()
   expect(planPostCount).toBe(1)
 

@@ -533,7 +533,8 @@ test('Workbench request failure surfaces safely without inventing fallback work'
   await page.route('**/api/v1/me/workbench', (route) => fulfillJson(route, 500, { detail: 'Projection unavailable' }))
 
   await page.goto('/me/workbench')
-  await expect(page.getByRole('alert')).toContainText('Projection unavailable')
+  await expect(page.getByRole('alert')).toContainText('请求失败（状态码 500）')
+  expect(await page.getByText('Projection unavailable').count()).toBe(0)
   await expect(page.getByText('Server Case A')).toHaveCount(0)
 })
 
@@ -565,7 +566,8 @@ test('Workbench refresh failure keeps old content for network errors but drops i
 
   outcome = 403
   await page.getByRole('button', { name: '刷新' }).click()
-  await expect(page.getByRole('alert')).toContainText('Forbidden')
+  await expect(page.getByRole('alert')).toContainText('请求失败（状态码 403）')
+  expect(await page.getByText('Forbidden').count()).toBe(0)
   await expect(page.getByText('Server Case A')).toHaveCount(0)
 })
 
@@ -868,7 +870,12 @@ test('password remediation keeps entered values on 422 and blocks mismatched con
   await page.route('**/api/v1/me/password', async (route) => {
     submissions += 1
     await new Promise((resolve) => setTimeout(resolve, 300))
-    await fulfillJson(route, 422, { detail: 'Password does not meet policy' })
+    await fulfillJson(route, 422, {
+      detail: 'Password does not meet policy',
+      code: 'password.too_short',
+      params: { min: 12 },
+      errors: [],
+    })
   })
 
   await page.goto('/me/credential-remediation')
@@ -883,7 +890,8 @@ test('password remediation keeps entered values on 422 and blocks mismatched con
   await page.getByLabel('确认新密码').fill('replacement-password')
   const submit = page.getByRole('button', { name: '修改密码' })
   await submit.dblclick()
-  await expect(page.getByRole('alert')).toHaveText('Password does not meet policy')
+  await expect(page.getByRole('alert')).toHaveText('密码长度不足，至少需要 12 个字符。')
+  expect(await page.getByText('Password does not meet policy').count()).toBe(0)
   expect(submissions).toBe(1)
   await expect(page.getByLabel('当前密码')).toHaveValue('initial-password')
   await expect(page.getByLabel('新密码', { exact: true })).toHaveValue('replacement-password')

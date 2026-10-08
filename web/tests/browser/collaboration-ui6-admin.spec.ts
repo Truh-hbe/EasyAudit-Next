@@ -597,7 +597,14 @@ test('写操作 403：操作区中性提示、不显示后端 detail，并重新
 test('抽屉里 422 与 409 不展示后端原文', async ({ page }) => {
   let status = 422
   const harness = await setup(page, {
-    write: (route) => fulfillJson(route, status, { detail: 'initial_password: contains secret-echo' }),
+    write: (route) =>
+      fulfillJson(
+        route,
+        status,
+        status === 422
+          ? { detail: 'initial_password: contains secret-echo', code: 'password.too_short', params: { min: 12 }, errors: [] }
+          : { detail: 'initial_password: contains secret-echo' },
+      ),
   })
   await page.goto('/admin')
   await page.getByRole('button', { name: '新建用户' }).click()
@@ -607,7 +614,7 @@ test('抽屉里 422 与 409 不展示后端原文', async ({ page }) => {
   await drawer.getByLabel('初始密码').fill('initial-password-123')
   await drawer.getByRole('button', { name: '创建用户' }).click()
 
-  await expect(drawer.getByText('提交内容不符合当前规则，请检查后重试。')).toBeVisible()
+  await expect(drawer.getByText('密码长度不足，至少需要 12 个字符。')).toBeVisible()
   await expect(drawer.getByLabel('初始密码')).toHaveValue('')
   await expect(drawer.getByLabel('显示名称')).toHaveValue('X User')
   expect(await page.getByText('secret-echo').count()).toBe(0)
@@ -615,7 +622,8 @@ test('抽屉里 422 与 409 不展示后端原文', async ({ page }) => {
   status = 409
   await drawer.getByLabel('初始密码').fill('initial-password-123')
   await drawer.getByRole('button', { name: '创建用户' }).click()
-  await expect(drawer.getByText('与服务器当前状态冲突')).toBeVisible()
+  await expect(drawer.getByText('数据已变化，正在获取最新状态')).toBeVisible()
+  expect(await page.getByText('secret-echo').count()).toBe(0)
   expect(harness.writes).toHaveLength(2)
 })
 

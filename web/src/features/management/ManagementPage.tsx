@@ -16,7 +16,7 @@ import type {
 } from '../../api/management'
 import type { DeadlineBucket, ManagementCaseSummary, ReviewCaseLifecycle } from '../../api/product'
 import { formatDateTime } from '../../product/format'
-import { NOT_AVAILABLE_TEXT } from '../../product/commandFailure'
+import { NOT_AVAILABLE_TEXT, classifyCommandFailure } from '../../product/commandFailure'
 import { scenarioName } from '../../product/terms'
 import { InitialLoading } from '../../ui/InitialLoading'
 import { PageHeader } from '../../ui/PageHeader'
@@ -189,7 +189,9 @@ export function ManagementPage() {
           setDenied(true)
           return
         }
-        setExportError(errorMessage(error, '导出失败'))
+        // 422（如行数超限）按错误码映射中文；任何状态码都不显示后端 detail。
+        const failure = classifyCommandFailure(error, { label: '导出' })
+        setExportError(failure.message === '' ? '导出失败' : failure.message)
       })
       .finally(() => setExporting(null))
   }

@@ -543,7 +543,7 @@ test('Finding nudge 422 stays authoritative and a late nudge result cannot leak 
   await page.route((url) => url.pathname === `/api/v1/findings/${findingA}/nudge`, async (route) => {
     expect(route.request().postData()).toBeNull()
     if (mode === 'validation') {
-      return fulfillJson(route, 422, { detail: 'No eligible nudge recipients' })
+      return fulfillJson(route, 422, { detail: 'No eligible nudge recipients', code: 'nudge.no_eligible_recipients', params: {}, errors: [] })
     }
     await slowNudge.promise
     return fulfillJson(route, 200, { activity_id: 'late-activity', recipient_count: 4 })
@@ -560,7 +560,8 @@ test('Finding nudge 422 stays authoritative and a late nudge result cannot leak 
   mode = 'validation'
   await page.goto(`/findings/${findingA}`)
   await page.getByRole('button', { name: '催办', exact: true }).click()
-  await expect(page.getByText('No eligible nudge recipients')).toBeVisible()
+  await expect(page.getByText('当前没有可催办的对象。')).toBeVisible()
+  expect(await page.getByText('No eligible nudge recipients').count()).toBe(0)
   await expect(page.getByText(/服务器已确认催办/)).toHaveCount(0)
 })
 

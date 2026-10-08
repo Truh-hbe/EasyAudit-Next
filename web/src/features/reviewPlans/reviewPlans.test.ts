@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
+import { ENGLISH_DETAIL, ruleError } from '../../api/ruleErrorFixture'
 import { resolveCaseScenarioAdapter } from '../../scenarios'
 import {
   buildCaseCreateInput,
@@ -59,13 +60,13 @@ describe('M5.2 plan-first creation contracts', () => {
 
   it('maps the end-before-start 422 onto the end field', async () => {
     const { state } = await executeCaseSubmission(
-      () => Promise.reject(new ApiError(422, 'planned_end_at must be greater than or equal to planned_start_at')),
-      ['planned_end_at', 'planned_start_at', 'title'],
+      () => Promise.reject(ruleError(422, 'request.invalid', {}, [{ field: 'planned_end_at', code: 'range', params: {} }])),
+      { planned_end_at: '活动结束时间', planned_start_at: '活动开始时间', title: '审查活动名称' },
     )
-    expect(state).toMatchObject({
+    expect(state).toEqual({
       status: 'rejected',
       message: '',
-      fieldErrors: { planned_end_at: 'planned_end_at must be greater than or equal to planned_start_at' },
+      fieldErrors: { planned_end_at: '活动结束时间不能早于开始时间' },
     })
   })
 
@@ -89,25 +90,31 @@ describe('M5.2 plan-first creation contracts', () => {
     }
   })
 
-  it('maps 422 segments that start with a field name onto that field and keeps the rest', async () => {
-    const detail = 'review_type must be a non-blank string; area_code must not contain surrounding whitespace; plan is closed'
-    const { state } = await executeCaseSubmission(
-      () => Promise.reject(new ApiError(422, detail)),
-      ['title', 'area_code', 'review_type'],
-    )
-    expect(state).toEqual({
-      status: 'rejected',
-      message: 'plan is closed',
-      fieldErrors: {
-        review_type: 'review_type must be a non-blank string',
-        area_code: 'area_code must not contain surrounding whitespace',
-      },
+  it('maps 422 field errors onto fields in Chinese and never shows the English detail', async () => {
+    const error = ruleError(422, 'request.invalid', {}, [
+      { field: 'review_type', code: 'required', params: {} },
+      { field: 'area_code', code: 'padded', params: {} },
+      { field: 'unlabelled', code: 'required', params: {} },
+    ])
+    const { state } = await executeCaseSubmission(() => Promise.reject(error), {
+      title: '审查活动名称',
+      area_code: '区域代码',
+      review_type: '审查类型',
     })
-    const unmapped = await executeCaseSubmission(() => Promise.reject(new ApiError(422, 'plan is closed')), ['title'])
-    expect(unmapped.state).toEqual({ status: 'rejected', message: 'plan is closed', fieldErrors: {} })
-    // 字段名只按完整标识匹配，不会误中更长的名字。
-    const partial = await executePlanSubmission(() => Promise.reject(new ApiError(422, 'subtitle is too long')))
-    expect(partial.state).toMatchObject({ status: 'rejected', fieldErrors: {} })
+    expect(state).toMatchObject({
+      status: 'rejected',
+      fieldErrors: { review_type: '请填写审查类型', area_code: '区域代码首尾不能有空格' },
+    })
+    expect(JSON.stringify(state)).not.toContain(ENGLISH_DETAIL)
+
+    const unknown = await executeCaseSubmission(() => Promise.reject(new ApiError(422, 'plan is closed')), { title: '审查活动名称' })
+    expect(unknown.state).toEqual({
+      status: 'rejected',
+      message: '创建审查活动不满足当前规则，未完成。',
+      fieldErrors: {},
+    })
+    const plan = await executePlanSubmission(() => Promise.reject(ruleError(422, 'rule.unspecified')))
+    expect(plan.state).toMatchObject({ status: 'rejected', fieldErrors: {} })
   })
 
   it('shows the Retry-After wait for 429 and keeps other 409 conflicts apart from key reuse', async () => {
@@ -115,7 +122,8 @@ describe('M5.2 plan-first creation contracts', () => {
     expect(limited.state).toMatchObject({ status: 'rejected' })
     expect('message' in limited.state && limited.state.message).toContain('30 秒')
     const conflict = await executePlanSubmission(() => Promise.reject(new ApiError(409, 'Scenario is retired')))
-    expect('message' in conflict.state && conflict.state.message).toContain('Scenario is retired')
+    expect('message' in conflict.state && conflict.state.message).toContain('与服务器当前状态冲突')
+    expect('message' in conflict.state && conflict.state.message).not.toContain('Scenario is retired')
     expect('message' in conflict.state && conflict.state.message).not.toContain('不一致')
   })
 

@@ -20,7 +20,7 @@ interface World {
   finding: string
   posts: { new_executor_id: string; reason: string }[]
   reads: number
-  outcome: { status: number; detail: string } | null
+  outcome: { status: number; detail: string; rule?: Record<string, unknown> } | null
 }
 
 function actionResponse(lifecycle: string) {
@@ -99,7 +99,7 @@ async function stubWorld(page: Page, world: World) {
   )
   await page.route((url) => url.pathname === '/api/v1/action-items/action-b5/transfer-and-reopen', (route) => {
     world.posts.push(route.request().postDataJSON() as { new_executor_id: string; reason: string })
-    if (world.outcome !== null) return fulfillJson(route, world.outcome.status, { detail: world.outcome.detail })
+    if (world.outcome !== null) return fulfillJson(route, world.outcome.status, { detail: world.outcome.detail, ...world.outcome.rule })
     world.action = 'in_progress'
     return fulfillJson(route, 200, actionResponse('in_progress'))
   })
@@ -186,7 +186,11 @@ test('a 409 gets the refresh prompt, refetches the Action and is never replayed'
 
 test('a 422 about the reason is shown on the reason field and keeps the drawer open', async ({ page }) => {
   const world = fresh({
-    outcome: { status: 422, detail: 'Transferring and reopening an ActionItem requires a reason' },
+    outcome: {
+      status: 422,
+      detail: 'Transferring and reopening an ActionItem requires a reason',
+      rule: { code: 'request.invalid', params: {}, errors: [{ field: 'reason', code: 'required', params: {} }] },
+    },
   })
   await stubWorld(page, world)
   await page.goto('/action-items/action-b5')
@@ -194,7 +198,8 @@ test('a 422 about the reason is shown on the reason field and keeps the drawer o
   await pickCandidate(drawer, '新执行人', 'New', 'New Executor')
   await drawer.getByRole('textbox', { name: '转交原因' }).fill('x')
   await drawer.getByRole('button', { name: '确认转交并重开' }).click()
-  await expect(drawer.locator('.field-error-text')).toContainText('requires a reason')
+  await expect(drawer.locator('.field-error-text')).toContainText('请填写转交原因')
+  expect(await page.getByText('requires a reason').count()).toBe(0)
   await expect(drawer.getByRole('alert')).toHaveCount(0)
   await expect(drawer).toBeVisible()
 })
@@ -217,7 +222,11 @@ test('the transfer drawer is closed when the page switches to another Action', a
 
 test('a 422 because an executor is still active is shown as an alert, keeps the drawer open and is not replayed', async ({ page }) => {
   const world = fresh({
-    outcome: { status: 422, detail: 'ActionItem still has an active executor, who can reopen it directly' },
+    outcome: {
+      status: 422,
+      detail: 'ActionItem still has an active executor, who can reopen it directly',
+      rule: { code: 'action.executor_still_active', params: {}, errors: [] },
+    },
   })
   await stubWorld(page, world)
   await page.goto('/action-items/action-b5')
@@ -225,7 +234,8 @@ test('a 422 because an executor is still active is shown as an alert, keeps the 
   await pickCandidate(drawer, '新执行人', 'New', 'New Executor')
   await drawer.getByRole('textbox', { name: '转交原因' }).fill('原执行人已离职')
   await drawer.getByRole('button', { name: '确认转交并重开' }).click()
-  await expect(drawer.getByRole('alert')).toContainText('still has an active executor')
+  await expect(drawer.getByRole('alert')).toContainText('原执行人仍可操作，可以直接重新打开，无需转交。')
+  expect(await page.getByText('still has an active executor').count()).toBe(0)
   await expect(drawer).toBeVisible()
   await page.waitForTimeout(500)
   expect(world.posts).toHaveLength(1)

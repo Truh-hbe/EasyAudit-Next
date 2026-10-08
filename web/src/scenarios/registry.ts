@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 
-import type { CommandResult } from '../product/commandFailure'
+import type { CommandResult, FieldLabels } from '../product/commandFailure'
 import type {
   ActionItemLifecycle,
   ActorKind,
@@ -69,6 +69,8 @@ export interface ScenarioCaseAdapter {
   CaseScenarioSection: ComponentType<ScenarioCaseSectionProps>
   CaseCreateFields: ComponentType<ScenarioFormFieldsProps>
   buildCaseScenarioData: (values: ScenarioFormValues) => Record<string, unknown>
+  // 创建表单里场景字段的中文标签（字段名 → 标签），服务端字段错误据此生成提示。
+  caseFieldLabels: FieldLabels
   caseMemberRoleOptions: readonly ScenarioCaseRoleOption[]
   // 活动在该 lifecycle 下可展示的命令；没有则返回空数组。
   caseCommands: (lifecycle: ReviewCaseLifecycle) => readonly ScenarioCaseCommand[]
@@ -106,8 +108,8 @@ export interface ScenarioFindingCommandPorts {
 }
 
 export interface ScenarioCommandOptions {
-  // 调用方能在表单字段上显示的服务端 422 字段名。
-  fields?: readonly string[]
+  // 调用方能在表单字段上显示的服务端 422 字段（字段名 → 中文标签）。
+  fields?: FieldLabels
   // 页面是否同时显示失败提示；弹层自己显示失败时传 false。默认 true。
   notify?: boolean
 }
@@ -132,6 +134,7 @@ export interface ScenarioFindingAdapter {
   findingKindLabel: (finding: FindingResponse) => string | null
   FindingCreateFields: ComponentType<ScenarioFormFieldsProps>
   buildFindingScenarioData: (values: ScenarioFormValues) => Record<string, unknown>
+  findingFieldLabels: FieldLabels
   participantOptions: readonly ScenarioParticipantOption[]
   assigneeOptions: readonly ScenarioAssigneeOption[]
   FindingInteractionSection: ComponentType<ScenarioFindingInteractionProps>

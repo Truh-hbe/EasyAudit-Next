@@ -61,7 +61,7 @@ export function VoidCommand({ commands, execute, disabled }: CommandProps) {
         fieldLabel="作废原因"
         okText="确认作废"
         danger
-        run={(reason) => execute('作废发现项', () => commands.transition('void', reason), { fields: ['reason'], notify: false })}
+        run={(reason) => execute('作废发现项', () => commands.transition('void', reason), { fields: { reason: '作废原因' }, notify: false })}
       />
     </>
   )
@@ -93,7 +93,7 @@ export function ReopenCommand({
         fieldName="reason"
         fieldLabel="重新打开原因"
         okText="确认重新打开"
-        run={(reason) => execute('重新打开发现项', () => commands.reopen(reason), { fields: ['reason'], notify: false })}
+        run={(reason) => execute('重新打开发现项', () => commands.reopen(reason), { fields: { reason: '重新打开原因' }, notify: false })}
       />
     </>
   )
@@ -135,7 +135,7 @@ export function RectificationCommands({ commands, execute, disabled }: CommandPr
           execute(
             '提交整改计划',
             () => commands.submitRectification('submit_plan', { stage: 'plan', root_cause: rootCause }),
-            { fields: ['root_cause'], notify: false },
+            { fields: { root_cause: '根本原因' }, notify: false },
           )
         }
       />
@@ -152,7 +152,7 @@ export function RectificationCommands({ commands, execute, disabled }: CommandPr
           execute(
             '提交验证',
             () => commands.submitRectification('submit_for_verification', { stage: 'completion', comment }),
-            { fields: ['comment'], notify: false },
+            { fields: { comment: '整改完成说明' }, notify: false },
           )
         }
       />
@@ -199,7 +199,7 @@ export function VerificationCommands({ commands, execute, disabled }: CommandPro
           execute(
             '验证驳回',
             () => commands.submitVerification('reject', { result: 'rejected', comment }),
-            { fields: ['comment'], notify: false },
+            { fields: { comment: '驳回原因' }, notify: false },
           )
         }
       />

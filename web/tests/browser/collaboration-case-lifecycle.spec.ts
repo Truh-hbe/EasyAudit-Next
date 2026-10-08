@@ -49,6 +49,8 @@ interface World {
   // 命令的响应：200 以外的状态；'abort' 表示连接中断；gate 在响应前挂起。
   postStatus: number | 'abort'
   postDetail: string
+  // 结构化错误码字段（code/params/errors），与 detail 合并成响应体。
+  postRule: Record<string, unknown>
   gate: Promise<void> | null
   caseStatus: number
   // 命令失败后“别人已改变了状态”：下一次读取返回的 lifecycle。
@@ -90,6 +92,7 @@ async function mockWorld(page: Page, scenario: Scenario, lifecycle: string): Pro
     caseReads: 0,
     postStatus: 200,
     postDetail: '',
+    postRule: {},
     gate: null,
     caseStatus: 200,
     lifecycleAfterFailure: null,
@@ -123,7 +126,7 @@ async function mockWorld(page: Page, scenario: Scenario, lifecycle: string): Pro
     if (world.postStatus === 'abort') return route.abort('failed')
     if (world.postStatus !== 200) {
       if (world.lifecycleAfterFailure !== null) world.lifecycle = world.lifecycleAfterFailure
-      return fulfillJson(route, world.postStatus, { detail: world.postDetail })
+      return fulfillJson(route, world.postStatus, { detail: world.postDetail, ...world.postRule })
     }
     world.lifecycle = NEXT[body.action]?.to ?? world.lifecycle
     return fulfillJson(route, 200, caseBody(world))
@@ -268,19 +271,21 @@ for (const command of COMMANDS) {
       expect(world.posts).toHaveLength(1) // 不自动重放
     })
 
-    test('422 shows the server message for the business rule', async ({ page }) => {
+    test('422 shows the Chinese message for the error code, never the English detail', async ({ page }) => {
       const world = await mockWorld(page, scenario, from)
       world.postStatus = 422
-      world.postDetail =
-        command.action === 'cancel'
-          ? 'Cancelling a ReviewCase requires a reason'
-          : command.action === 'reopen_fieldwork'
-            ? 'Reopening fieldwork requires a reason'
-            : 'ReviewCase cannot close until every Finding is closed or voided'
+      const reasonCommand = command.reasonLabel !== undefined
+      world.postDetail = reasonCommand ? 'Voiding requires a reason' : 'ReviewCase cannot close until every Finding is closed or voided'
+      world.postRule = reasonCommand
+        ? { code: 'request.invalid', params: {}, errors: [{ field: 'reason', code: 'required', params: {} }] }
+        : { code: 'case.close_blocked_by_open_findings', params: {}, errors: [] }
       await open(page)
       await invoke(page, command)
-      const where = command.dialog !== undefined && command.reasonLabel !== undefined ? page.getByRole('dialog', { name: command.dialog.title }) : commands(page)
-      await expect(where.getByText(world.postDetail)).toBeVisible()
+      const where = command.dialog !== undefined && reasonCommand ? page.getByRole('dialog', { name: command.dialog.title }) : commands(page)
+      await expect(
+        where.getByText(reasonCommand ? `请填写${command.reasonLabel}` : '仍有发现项未关闭或作废，暂时不能关闭审查活动。'),
+      ).toBeVisible()
+      expect(await page.getByText(world.postDetail).count()).toBe(0)
       expect(world.posts).toHaveLength(1)
       await expect(header(page).getByText(from === 'draft' ? '草稿' : from === 'scheduled' ? '已排期' : from === 'in_progress' ? '审查中' : '待关闭', { exact: true })).toBeVisible()
     })
