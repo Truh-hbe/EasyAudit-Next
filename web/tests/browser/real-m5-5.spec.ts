@@ -193,6 +193,9 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
   page,
   browser,
 }) => {
+  // 长旅程：管理员侧用抽屉创建 3 个用户（每个约 1.4s，含抽屉与下拉动画）并停用 1 个，
+  // 实测比改用抽屉前多约 6s（main 约 21s，现约 28s），逼近默认 30s。各步骤耗时正常，没有遮罩或确认框残留阻塞。
+  test.slow()
   await page.goto('/admin')
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
   await submitLogin(page, ADMIN_LOGIN_NAME, ADMIN_PASSWORD)
