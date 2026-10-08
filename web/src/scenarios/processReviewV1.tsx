@@ -144,6 +144,7 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
     area_code: formValue(values, 'area_code'),
     review_type: formValue(values, 'review_type'),
   }),
+  caseFieldLabels: { area_code: '区域代码', review_type: '审查类型' },
   caseMemberRoleOptions: [
     { roleKey: 'lead', label: '审查组长' },
     { roleKey: 'auditor', label: '审查员' },
@@ -159,6 +160,7 @@ export const PROCESS_REVIEW_V1_UI: ScenarioUiAdapter = {
     issue_type: formValue(values, 'issue_type'),
     project_category: formValue(values, 'project_category'),
   }),
+  findingFieldLabels: { issue_type: '问题类型', project_category: '项目类别' },
   participantOptions: [
     {
       roleKey: 'responsible_department',

@@ -80,7 +80,7 @@ async function mockCase(page: Page, caseId: string): Promise<CaseMock> {
       state.postCount += 1
       await state.addGate
       if (state.addStatus === 'abort') return route.abort('failed')
-      if (state.addStatus !== 201) return fulfillJson(route, state.addStatus, { detail: 'add rejected' })
+      if (state.addStatus !== 201) return fulfillJson(route, state.addStatus, { detail: 'add rejected', code: 'role.not_allowed_for_actor', params: {}, errors: [] })
       const body = route.request().postDataJSON() as { user_id: string; role_key: string }
       state.adds.push(body)
       state.members.push(member(caseId, body.user_id, body.role_key, 'Added Candidate'))
@@ -171,7 +171,10 @@ test('团队面板：移除需要二次确认，取消不发请求', async ({ pa
   expect(state.removes).toEqual(['member-2'])
 })
 
-test('团队面板：移除最后一名管理者的 409 显示业务原因并保持成员不变', async ({ page }) => {
+const REMOVE_CONFLICT_TEXT =
+  '团队已发生变化，或审查活动至少需要保留一名有效的审查组长（不能移除最后一名管理者），正在获取最新状态。'
+
+test('团队面板：移除最后一名管理者的 409 不按 detail 区分，提示可能原因并保持成员不变', async ({ page }) => {
   const state = await mockCase(page, 'case-last')
   state.removeStatus = 409
   state.removeDetail = 'Cannot remove the final effective Case manager'
@@ -182,12 +185,13 @@ test('团队面板：移除最后一名管理者的 409 显示业务原因并保
 
   await team.getByRole('button', { name: /移除/ }).click()
   await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
-  await expect(team.getByText('审查活动至少需要保留一名有效的审查组长，无法移除最后一名管理者。')).toBeVisible()
+  await expect(team.getByText(REMOVE_CONFLICT_TEXT)).toBeVisible()
+  expect(await page.getByText('Cannot remove the final').count()).toBe(0)
   await expect(team.getByText('Team Lead')).toBeVisible()
-  expect(state.memberReads).toBe(readsBefore)
+  await expect.poll(() => state.memberReads).toBeGreaterThan(readsBefore)
 })
 
-test('团队面板：移除的并发 409 提示数据已变化并重新读取，不自动重放', async ({ page }) => {
+test('团队面板：移除的并发 409 提示团队已变化并重新读取，不自动重放', async ({ page }) => {
   const state = await mockCase(page, 'case-changed')
   state.removeStatus = 409
   state.removeDetail = 'CaseMember changed concurrently'
@@ -198,7 +202,8 @@ test('团队面板：移除的并发 409 提示数据已变化并重新读取，
 
   await team.getByRole('button', { name: /移除/ }).click()
   await page.getByRole('dialog', { name: '移除成员' }).getByRole('button', { name: '确认移除' }).click()
-  await expect(team.getByText('数据已变化，正在获取最新状态。')).toBeVisible()
+  await expect(team.getByText(REMOVE_CONFLICT_TEXT)).toBeVisible()
+  expect(await page.getByText('CaseMember changed concurrently').count()).toBe(0)
   await expect.poll(() => state.memberReads).toBeGreaterThan(readsBefore)
   expect(state.removes).toHaveLength(1)
 })
@@ -806,7 +811,7 @@ test('主授权重读：重读返回 500 时保留内容（真正走到 500 分�
 for (const [label, status, expected] of [
   ['成功', 201, null],
   ['明确拒绝（409）', 409, '该成员已在团队中，或团队已发生变化，正在获取最新状态。'],
-  ['明确拒绝（422）', 422, 'add rejected'],
+  ['明确拒绝（422）', 422, '所选对象不能担任该角色，请重新选择。'],
   ['结果未知（网络中断）', 'abort', '未确认是否已添加成员'],
   ['结果未知（500）', 500, '未确认是否已添加成员'],
 ] as const) {

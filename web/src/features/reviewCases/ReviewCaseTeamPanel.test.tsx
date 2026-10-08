@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
 
+import { ENGLISH_DETAIL, ruleError } from '../../api/ruleErrorFixture'
 import { ApiError } from '../../api/client'
 import { searchReviewCaseMemberCandidates } from '../../api/product'
 import {
@@ -49,17 +50,21 @@ describe('ReviewCaseTeamPanel', () => {
     expect(roleLabelForCaseMember('future_role', roleOptions)).toBe('future_role')
   })
 
-  it('classifies team failures by cause instead of collapsing every 409', () => {
-    const lastManager = new ApiError(409, 'Cannot remove the final effective Case manager')
-    expect(classifyTeamFailure(lastManager, 'remove')).toMatchObject({ kind: 'last-manager' })
-    expect(classifyTeamFailure(new ApiError(409, 'CaseMember changed concurrently'), 'remove')).toMatchObject({
-      kind: 'changed',
-      message: '数据已变化，正在获取最新状态。',
-    })
+  it('treats every 409 as a team change without reading or showing the detail', () => {
+    for (const detail of ['Cannot remove the final effective Case manager', 'CaseMember changed concurrently']) {
+      const removed = classifyTeamFailure(new ApiError(409, detail), 'remove')
+      expect(removed.kind).toBe('changed')
+      expect('message' in removed && removed.message).toContain('不能移除最后一名管理者')
+      expect('message' in removed && removed.message).not.toContain(detail)
+    }
     // 添加时的 409 不展示服务端原文（可能是数据库唯一约束信息）。
     const add = classifyTeamFailure(new ApiError(409, 'duplicate key value violates unique constraint'), 'add')
     expect(add.kind).toBe('changed')
     expect('message' in add && add.message).not.toContain('duplicate')
+    const rejected = classifyTeamFailure(ruleError(422, 'role.not_allowed_for_actor'), 'add')
+    expect(rejected).toEqual({ kind: 'rejected', message: '所选对象不能担任该角色，请重新选择。' })
+    expect(classifyTeamFailure(new ApiError(400, ENGLISH_DETAIL), 'add')).toMatchObject({ kind: 'rejected' })
+    expect(JSON.stringify(classifyTeamFailure(new ApiError(400, ENGLISH_DETAIL), 'add'))).not.toContain(ENGLISH_DETAIL)
     expect(classifyTeamFailure(new ApiError(403, 'raw permission'), 'search')).toEqual({
       kind: 'forbidden',
       message: '当前用户没有管理审查团队的权限。',

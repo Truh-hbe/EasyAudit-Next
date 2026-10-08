@@ -131,7 +131,8 @@ test('participant candidate lookup exposes loading, no-results, error and select
   await expect(page.getByText('没有匹配候选。')).toBeVisible()
 
   await searchCandidate(drawer, '参与人', 'Boom')
-  await expect(drawer.getByRole('alert')).toContainText('candidate lookup failed')
+  await expect(drawer.getByRole('alert')).toContainText('请求失败（状态码 500）')
+  expect(await page.getByText('candidate lookup failed').count()).toBe(0)
 
   await pickCandidate(drawer, '参与人', 'Quality', 'Quality Department')
   await drawer.getByRole('button', { name: '添加参与人' }).click()

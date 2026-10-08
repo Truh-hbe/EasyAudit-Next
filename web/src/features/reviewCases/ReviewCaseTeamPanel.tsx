@@ -3,6 +3,7 @@ import { Alert, App, Button, Card, Drawer, Flex, Form, Grid, Select, Spin, Typog
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../../api/client'
+import { ruleMessage } from '../../product/ruleMessages'
 import {
   addReviewCaseMember,
   removeReviewCaseMember,
@@ -37,17 +38,17 @@ export function roleLabelForCaseMember(
   return roleOptions.find((option) => option.roleKey === roleKey)?.label ?? roleKey
 }
 
-const LAST_MANAGER_DETAIL = 'Cannot remove the final effective Case manager'
 const SEARCH_DEBOUNCE_MS = 300
 
 export type TeamAction = 'search' | 'add' | 'remove'
+
+const TEAM_ACTION_LABELS: Record<TeamAction, string> = { search: '搜索候选成员', add: '添加成员', remove: '移除成员' }
 
 // 对应 design.md「交互状态」：409 按原因区分，写入结果未知不属于 409。
 export type TeamFailure =
   | { kind: 'session' }
   | { kind: 'forbidden'; message: string }
   | { kind: 'gone'; message: string }
-  | { kind: 'last-manager'; message: string }
   | { kind: 'changed'; message: string }
   | { kind: 'retry-later'; message: string }
   | { kind: 'rejected'; message: string }
@@ -61,25 +62,21 @@ export function classifyTeamFailure(error: unknown, action: TeamAction): TeamFai
     }
     if (error.status === 404) return { kind: 'gone', message: '内容不存在或无权访问' }
     if (error.status === 409) {
-      if (action === 'remove' && error.detail === LAST_MANAGER_DETAIL) {
-        return {
-          kind: 'last-manager',
-          message: '审查活动至少需要保留一名有效的审查组长，无法移除最后一名管理者。',
-        }
-      }
+      // 409 暂无结构化原因：不按 detail 区分，也不显示 detail；两种可能都在提示里说明。
       return {
         kind: 'changed',
         message:
           action === 'add'
             ? '该成员已在团队中，或团队已发生变化，正在获取最新状态。'
-            : '数据已变化，正在获取最新状态。',
+            : '团队已发生变化，或审查活动至少需要保留一名有效的审查组长（不能移除最后一名管理者），正在获取最新状态。',
       }
     }
     if (error.status === 429 || error.status === 503) {
       const wait = error.retryAfter === null ? '稍后' : `${error.retryAfter} 秒后`
       return { kind: 'retry-later', message: `服务繁忙，请${wait}手动重试。` }
     }
-    if (error.status < 500) return { kind: 'rejected', message: error.detail }
+    if (error.status === 422) return { kind: 'rejected', message: ruleMessage(error.code, error.params, TEAM_ACTION_LABELS[action]) }
+    if (error.status < 500) return { kind: 'rejected', message: `${TEAM_ACTION_LABELS[action]}未被服务器接受，请刷新后确认当前状态再试。` }
   }
   if (action === 'search') {
     return {

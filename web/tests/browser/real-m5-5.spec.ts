@@ -277,7 +277,8 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
     )
     await firstPage.getByRole('button', { name: '创建审查活动' }).click()
     expect((await rejectedCasePromise).status()).toBe(422)
-    await expect(firstPage.getByText(/review_type/)).toBeVisible()
+    await expect(firstPage.getByText('请填写审查类型')).toBeVisible()
+    expect(await firstPage.getByText(/review_type/).count()).toBe(0)
     await expect(firstPage.getByLabel('审查类型')).toBeFocused()
     expect(planPostCount).toBe(1)
 
@@ -322,9 +323,8 @@ test('real M5.5 pilot completes exact cases, recovery, isolation, and collaborat
       FIRST_DISPLAY_NAME,
     )
     expect(finalManagerResponse.status()).toBe(409)
-    await expect(
-      firstPage.getByText('审查活动至少需要保留一名有效的审查组长，无法移除最后一名管理者。'),
-    ).toBeVisible()
+    await expect(firstPage.getByText(/不能移除最后一名管理者/)).toBeVisible()
+    expect(await firstPage.getByText('Cannot remove the final').count()).toBe(0)
     const activitiesAfterFinalManager = await fetchStatus(
       firstPage,
       `/api/v1/review-cases/${processCase.id}/activities`,

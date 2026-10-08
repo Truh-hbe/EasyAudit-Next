@@ -92,6 +92,9 @@ test('超出行数上限时显示 422 提示且不下载', async ({ page }) => {
   await page.route((url) => url.pathname === EXPORT_PATH, (route) =>
     fulfillJson(route, 422, {
       detail: 'Export exceeds the limit of 10000 rows; narrow the filters and retry',
+      code: 'export.row_limit_exceeded',
+      params: { max_rows: 10000 },
+      errors: [],
     }),
   )
   let downloaded = false
@@ -102,9 +105,8 @@ test('超出行数上限时显示 422 提示且不下载', async ({ page }) => {
   await page.goto('/management')
   await page.getByRole('button', { name: '导出 CSV' }).click()
 
-  await expect(page.getByRole('alert')).toHaveText(
-    'Export exceeds the limit of 10000 rows; narrow the filters and retry',
-  )
+  await expect(page.getByRole('alert')).toHaveText('导出行数超过 10000 行的上限，请缩小筛选范围后重试。')
+  expect(await page.getByText('Export exceeds').count()).toBe(0)
   await expect(page.getByRole('button', { name: '导出 CSV' })).toBeEnabled()
   expect(downloaded).toBe(false)
 })

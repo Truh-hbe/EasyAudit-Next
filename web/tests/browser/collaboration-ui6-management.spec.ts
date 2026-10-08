@@ -162,7 +162,8 @@ test('管理视图空数据与加载失败', async ({ page }) => {
       : fulfillJson(route, 200, listBody([])),
   )
   await page.goto('/management')
-  await expect(page.getByRole('alert').filter({ hasText: 'boom' })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: '请求失败（状态码 500）' })).toBeVisible()
+  expect(await page.getByText('boom').count()).toBe(0)
   await expect(page.getByText('数据时间')).toHaveCount(0)
 
   fail = false
@@ -266,7 +267,8 @@ test('管理进度加载失败可重新加载', async ({ page }) => {
     fail ? fulfillJson(route, 500, { detail: 'boom' }) : fulfillJson(route, 200, progressBody()),
   )
   await page.goto('/management/review-cases/case-1')
-  await expect(page.getByRole('alert').filter({ hasText: 'boom' })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: '请求失败（状态码 500）' })).toBeVisible()
+  expect(await page.getByText('boom').count()).toBe(0)
   fail = false
   await page.getByRole('button', { name: '重新加载' }).click()
   await expect(page.getByRole('heading', { name: 'Progress case', level: 1 })).toBeVisible()

@@ -178,6 +178,7 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
     standard_reference: formValue(values, 'standard_reference'),
     scope_summary: formValue(values, 'scope_summary'),
   }),
+  caseFieldLabels: { standard_reference: '标准 / 依据', scope_summary: '范围摘要' },
   caseMemberRoleOptions: [
     { roleKey: 'lead', label: '审查组长' },
     { roleKey: 'auditor', label: '审查员' },
@@ -196,6 +197,7 @@ export const COMPLIANCE_REVIEW_V1_UI: ScenarioUiAdapter = {
     criterion_reference: formValue(values, 'criterion_reference'),
     finding_type: formValue(values, 'finding_type'),
   }),
+  findingFieldLabels: { criterion_reference: '条款 / 要求', finding_type: '发现项类型' },
   participantOptions: [
     {
       roleKey: 'responsible_department',

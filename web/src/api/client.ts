@@ -20,21 +20,66 @@ function parseRetryAfter(
   return null
 }
 
+export interface FieldRuleError {
+  field: string
+  code: string
+  params: Record<string, unknown>
+}
+
+// 服务端结构化错误：code/params/errors 是契约，detail 是英文排障文本，界面不得显示。
+export interface RuleErrorBody {
+  code: string | null
+  params: Record<string, unknown>
+  errors: FieldRuleError[]
+}
+
+const NO_RULE_BODY: RuleErrorBody = { code: null, params: {}, errors: [] }
+
 export class ApiError extends Error {
   readonly status: number
+  // 英文，仅供排障/日志；不要显示在界面上。
   readonly detail: string
   readonly retryAfter: number | null
+  readonly code: string | null
+  readonly params: Record<string, unknown>
+  readonly errors: FieldRuleError[]
 
   constructor(
     status: number,
     detail: string,
     retryAfter?: number | Headers | { get(name: string): string | null } | null,
+    rule: RuleErrorBody = NO_RULE_BODY,
   ) {
-    super(detail)
+    // Error.message 常被直接显示（`error instanceof Error ? error.message`），所以不放后端文本。
+    super(`请求失败（状态码 ${status}）`)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
     this.retryAfter = parseRetryAfter(retryAfter)
+    this.code = rule.code
+    this.params = rule.params
+    this.errors = rule.errors
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function parseRuleErrorBody(payload: unknown): RuleErrorBody {
+  if (!isRecord(payload)) return NO_RULE_BODY
+  const errors: FieldRuleError[] = []
+  if (Array.isArray(payload.errors)) {
+    for (const item of payload.errors as unknown[]) {
+      if (isRecord(item) && typeof item.field === 'string' && typeof item.code === 'string') {
+        errors.push({ field: item.field, code: item.code, params: isRecord(item.params) ? item.params : {} })
+      }
+    }
+  }
+  return {
+    code: typeof payload.code === 'string' ? payload.code : null,
+    params: isRecord(payload.params) ? payload.params : {},
+    errors,
   }
 }
 
@@ -137,6 +182,7 @@ async function request<T>(
       response.status,
       safeDetail(payload, `Request failed with HTTP ${response.status}`),
       response.headers,
+      parseRuleErrorBody(payload),
     )
   }
 
@@ -188,10 +234,12 @@ export async function sessionApiDownload(
     if (response.status === 401) {
       signalSessionUnauthorized(requestGeneration)
     }
+    const body = await parseResponseBody(response)
     throw new ApiError(
       response.status,
-      safeDetail(await parseResponseBody(response), `Request failed with HTTP ${response.status}`),
+      safeDetail(body, `Request failed with HTTP ${response.status}`),
       response.headers,
+      parseRuleErrorBody(body),
     )
   }
   return {

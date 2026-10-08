@@ -288,7 +288,12 @@ test('Finding creation uses server response as truth and validation failure crea
       if (route.request().method() === 'POST') {
         return shouldSucceed
           ? fulfillJson(route, 201, findingResponse('finding-new', 'open'))
-          : fulfillJson(route, 422, { detail: 'Scenario validation failed' })
+          : fulfillJson(route, 422, {
+              detail: 'Scenario validation failed',
+              code: 'request.invalid',
+              params: {},
+              errors: [{ field: 'issue_type', code: 'required', params: {} }],
+            })
       }
       return fulfillJson(route, 200, [])
     },
@@ -299,7 +304,8 @@ test('Finding creation uses server response as truth and validation failure crea
   await page.getByLabel('问题类型').fill('control_gap')
   await page.getByLabel('项目类别').fill('assembly')
   await page.getByRole('button', { name: '新建发现项' }).click()
-  await expect(page.getByRole('alert')).toContainText('Scenario validation failed')
+  await expect(page.getByText('请填写问题类型')).toBeVisible() // 挂在字段上
+  expect(await page.getByText('Scenario validation failed').count()).toBe(0)
   await expect(page.getByText('暂无可见的发现项。')).toBeVisible()
   await expect(page).toHaveURL(/\/review-cases\/case-1$/)
 

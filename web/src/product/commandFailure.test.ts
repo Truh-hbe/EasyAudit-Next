@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '../api/client'
+import { ruleError } from '../api/ruleErrorFixture'
 import { classifyCommandFailure, failureNeedsRefresh } from './commandFailure'
 
-const classify = (error: unknown, fields: string[] = []) => classifyCommandFailure(error, { label: '开始整改项', fields })
+const classify = (error: unknown, fields: Record<string, string> = {}) => classifyCommandFailure(error, { label: '开始整改项', fields })
 
 describe('classifyCommandFailure', () => {
   it('treats 401 as a session matter with no page text', () => {
@@ -24,36 +25,64 @@ describe('classifyCommandFailure', () => {
     expect(classify(new ApiError(503, 'down')).message).toContain('稍后手动重试')
   })
 
-  it('maps 422 segments to fields and keeps the rest as page text', () => {
-    const failure = classify(new ApiError(422, 'root_cause is required; something else'), ['root_cause'])
-    expect(failure.fieldErrors).toEqual({ root_cause: 'root_cause is required' })
-    expect(failure.message).toBe('something else')
-    expect(classify(new ApiError(422, 'root_cause is required'), ['root_cause']).message).toBe('')
-  })
-
-  it('does not match a field name inside a longer identifier', () => {
-    expect(classify(new ApiError(422, 'my_reason_x invalid'), ['reason']).fieldErrors).toEqual({})
-  })
-
-  it('splits 409 into lifecycle change, duplicate relation and unclassified conflict without leaking detail', () => {
-    for (const detail of ['Concurrent Finding transition', 'Concurrent ActionItem transition', 'Concurrent ReviewCase transition']) {
-      const failure = classify(new ApiError(409, detail))
-      expect(failure.kind).toBe('changed')
-      expect(failure.message).toContain('数据已变化，正在获取最新状态')
-      expect(failure.message).not.toContain('Concurrent')
-    }
-    const duplicate = classify(
-      new ApiError(409, '(psycopg.errors.UniqueViolation) duplicate key value violates unique constraint "uq_x"'),
+  it('maps 422 field errors onto labelled fields in Chinese and keeps the rest as page text', () => {
+    const fields = { root_cause: '根本原因', title: '标题' }
+    const onlyFields = classify(
+      ruleError(422, 'request.invalid', {}, [{ field: 'root_cause', code: 'required', params: {} }]),
+      fields,
     )
-    expect(duplicate.kind).toBe('duplicate')
-    expect(duplicate.message).toContain('已在列表中')
-    expect(duplicate.message).not.toContain('uq_x')
-    const other = classify(new ApiError(409, 'something unexpected: secret'))
-    expect(other.kind).toBe('conflict')
-    expect(other.message).toContain('冲突')
-    expect(other.message).not.toContain('secret')
-    for (const detail of ['Concurrent Finding transition', 'duplicate key', 'other']) {
-      expect(failureNeedsRefresh(classify(new ApiError(409, detail)))).toBe(true)
+    expect(onlyFields).toEqual({ kind: 'rejected', message: '', fieldErrors: { root_cause: '请填写根本原因' } })
+
+    const withUnlabelled = classify(
+      ruleError(422, 'request.invalid', {}, [
+        { field: 'title', code: 'too_long', params: { max: 300 } },
+        { field: 'other_field', code: 'required', params: {} },
+      ]),
+      fields,
+    )
+    expect(withUnlabelled.fieldErrors).toEqual({ title: '标题不能超过 300 个字符' })
+    expect(withUnlabelled.message).toContain('提交内容不符合要求')
+  })
+
+  it('does not match a field that is not labelled, even by a similar name', () => {
+    const failure = classify(ruleError(422, 'request.invalid', {}, [{ field: 'my_reason_x', code: 'required', params: {} }]), {
+      reason: '原因',
+    })
+    expect(failure.fieldErrors).toEqual({})
+  })
+
+  it('maps a rule code to Chinese with role names, and never shows the English detail', () => {
+    const failure = classify(
+      ruleError(422, 'finding.missing_participant_roles', { roles: ['responsible_department', 'owner'] }),
+    )
+    expect(failure.kind).toBe('rejected')
+    expect(failure.message).toBe('签发前需要先指定：责任部门、整改负责人。')
+    expect(failure.message).not.toContain('Backend')
+  })
+
+  it('uses a generic Chinese message for unknown, missing or malformed codes', () => {
+    for (const error of [
+      ruleError(422, 'future.unknown_code'),
+      ruleError(422, null),
+      new ApiError(422, 'root_cause is required'),
+      new ApiError(422, 'Request failed with HTTP 422'),
+    ]) {
+      const failure = classify(error)
+      expect(failure.message).toBe('开始整改项不满足当前规则，未完成。')
+      expect(failure.fieldErrors).toEqual({})
+    }
+    expect(classify(ruleError(422, 'finding.missing_participant_roles', { roles: ['ghost'] })).message).toBe(
+      '签发前需要先指定：未知角色。',
+    )
+  })
+
+  it('reports every 409 as a possible change without classifying or showing detail', () => {
+    for (const detail of ['Concurrent Finding transition', '(psycopg.errors.UniqueViolation) duplicate key', 'secret']) {
+      const failure = classify(new ApiError(409, detail))
+      expect(failure.kind).toBe('conflict')
+      expect(failure.message).toContain('开始整改项未完成')
+      expect(failure.message).not.toContain(detail)
+      expect(failureNeedsRefresh(failure)).toBe(true)
     }
   })
 
@@ -64,14 +93,13 @@ describe('classifyCommandFailure', () => {
     expect(classify(new ApiError(415, 'type')).kind).toBe('type-not-allowed')
   })
 
-  it('shows backend detail only for 422; other 4xx get a neutral message', () => {
+  it('shows no backend detail for any status; other 4xx get a neutral message', () => {
     for (const status of [400, 405, 418]) {
       const failure = classify(new ApiError(status, 'internal role detail'))
       expect(failure.kind).toBe('rejected')
       expect(failure.message).not.toContain('internal role detail')
       expect(failure.message).toContain('开始整改项')
     }
-    expect(classify(new ApiError(422, 'title is required'), ['title']).fieldErrors.title).toBe('title is required')
   })
 
   it('refreshes only when server truth may have changed', () => {

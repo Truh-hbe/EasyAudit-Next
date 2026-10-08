@@ -135,7 +135,12 @@ const failures = [
   { status: 413, detail: 'Evidence exceeds the maximum size of 26214400 bytes', text: '文件超过大小上限，未上传。' },
   { status: 415, detail: 'Content type is not allowed for Evidence', text: '文件类型不被允许，或扩展名与类型不一致。' },
   { status: 409, detail: 'Concurrent Finding transition', text: '数据已变化，正在获取最新状态。' },
-  { status: 422, detail: 'Evidence cannot be registered for a cancelled ActionItem', text: '无法登记证据：Evidence cannot be registered for a cancelled ActionItem' },
+  {
+    status: 422,
+    detail: 'Evidence cannot be registered for a cancelled ActionItem',
+    code: 'action.evidence_on_cancelled',
+    text: '整改项已取消，不能再登记证据。',
+  },
 ]
 
 for (const failure of failures) {
@@ -144,7 +149,7 @@ for (const failure of failures) {
     await stubActionPage(page, () => [])
     await page.route((url) => url.pathname === UPLOAD_PATH, (route) => {
       attempts += 1
-      return fulfillJson(route, failure.status, { detail: failure.detail })
+      return fulfillJson(route, failure.status, { detail: failure.detail, ...('code' in failure ? { code: failure.code, params: {}, errors: [] } : {}) })
     })
 
     await page.goto('/action-items/action-1')
@@ -156,6 +161,7 @@ for (const failure of failures) {
     await page.getByRole('button', { name: '上传证据' }).click()
 
     await expect(page.getByRole('alert')).toContainText(failure.text)
+    expect(await page.getByText(failure.detail).count()).toBe(0)
     await page.waitForTimeout(500)
     expect(attempts).toBe(1)
     await expect(page.getByRole('button', { name: '上传证据' })).toBeEnabled() // user decides to retry

@@ -42,7 +42,8 @@ interface PlanFormValues {
   planned_end_at: string | undefined
 }
 
-const PLAN_FIELDS = ['title', 'planned_start_at', 'planned_end_at'] as const
+const PLAN_FIELD_LABELS = { title: '计划名称', planned_start_at: '计划开始时间', planned_end_at: '计划结束时间' } as const
+const PLAN_FIELDS = Object.keys(PLAN_FIELD_LABELS)
 const TIME_ZONE_HINT_ID = 'plan-time-zone-hint'
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -68,7 +69,7 @@ export async function executePlanSubmission(
     if (!isDefinitivePlanRejection(error)) {
       return { state: { status: 'unknown', message: unknownOutcomeMessage('审查计划', '重试保存计划', error) } }
     }
-    const view = describeRejection(error, '审查计划创建被服务器拒绝，请修正后重试。', PLAN_FIELDS)
+    const view = describeRejection(error, '创建审查计划', PLAN_FIELD_LABELS)
     return { state: { status: 'rejected', message: view.message, fieldErrors: view.fieldErrors } }
   }
 }

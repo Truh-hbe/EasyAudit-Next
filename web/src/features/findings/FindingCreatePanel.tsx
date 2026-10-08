@@ -21,6 +21,7 @@ interface FindingCreatePanelProps {
 
 const SEVERITIES: readonly FindingSeverity[] = ['low', 'medium', 'high', 'critical']
 const BASE_FIELDS = ['title', 'description', 'severity'] as const
+const BASE_FIELD_LABELS = { title: '标题', description: '描述', severity: '严重度' } as const
 
 function fieldError(errors: Record<string, string>, name: string) {
   const text = errors[name]
@@ -107,7 +108,7 @@ export function FindingCreatePanel({ reviewCase }: FindingCreatePanelProps) {
     } catch (error) {
       const classified = classifyCommandFailure(error, {
         label: '创建发现项',
-        fields: [...BASE_FIELDS, ...scenarioFieldNames],
+        fields: { ...BASE_FIELD_LABELS, ...scenarioAdapter.findingFieldLabels },
       })
       // 创建请求没有幂等键：结果未知时不能直接重试，先核对列表以免重复创建。
       const next =

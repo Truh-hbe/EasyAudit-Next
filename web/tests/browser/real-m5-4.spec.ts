@@ -170,7 +170,7 @@ test('real administrator configures users, protects Case managers, and resets cr
     await userEditDrawer.getByRole('button', { name: '保存用户' }).click()
     await confirmDisableUser(page)
     expect((await conflictResponsePromise).status()).toBe(409)
-    await expect(userEditDrawer.getByRole('alert').filter({ hasText: '状态冲突' })).toBeVisible()
+    await expect(userEditDrawer.getByRole('alert').filter({ hasText: '数据已变化' })).toBeVisible()
 
     await targetPage.goto(`/review-cases/${CASE_ID}`)
     await expect(targetPage.getByRole('heading', { name: 'M5.4 Browser Manager Case' })).toBeVisible()

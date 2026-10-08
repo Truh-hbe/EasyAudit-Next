@@ -297,7 +297,7 @@ export function FindingDetailPage() {
 
   async function createAction(input: ActionCreateInput): Promise<CommandResult> {
     return run('新建整改项', () => createActionItem(targetId, input), {
-      fields: ['title', 'due_at'],
+      fields: { title: '标题', due_at: '到期时间' },
       notify: false,
       // 创建请求没有幂等键：结果未知时不能直接重试，先核对列表以免重复创建。
       unknownResultMessage:

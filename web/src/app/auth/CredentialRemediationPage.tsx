@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 import { changeOwnPassword } from '../../api/auth'
 import { ApiError } from '../../api/client'
+import { ruleMessage } from '../../product/ruleMessages'
 import { FieldError } from '../../ui/FieldError'
 import { LogoutButton } from './LogoutButton'
 import { useSession } from './session'
@@ -38,7 +39,11 @@ export function CredentialRemediationPage() {
       await refresh()
     } catch (caught) {
       if (caught instanceof ApiError && [400, 409, 422].includes(caught.status)) {
-        setError(caught.detail)
+        setError(
+          caught.status === 409
+            ? '当前账号没有可修改的本地密码，请联系管理员。'
+            : ruleMessage(caught.code, caught.params, '修改密码'),
+        )
       } else if (!(caught instanceof ApiError && caught.status === 401)) {
         setError('暂时无法修改密码，请重试')
       }

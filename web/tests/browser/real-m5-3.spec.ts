@@ -97,7 +97,9 @@ test('real Case team searches all exact roles, adds, removes, and protects final
     LEAD_DISPLAY_NAME,
   )
   expect(finalManagerResponse.status()).toBe(409)
-  await expect(team.getByText('审查活动至少需要保留一名有效的审查组长，无法移除最后一名管理者。')).toBeVisible()
+  // 409 暂无结构化原因：界面不显示后端 detail，提示里同时说明“最后一名管理者”这一可能原因。
+  await expect(team.getByText(/不能移除最后一名管理者/)).toBeVisible()
+  expect(await page.getByText('Cannot remove the final').count()).toBe(0)
   await expect(teamMemberRow(page, LEAD_DISPLAY_NAME)).toHaveCount(1)
 })
 

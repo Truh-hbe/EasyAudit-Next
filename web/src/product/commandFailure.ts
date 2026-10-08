@@ -1,4 +1,5 @@
 import { ApiError } from '../api/client'
+import { fieldMessage, ruleMessage } from './ruleMessages'
 
 // 对应 design.md「交互状态」：写请求失败按原因区分；409 与"写入结果未知"是两回事。
 export type CommandFailureKind =
@@ -6,8 +7,6 @@ export type CommandFailureKind =
   | 'busy'
   | 'forbidden'
   | 'gone'
-  | 'changed'
-  | 'duplicate'
   | 'conflict'
   | 'retry-later'
   | 'too-large'
@@ -31,21 +30,10 @@ export const TOO_LARGE_TEXT = '文件超过大小上限，未上传。'
 export const TYPE_NOT_ALLOWED_TEXT =
   '文件类型不被允许，或扩展名与类型不一致。允许：PDF、PNG、JPEG、DOCX、XLSX、PPTX、TXT、CSV。'
 
-// 后端目前没有结构化的 409 原因字段，只能按 detail 文案分类（与 #83 的 classifyTeamFailure 同样存在文案耦合）：
-// - 生命周期/并发：Concurrent Finding / ReviewCase / ActionItem transition（见 review_core/application）；
-// - 重复关系：参与人、执行人已存在，后端以 IntegrityError 的文本返回（唯一约束冲突）；
-// - 其余一律按无法分类的冲突处理。分类之外的 detail 不展示给用户（可能含数据库或角色细节）。
-const CONCURRENT_TRANSITION = /^Concurrent (Finding|ReviewCase|ActionItem) transition$/
-const DUPLICATE_RELATION = /duplicate key|unique ?constraint|UniqueViolation/i
-
-export function classifyConflict(detail: string, label: string): Pick<CommandFailure, 'kind' | 'message'> {
-  if (CONCURRENT_TRANSITION.test(detail)) {
-    return { kind: 'changed', message: `数据已变化，正在获取最新状态。${label}未完成，请确认后重新操作。` }
-  }
-  if (DUPLICATE_RELATION.test(detail)) {
-    return { kind: 'duplicate', message: `该成员已在列表中，或列表刚刚发生变化，${label}未完成。正在获取最新状态。` }
-  }
-  return { kind: 'conflict', message: `${label}与服务器当前状态冲突，未完成。正在获取最新状态，请确认后再试。` }
+// 409 的响应体目前没有结构化原因（后续单独加码），所以不按 detail 区分，也不显示 detail：
+// 并发变化、重复关系、其他冲突都提示"可能已变化"，并由调用方重新读取最新状态。
+export function conflictMessage(label: string): string {
+  return `数据已变化，正在获取最新状态。${label}未完成，请确认当前状态后再操作；也可能是该操作与现有数据冲突。`
 }
 
 export const BUSY_FAILURE: CommandFailure = { kind: 'busy', message: '', fieldErrors: {} }
@@ -54,35 +42,38 @@ function waitText(error: ApiError): string {
   return error.retryAfter === null ? '稍后' : `${error.retryAfter} 秒后`
 }
 
-// 422 的服务端提示是以 "; " 连接的英文片段，片段以字段名开头（如 `root_cause is required`）。
-// 能对应字段的挂到字段上，其余合并为页面级提示；原样保留服务端文本，不做改写。
-function splitFieldErrors(detail: string, fields: readonly string[]): Pick<CommandFailure, 'message' | 'fieldErrors'> {
+// 字段名 → 界面中文标签。只有出现在这里的字段，服务端字段错误才会挂到对应表单项。
+export type FieldLabels = Readonly<Record<string, string>>
+
+// 422：字段错误按 `errors[]` 的 field/code 生成中文挂到字段；页面级提示按 code 映射。
+// 不读取、不显示 `detail`；未知 code 用通用中文。
+function classifyRejection(error: ApiError, label: string, fields: FieldLabels): Pick<CommandFailure, 'message' | 'fieldErrors'> {
   const fieldErrors: Record<string, string> = {}
-  const rest: string[] = []
-  for (const segment of detail.split('; ')) {
-    const field = fields.find((name) => new RegExp(`(^|[^a-z0-9_])${name}([^a-z0-9_]|$)`).test(segment))
-    if (field === undefined) {
-      rest.push(segment)
-    } else {
-      fieldErrors[field] = fieldErrors[field] === undefined ? segment : `${fieldErrors[field]}; ${segment}`
+  let unmatched = false
+  for (const item of error.errors) {
+    const fieldLabel = Object.hasOwn(fields, item.field) ? fields[item.field] : undefined
+    if (fieldLabel === undefined) {
+      unmatched = true
+    } else if (fieldErrors[item.field] === undefined) {
+      fieldErrors[item.field] = fieldMessage(item.code, item.field, fieldLabel, item.params)
     }
   }
-  return { fieldErrors, message: rest.join('; ') }
+  const fieldsOnly = error.code === 'request.invalid' && Object.keys(fieldErrors).length > 0 && !unmatched
+  return { fieldErrors, message: fieldsOnly ? '' : ruleMessage(error.code, error.params, label) }
 }
 
 export interface ClassifyOptions {
   // 操作名称，用于生成提示，如 "开始整改项"。
   label: string
-  // 调用方能显示服务端字段提示的字段名。
-  fields?: readonly string[]
+  // 调用方能显示服务端字段提示的字段（字段名 → 中文标签）。
+  fields?: FieldLabels
   // 上传请求：413/415 与连接中断的措辞不同，不会自动重传。
   upload?: boolean
 }
 
 export function classifyCommandFailure(error: unknown, options: ClassifyOptions): CommandFailure {
-  const { label, fields = [], upload = false } = options
+  const { label, fields = {}, upload = false } = options
   if (error instanceof ApiError) {
-    const detail = error.detail
     switch (error.status) {
       case 401:
         return { kind: 'session', message: '', fieldErrors: {} }
@@ -92,19 +83,13 @@ export function classifyCommandFailure(error: unknown, options: ClassifyOptions)
       case 404:
         return { kind: 'gone', message: NOT_AVAILABLE_TEXT, fieldErrors: {} }
       case 409:
-        return { ...classifyConflict(detail, label), fieldErrors: {} }
+        return { kind: 'conflict', message: conflictMessage(label), fieldErrors: {} }
       case 413:
         return { kind: 'too-large', message: TOO_LARGE_TEXT, fieldErrors: {} }
       case 415:
         return { kind: 'type-not-allowed', message: TYPE_NOT_ALLOWED_TEXT, fieldErrors: {} }
-      case 422: {
-        const split = splitFieldErrors(detail, fields)
-        return {
-          kind: 'rejected',
-          message: upload && split.message !== '' ? `无法登记证据：${split.message}` : split.message,
-          fieldErrors: split.fieldErrors,
-        }
-      }
+      case 422:
+        return { kind: 'rejected', ...classifyRejection(error, label, fields) }
       case 429:
       case 503:
         return {
@@ -113,7 +98,7 @@ export function classifyCommandFailure(error: unknown, options: ClassifyOptions)
           fieldErrors: {},
         }
       default:
-        // 只有 422 可以显示服务端 detail；其余 4xx（400、405 等）用中性文案，不泄露后端原文。
+        // 其余 4xx（400、405 等）用中性文案；任何状态码都不显示后端 detail。
         if (error.status < 500) return { kind: 'rejected', message: `${label}未被服务器接受，请刷新后确认当前状态再试。`, fieldErrors: {} }
     }
   }
@@ -131,8 +116,6 @@ export function failureNeedsRefresh(failure: CommandFailure): boolean {
   return (
     failure.kind === 'forbidden' ||
     failure.kind === 'gone' ||
-    failure.kind === 'changed' ||
-    failure.kind === 'duplicate' ||
     failure.kind === 'conflict' ||
     failure.kind === 'rejected' ||
     failure.kind === 'unknown-result'
@@ -141,7 +124,7 @@ export function failureNeedsRefresh(failure: CommandFailure): boolean {
 
 // 需要用户留意"可能已变化 / 未确认"的提示用警告色，明确拒绝用错误色。
 export function failureAlertType(failure: CommandFailure): 'warning' | 'error' {
-  return failure.kind === 'changed' || failure.kind === 'duplicate' || failure.kind === 'unknown-result' || failure.kind === 'retry-later'
+  return failure.kind === 'conflict' || failure.kind === 'unknown-result' || failure.kind === 'retry-later'
     ? 'warning'
     : 'error'
 }

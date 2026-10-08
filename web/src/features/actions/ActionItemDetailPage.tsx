@@ -32,7 +32,7 @@ import {
   failureAlertType,
   failureNeedsRefresh,
 } from '../../product/commandFailure'
-import type { CommandFailure, CommandResult } from '../../product/commandFailure'
+import type { CommandFailure, CommandResult, FieldLabels } from '../../product/commandFailure'
 import { formatDateTime } from '../../product/format'
 import { assignmentRoleName } from '../../product/terms'
 import { resolveFindingScenarioAdapter } from '../../scenarios'
@@ -180,7 +180,7 @@ export function ActionItemDetailPage() {
     targetId: string,
     label: string,
     command: () => Promise<unknown>,
-    options: { fields?: readonly string[]; notify?: boolean } = {},
+    options: { fields?: FieldLabels; notify?: boolean } = {},
   ): Promise<CommandResult> {
     if (currentActionItemIdRef.current !== targetId || busyRef.current) return { ok: false, failure: BUSY_FAILURE }
     const generation = generationRef.current
@@ -297,7 +297,7 @@ export function ActionItemDetailPage() {
   })
   const refreshingOf = (state: { status: string; refreshing?: boolean }) => state.status === 'ready' && state.refreshing === true
   const overviewRefreshing = primary.refreshing || refreshingOf(assignees) || refreshingOf(findingState)
-  const run = (label: string, command: () => Promise<unknown>, options?: { fields?: readonly string[]; notify?: boolean }) =>
+  const run = (label: string, command: () => Promise<unknown>, options?: { fields?: FieldLabels; notify?: boolean }) =>
     runCommand(action.id, label, command, options)
 
   return (
@@ -552,7 +552,7 @@ export function ActionItemDetailPage() {
             search={(_role, query, signal) => searchActionTransferCandidates(action.id, query, signal)}
             add={(_role, candidate, reason) =>
               run('转交并重开整改项', () => transferAndReopenActionItem(action.id, candidate.actor_id, reason), {
-                fields: ['reason'],
+                fields: { reason: '转交原因' },
                 notify: false,
               })
             }
@@ -571,7 +571,7 @@ export function ActionItemDetailPage() {
             danger
             run={(reason) =>
               run('取消整改项', () => transitionActionItem(action.id, 'cancel', reason), {
-                fields: ['reason'],
+                fields: { reason: '取消原因' },
                 notify: false,
               })
             }

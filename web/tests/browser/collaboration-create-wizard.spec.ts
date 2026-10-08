@@ -17,6 +17,9 @@ const catalog = [
 
 const KEY_REUSE = 'Idempotency-Key reused with a different request'
 
+const ENGLISH_CONFLICT = 'Scenario version is no longer published'
+const ENGLISH_UNMAPPED = 'Plan dates are outside the allowed range'
+
 type Outcome = 'abort' | 'server-error' | 'key-reuse' | 'conflict' | 'rejected' | 'dates-rejected' | 'unmapped' | 'created'
 
 function fulfillJson(route: Route, status: number, body: unknown) {
@@ -46,17 +49,26 @@ async function stubCreate(page: Page, path: string, outcomes: Outcome[], created
       case 'key-reuse':
         return fulfillJson(route, 409, { detail: KEY_REUSE })
       case 'conflict':
-        return fulfillJson(route, 409, { detail: 'Scenario version is no longer published' })
+        return fulfillJson(route, 409, { detail: ENGLISH_CONFLICT })
       case 'rejected':
         return fulfillJson(route, 422, {
           detail: 'review_type must be a non-blank string; area_code must not contain surrounding whitespace',
+          code: 'request.invalid',
+          params: {},
+          errors: [
+            { field: 'review_type', code: 'required', params: {} },
+            { field: 'area_code', code: 'padded', params: {} },
+          ],
         })
       case 'dates-rejected':
         return fulfillJson(route, 422, {
           detail: 'planned_end_at must be greater than or equal to planned_start_at',
+          code: 'request.invalid',
+          params: {},
+          errors: [{ field: 'planned_end_at', code: 'range', params: {} }],
         })
       case 'unmapped':
-        return fulfillJson(route, 422, { detail: 'Plan dates are outside the allowed range' })
+        return fulfillJson(route, 422, { detail: ENGLISH_UNMAPPED, code: 'rule.unspecified', params: {}, errors: [] })
       case 'created':
         return fulfillJson(route, 201, created)
     }
@@ -194,7 +206,8 @@ test.describe('plan step: idempotent creation', () => {
     await fillPlan(page)
     await page.getByRole('button', { name: '保存计划并继续' }).click()
     const alert = page.getByRole('alert')
-    await expect(alert).toContainText('Scenario version is no longer published')
+    await expect(alert).toContainText('创建审查计划与服务器当前状态冲突')
+    expect(await page.getByText(ENGLISH_CONFLICT).count()).toBe(0)
     await expect(alert).not.toContainText('不一致')
     await expect(page.getByLabel('计划名称')).toHaveValue('向导计划')
   })
@@ -204,24 +217,35 @@ test.describe('plan step: idempotent creation', () => {
     await page.route('**/api/v1/review-plans', async (route) => {
       if (route.request().method() !== 'POST') return route.fallback()
       const mapped = (route.request().postDataJSON() as { title: string }).title === '向导计划'
-      return fulfillJson(route, 422, {
-        detail: mapped ? 'planned_start_at must be a valid time' : 'Plan dates are outside the allowed range',
-      })
+      return fulfillJson(
+        route,
+        422,
+        mapped
+          ? {
+              detail: 'planned_start_at must be a valid time',
+              code: 'request.invalid',
+              params: {},
+              errors: [{ field: 'planned_start_at', code: 'invalid_datetime', params: {} }],
+            }
+          : { detail: ENGLISH_UNMAPPED, code: 'rule.unspecified', params: {}, errors: [] },
+      )
     })
     await fillPlan(page)
     await page.getByRole('button', { name: '保存计划并继续' }).click()
-    await expect(page.getByText('planned_start_at must be a valid time')).toBeVisible()
+    await expect(page.getByText('计划开始时间的时间格式无效')).toBeVisible()
+    expect(await page.getByText('planned_start_at must be a valid time').count()).toBe(0)
     await expect(page.getByLabel('计划开始时间（可选）')).toBeFocused()
     await expect(page.getByRole('alert')).toHaveCount(0)
     await expect(page.getByLabel('计划名称')).toHaveValue('向导计划')
 
     // 修改该字段后字段提示消失。
     await enterDateTime(page, '计划开始时间（可选）', '2026/08/29 18:00')
-    await expect(page.getByText('planned_start_at must be a valid time')).toHaveCount(0)
+    await expect(page.getByText('计划开始时间的时间格式无效')).toHaveCount(0)
 
     await page.getByLabel('计划名称').fill('另一个计划')
     await page.getByRole('button', { name: '重试保存计划' }).click()
-    await expect(page.getByRole('alert')).toHaveText('Plan dates are outside the allowed range')
+    await expect(page.getByRole('alert')).toHaveText('创建审查计划不满足当前规则，未完成。')
+    expect(await page.getByText(ENGLISH_UNMAPPED).count()).toBe(0)
     await expect(page.getByLabel('计划名称')).toHaveValue('另一个计划')
   })
 })
@@ -492,7 +516,8 @@ test.describe('case step', () => {
     await expect(page.getByRole('alert')).toContainText('当前内容与之前提交的创建请求不一致')
     await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
     await page.getByRole('button', { name: '创建审查活动' }).click()
-    await expect(page.getByRole('alert')).toContainText('Scenario version is no longer published')
+    await expect(page.getByRole('alert')).toContainText('创建审查活动与服务器当前状态冲突')
+    expect(await page.getByText(ENGLISH_CONFLICT).count()).toBe(0)
     await expect(page.getByRole('alert')).not.toContainText('不一致')
     expect(requests).toHaveLength(2)
     expect(requests[1].key).toBe(requests[0].key)
@@ -503,21 +528,23 @@ test.describe('case step', () => {
     const requests = await stubCreate(page, 'review-cases', ['rejected'], { id: 'case-1' })
     await fillCase(page)
     await page.getByRole('button', { name: '创建审查活动' }).click()
-    await expect(page.getByText('review_type must be a non-blank string')).toBeVisible()
-    await expect(page.getByText('area_code must not contain surrounding whitespace')).toBeVisible()
+    await expect(page.getByText('请填写审查类型')).toBeVisible()
+    await expect(page.getByText('区域代码首尾不能有空格')).toBeVisible()
+    expect(await page.getByText('review_type must be').count()).toBe(0)
+    expect(await page.getByText('area_code must not').count()).toBe(0)
     // 按适配器的字段顺序，第一个有错的字段是区域代码。
     await expect(page.getByLabel('区域代码')).toBeFocused()
     // 错误文案关联到输入框，读屏能读到。
     const area = page.getByLabel('区域代码')
     await expect(area).toHaveAttribute('aria-invalid', 'true')
-    await expect(area).toHaveAccessibleDescription('area_code must not contain surrounding whitespace')
+    await expect(area).toHaveAccessibleDescription('区域代码首尾不能有空格')
     await expect(page.getByLabel('审查类型')).toHaveAttribute('aria-invalid', 'true')
-    await expect(page.getByLabel('审查类型')).toHaveAccessibleDescription('review_type must be a non-blank string')
+    await expect(page.getByLabel('审查类型')).toHaveAccessibleDescription('请填写审查类型')
     await expect(page.getByRole('alert')).toHaveCount(0)
     await expect(page.getByLabel('审查活动名称')).toHaveValue('向导活动')
 
     await page.getByLabel('区域代码').fill('area-b')
-    await expect(page.getByText('area_code must not contain surrounding whitespace')).toHaveCount(0)
+    await expect(page.getByText('区域代码首尾不能有空格')).toHaveCount(0)
     await expect(area).not.toHaveAttribute('aria-invalid', 'true')
     await page.getByRole('button', { name: '创建审查活动' }).click()
     await expect.poll(() => requests.length).toBe(2)
@@ -529,7 +556,8 @@ test.describe('case step', () => {
     await stubCreate(page, 'review-cases', ['unmapped'], { id: 'case-1' })
     await fillCase(page)
     await page.getByRole('button', { name: '创建审查活动' }).click()
-    await expect(page.getByRole('alert')).toHaveText('Plan dates are outside the allowed range')
+    await expect(page.getByRole('alert')).toHaveText('创建审查活动不满足当前规则，未完成。')
+    expect(await page.getByText(ENGLISH_UNMAPPED).count()).toBe(0)
   })
 
   test('dates are optional: left empty they are omitted, never copied from the plan', async ({ page }) => {
@@ -599,16 +627,17 @@ test.describe('case step', () => {
     await enterDateTime(page, '活动结束时间（可选）', '2026/09/30 18:00')
     await page.getByRole('button', { name: '创建审查活动' }).click()
     const end = page.getByLabel('活动结束时间（可选）')
-    await expect(page.getByText('planned_end_at must be greater than or equal to planned_start_at')).toBeVisible()
+    await expect(page.getByText('活动结束时间不能早于开始时间')).toBeVisible()
+    expect(await page.getByText('planned_end_at must be').count()).toBe(0)
     await expect(end).toBeFocused()
-    await expect(end).toHaveAccessibleDescription(/planned_end_at must be greater than or equal to planned_start_at/)
+    await expect(end).toHaveAccessibleDescription(/活动结束时间不能早于开始时间/)
     await expect(page.getByLabel('活动开始时间（可选）')).toHaveValue('2026/09/01 09:00')
     await expect(end).toHaveValue('2026/09/30 18:00')
     await expect(page.getByRole('alert')).toHaveCount(0)
 
     // 修改字段后错误清除；服务器明确拒绝过，重试沿用同一键（拒绝不会占用键）。
     await enterDateTime(page, '活动结束时间（可选）', '2026/10/01 18:00')
-    await expect(page.getByText('planned_end_at must be')).toHaveCount(0)
+    await expect(page.getByText('活动结束时间不能早于开始时间')).toHaveCount(0)
     await page.getByRole('button', { name: '创建审查活动' }).click()
     await expect(page).toHaveURL(/\/review-cases\/case-1$/)
     expect(requests[1].body).toMatchObject({

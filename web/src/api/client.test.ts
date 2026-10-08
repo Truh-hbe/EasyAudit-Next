@@ -35,6 +35,38 @@ describe('shared API boundary', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/me', expect.any(Object))
   })
 
+  it('parses the structured error body and keeps detail out of Error.message', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          detail: 'English detail',
+          code: 'request.invalid',
+          params: { max: 3 },
+          errors: [{ field: 'title', code: 'too_long', params: { max: 300 } }, { nope: true }],
+        }),
+        { status: 422, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const error = await sessionApiDownload('/api/v1/x', 'f.csv').catch((caught: unknown) => caught)
+    expect(error).toMatchObject({
+      status: 422,
+      detail: 'English detail',
+      code: 'request.invalid',
+      params: { max: 3 },
+      errors: [{ field: 'title', code: 'too_long', params: { max: 300 } }],
+    })
+    expect((error as Error).message).toBe('请求失败（状态码 422）')
+
+    fetchMock.mockResolvedValueOnce(new Response('not json', { status: 422 }))
+    expect(await sessionApiDownload('/api/v1/x', 'f.csv').catch((caught: unknown) => caught)).toMatchObject({
+      code: null,
+      params: {},
+      errors: [],
+    })
+  })
+
   it('rejects non-relative API origins', async () => {
     await expect(
       sessionApiRequest('https://api.example.test/api/v1/me'),

@@ -437,7 +437,7 @@ export function ReviewCaseDetailPage() {
       updated = await transitionReviewCase(targetId, command.action, reason ?? null)
       result = { ok: true }
     } catch (error) {
-      result = { ok: false, failure: classifyCommandFailure(error, { label: command.label, fields: ['reason'] }) }
+      result = { ok: false, failure: classifyCommandFailure(error, { label: command.label, fields: { reason: command.reasonLabel ?? '原因' } }) }
     }
     if (generationRef.current !== generation) return result
     busyRef.current = false
@@ -451,7 +451,7 @@ export function ReviewCaseDetailPage() {
       )
     } else if (result.ok === false) {
       // 原因弹层自己显示失败；状态冲突时命令可能随重读消失（弹层随之卸载），所以冲突仍在页面级留一份提示。
-      const dialogShows = command.mode === 'reason' && result.failure.kind !== 'changed' && result.failure.kind !== 'conflict'
+      const dialogShows = command.mode === 'reason' && result.failure.kind !== 'conflict'
       if (!dialogShows && result.failure.message !== '') setNotice(result.failure)
       // 不自动重放；冲突、权限变化或结果未知时只静默重读主资源，由用户核对后再决定。
       if (failureNeedsRefresh(result.failure)) authorization.trigger(authorization.generation(), targetId)

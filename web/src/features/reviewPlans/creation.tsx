@@ -1,4 +1,5 @@
 import { ApiError, isIdempotencyKeyReuse } from '../../api/client'
+import { classifyCommandFailure, type FieldLabels } from '../../product/commandFailure'
 import { FieldError } from '../../ui/FieldError'
 
 export interface RejectionView {
@@ -23,34 +24,16 @@ function waitHint(error: ApiError): string {
   return `请约 ${error.retryAfter} 秒后手动重试。`
 }
 
-// 422 的服务端提示是以 "; " 连接的英文片段，片段以字段名开头（如 `review_type must be ...`）。
-// 能对应字段的挂到字段上，其余合并为页面级提示；原样保留服务端文本，不做改写。
-function splitFieldErrors(detail: string, fields: readonly string[]): RejectionView {
-  const fieldErrors: Record<string, string> = {}
-  const rest: string[] = []
-  for (const segment of detail.split('; ')) {
-    const field = fields.find((name) => new RegExp(`(^|[^a-z0-9_])${name}([^a-z0-9_]|$)`).test(segment))
-    if (field === undefined) {
-      rest.push(segment)
-    } else {
-      fieldErrors[field] = fieldErrors[field] === undefined ? segment : `${fieldErrors[field]}; ${segment}`
-    }
-  }
-  return { fieldErrors, message: rest.join('; ') }
-}
-
-export function describeRejection(error: unknown, fallback: string, fields: readonly string[]): RejectionView {
+// 服务器明确拒绝创建请求：422 按错误码映射中文并挂到字段；任何状态码都不显示后端 detail。
+// `label` 是操作名（如 "创建审查计划"），`fields` 是字段名 → 中文标签。
+export function describeRejection(error: unknown, label: string, fields: FieldLabels): RejectionView {
   if (isIdempotencyKeyReuse(error)) return { fieldErrors: {}, message: IDEMPOTENCY_KEY_REUSE_MESSAGE }
-  if (!(error instanceof ApiError)) {
-    return { fieldErrors: {}, message: error instanceof Error ? error.message : fallback }
+  if (!(error instanceof ApiError)) return { fieldErrors: {}, message: `${label}被服务器拒绝，请修正后重试。` }
+  if (error.status === 409) {
+    return { fieldErrors: {}, message: `${label}与服务器当前状态冲突，未完成。请刷新页面确认后再试。` }
   }
-  if (error.status === 422) {
-    const view = splitFieldErrors(error.detail, fields)
-    if (Object.keys(view.fieldErrors).length > 0) return view
-    return { fieldErrors: {}, message: error.detail }
-  }
-  if (error.status === 409) return { fieldErrors: {}, message: `提交与服务器当前状态冲突：${error.detail}` }
-  return { fieldErrors: {}, message: [error.detail, waitHint(error)].filter((part) => part !== '').join(' ') }
+  const failure = classifyCommandFailure(error, { label, fields })
+  return { fieldErrors: failure.fieldErrors, message: failure.message }
 }
 
 // 网络中断、响应丢失或 5xx：不知道服务器是否已创建。重试沿用原幂等键，不自动重放。

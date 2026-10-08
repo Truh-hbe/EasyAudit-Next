@@ -383,20 +383,21 @@ test('a dropped connection on a command says the outcome is unconfirmed and does
   expect(attempts).toBe(1)
 })
 
-test('assignee drawer maps 422 detail without field names to an alert and keeps the dialog open', async ({ page }) => {
+test('assignee drawer maps a 422 rule code to a Chinese alert and keeps the dialog open', async ({ page }) => {
   const state = { lifecycle: 'todo', posts: [] as unknown[] }
   await stubActionWorld(page, state)
   await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/assignee-candidates', (route) =>
     fulfillJson(route, 200, [{ actor_kind: 'user', actor_id: 'cand', display_name: 'Candidate User' }]),
   )
   await page.route((url) => url.pathname === '/api/v1/action-items/action-ui5/assignees', (route) =>
-    fulfillJson(route, 422, { detail: 'Assignee not eligible' }),
+    fulfillJson(route, 422, { detail: 'Assignee not eligible', code: 'role.not_allowed_for_actor', params: {}, errors: [] }),
   )
   await page.goto('/action-items/action-ui5')
   const drawer = await openAssignDrawer(page, '添加执行人', '添加执行人')
   await pickCandidate(drawer, '执行人', 'Candidate', 'Candidate User')
   await drawer.getByRole('button', { name: '添加执行人' }).click()
-  await expect(drawer.getByRole('alert')).toContainText('Assignee not eligible')
+  await expect(drawer.getByRole('alert')).toContainText('所选对象不能担任该角色，请重新选择。')
+  expect(await page.getByText('Assignee not eligible').count()).toBe(0)
   await expect(drawer).toBeVisible()
 })
 
@@ -462,12 +463,12 @@ test('approve and Action reopen need a confirmation: 0 requests before and after
 
 const conflicts = [
   { name: 'lifecycle or concurrent change', detail: 'Concurrent ActionItem transition', expected: '数据已变化，正在获取最新状态', refetch: true },
-  { name: 'duplicate relation', detail: '(psycopg.errors.UniqueViolation) duplicate key value violates unique constraint "uq_assignee"', expected: '该成员已在列表中', refetch: true },
-  { name: 'unclassified conflict', detail: 'some internal conflict: secret-detail', expected: '与服务器当前状态冲突', refetch: true },
+  { name: 'duplicate relation', detail: '(psycopg.errors.UniqueViolation) duplicate key value violates unique constraint "uq_assignee"', expected: '数据已变化，正在获取最新状态', refetch: true },
+  { name: 'unclassified conflict', detail: 'some internal conflict: secret-detail', expected: '数据已变化，正在获取最新状态', refetch: true },
 ]
 
 for (const conflict of conflicts) {
-  test(`409 ${conflict.name} gets its own prompt, hides backend detail, refetches and never replays`, async ({ page }) => {
+  test(`409 ${conflict.name} gets the same prompt, hides backend detail, refetches and never replays`, async ({ page }) => {
     const state = { lifecycle: 'todo', posts: [] as unknown[] }
     await stubActionWorld(page, state)
     let attempts = 0

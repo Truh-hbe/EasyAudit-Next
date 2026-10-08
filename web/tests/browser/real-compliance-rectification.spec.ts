@@ -144,7 +144,9 @@ test('compliance_review: a nonconformity is rectified, rejected once, re-verifie
   await expect(lead.getByText('不符合项', { exact: true })).toBeVisible()
   // 未指定负责人前不能签发：服务端拒绝，状态不变。
   await respondTo(lead, 'POST', `/api/v1/findings/${findingId}/transitions`, () => lead.getByRole('button', { name: '签发不符合项' }).click(), 422)
-  await expect(lead.getByRole('article').getByRole('alert')).toContainText('requires participant role(s): responsible_department, owner')
+  await expect(lead.getByRole('article').getByRole('alert')).toContainText('签发前需要先指定：责任部门、整改负责人。')
+  // 英文 detail 只供日志，界面一次性断言不出现。
+  expect(await lead.getByText('requires participant role(s)').count()).toBe(0)
   await expect(lifecycleTag(lead, '待处理')).toBeVisible()
   expect(await lifecycleTag(lead, '整改中').count()).toBe(0)
 
