@@ -168,6 +168,11 @@ src/easyaudit_next/
 ## 通知与提醒
 
 - Notification 是投递记录，不是业务真相。阅读只改变 `read_at`，也不授予访问对象的权限。
+- **目标名称和角色在读侧解析，不写进通知。** 通知行不可变且只带通用文案；收件箱接口（`GET /me/notifications`、标记已读）在响应的 `subject.context` 里附加目标标题、所属 Finding / Case 标题和收件人在该目标上的角色（`NotificationSubjectContextResolver`）。规则：
+  - 以收件人**当前**的可见性为准，与目标自己的 GET 用同一判断（Case：`view_case`，上下文含 Case 成员与 Case 内全部 Finding 授权；Finding：`view_finding`，Case 授权加本 Finding 授权；Action：`view_finding`，Case、父 Finding、本 Action 授权）。不可见时 `context` 为 `null`，不含任何标题。
+  - 父级标题（Action 的 Finding、Finding/Action 的 Case）只在收件人对该父级自己也可见时才给；仅有 Action 授权的执行人看不到父 Finding 和 Case 标题，和打开页面时一致。
+  - 按页批量：固定条数的 SELECT，不随页内通知数增长；所有查询带 `organization_id`。
+  - 不把标题快照进通知 body：快照在失去访问后继续泄露标题，历史行也无法修复（`trg_notifications_immutable`）。
 - 事件通知的 `origin_activity_id` 必须来自本次变更在内存中返回的 Activity ID。禁止事后反查，包括按"最新一条"、按主题加类型、按时间戳。
 - 去重由数据库唯一约束保证，禁止"先查后插"：
   - 事件通知：`组织 + 收件人 + origin_activity + kind`

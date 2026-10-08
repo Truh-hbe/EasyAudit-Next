@@ -10,11 +10,23 @@ from easyaudit_next.notifications.models import (
 )
 
 
+class NotificationSubjectContextResponse(BaseModel):
+    """What the target is, as the recipient may see it now; absent when not visible."""
+
+    model_config = ConfigDict(frozen=True)
+
+    title: str
+    finding_title: str | None = None
+    case_title: str | None = None
+    role_keys: tuple[str, ...] = ()
+
+
 class NotificationSubjectResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: NotificationSubjectKind
     id: UUID
+    context: NotificationSubjectContextResponse | None = None
 
 
 class NotificationResponse(BaseModel):

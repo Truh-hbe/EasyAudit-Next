@@ -10,6 +10,7 @@ from easyaudit_next.infrastructure.object_storage import S3EvidenceObjectStore
 from easyaudit_next.management.query_service import ManagementQueryService
 from easyaudit_next.notifications.persistence import SqlAlchemyNotificationRepository
 from easyaudit_next.notifications.service import NotificationService
+from easyaudit_next.notifications.subject_context import NotificationSubjectContextResolver
 from easyaudit_next.platform.application.administration import PlatformAdministrationService
 from easyaudit_next.platform.application.authentication import AuthenticationService
 from easyaudit_next.platform.application.services import IdentityOrganizationService
@@ -226,6 +227,14 @@ def build_notification_service(session: Session) -> NotificationService:
     """Wire recipient-local Notification persistence and inbox operations."""
 
     return NotificationService(SqlAlchemyNotificationRepository(session))
+
+
+def build_notification_subject_context_resolver(
+    session: Session,
+) -> NotificationSubjectContextResolver:
+    """Wire read-time Notification subject titles gated by current recipient visibility."""
+
+    return NotificationSubjectContextResolver(session, build_scenario_registry())
 
 
 def build_notification_orchestrator(session: Session) -> NotificationOrchestrator:

@@ -562,3 +562,48 @@ test('Finding nudge 422 stays authoritative and a late nudge result cannot leak 
   await expect(page.getByText('No eligible nudge recipients')).toBeVisible()
   await expect(page.getByText(/服务器已确认催办/)).toHaveCount(0)
 })
+
+test('Notification 有 subject.context 时显示目标名称、上下文和角色，没有时退化为通用文案', async ({ page }) => {
+  await stubReadySession(page)
+  const assigned = (id: string, context: unknown) => ({
+    ...notification(id, '指派整改项', null, 'action_item', `action-${id}`),
+    kind: 'action_assignee_added',
+    body: '您已被指派处理一个整改项。',
+    subject: { kind: 'action_item', id: `action-${id}`, context },
+  })
+
+  await page.route((url) => url.pathname === '/api/v1/me/notifications', (route) =>
+    fulfillJson(route, 200, {
+      items: [
+        assigned('with-context', {
+          title: '更换传送带轴承',
+          finding_title: '传送带异响',
+          case_title: '2026 Q3 设备巡检',
+          role_keys: ['primary'],
+        }),
+        assigned('title-only', { title: '补录点检记录', finding_title: null, case_title: null, role_keys: ['collaborator'] }),
+        assigned('no-context', null),
+        { ...notification('legacy', '指派整改项', null, 'action_item', 'action-legacy'), body: '旧响应没有 context 字段' },
+      ],
+      unread_count: 4,
+      limit: 20,
+      offset: 0,
+    }),
+  )
+
+  await page.goto('/me/notifications')
+
+  const items = page.getByRole('list', { name: '全部通知' }).getByRole('listitem')
+  await expect(items).toHaveCount(4)
+  await expect(items.nth(0)).toContainText('整改项：更换传送带轴承')
+  await expect(items.nth(0)).toContainText('所属发现项：传送带异响 · 所属审查活动：2026 Q3 设备巡检')
+  await expect(items.nth(0)).toContainText('您的角色：主要执行人')
+  await expect(items.nth(1)).toContainText('整改项：补录点检记录')
+  await expect(items.nth(1)).toContainText('您的角色：协作者')
+  await expect(items.nth(1)).not.toContainText('所属')
+  for (const index of [2, 3]) {
+    await expect(items.nth(index)).not.toContainText('您的角色')
+    await expect(items.nth(index)).not.toContainText('整改项：')
+    await expect(items.nth(index)).toContainText('指派整改项')
+  }
+})
