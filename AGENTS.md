@@ -72,5 +72,6 @@ cd web && npm run test:browser:real     # 需要真实 FastAPI + PostgreSQL，�
 ## 红线
 
 - 不提交密钥、真实凭证、客户数据或导出文件。本地配置使用 `.env.example` 作为模板。
-- 不直接推送 `main`，不强推共享分支，只由人合并 PR。受 GitHub 私有仓库免费套餐限制，`main` 没有服务端分支保护（无法配置 required check），只靠约定保护：任何 Agent 都不能直接 push `main`，所有变更走 PR，且合并前 `check`、`frontend`、`browser-acceptance` 必须全绿，由人合并。
+- 不直接推送 `main`，不强推共享分支，只由人合并 PR。仓库已公开，`main` 由 GitHub ruleset「main protection」保护：必须走 PR、`check`、`frontend`、`browser-acceptance` 为 required check、禁止强推和删除；仓库管理员可绕过，仅限维护者处理紧急情况，Agent 不得借用管理员身份绕过。
+- 仓库是公开的：提交、PR、issue 和评论都对外可见。不要写入内网地址、主机名、账号、客户名称或任何真实业务数据；secret scanning 与 push protection 已开启，被拦截时不要绕过，先移除内容。
 - 部署、访问生产数据、开放真实用户流量都需要维护者当次明确授权。
