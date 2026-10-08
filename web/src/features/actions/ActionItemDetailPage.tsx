@@ -221,7 +221,7 @@ export function ActionItemDetailPage() {
       setNudgeNotice({
         actionItemId: currentActionId,
         type: 'success',
-        text: `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
+        text: `服务器已确认催办：已通知 ${result.recipient_count} 人。`,
       })
       refresh()
     } catch (error) {

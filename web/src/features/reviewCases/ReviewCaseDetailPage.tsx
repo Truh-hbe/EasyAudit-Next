@@ -553,7 +553,6 @@ export function ReviewCaseDetailPage() {
         </Card>
       </section>
 
-      {/* 场景适配器和发现项入口仍是遗留样式（场景适配器与发现项详情共用），放在遗留容器内，随 UI-5 迁移。 */}
       {ScenarioSection === undefined ? (
         <section aria-labelledby="scenario-unsupported-title">
           <Card title={<h2 id="scenario-unsupported-title">审查场景</h2>}>

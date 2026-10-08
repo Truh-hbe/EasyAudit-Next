@@ -193,7 +193,7 @@ export function FindingDetailPage() {
       setNudgeNotice({
         findingId: currentFindingId,
         type: 'success',
-        text: `服务器已确认催办：已通知 ${result.recipient_count} 人，操作记录 ${result.activity_id}。`,
+        text: `服务器已确认催办：已通知 ${result.recipient_count} 人。`,
       })
       refresh()
     } catch (error) {
@@ -388,7 +388,7 @@ export function FindingDetailPage() {
                   {
                     key: 'case',
                     label: '审查活动',
-                    children: <Link to={`/review-cases/${finding.case_id}`}>{caseContext?.title ?? finding.case_id}</Link>,
+                    children: <Link to={`/review-cases/${finding.case_id}`}>{caseContext?.title ?? '所属审查活动'}</Link>,
                   },
                 ]}
               />

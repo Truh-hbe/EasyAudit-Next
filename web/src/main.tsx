@@ -10,7 +10,6 @@ import { SessionProvider } from './app/auth/session'
 import { appTheme } from './app/theme'
 import { App } from './App'
 import './styles.css'
-import './final-polish.css'
 
 dayjs.locale('zh-cn')
 

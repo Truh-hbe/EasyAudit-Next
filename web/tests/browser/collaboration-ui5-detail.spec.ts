@@ -586,6 +586,8 @@ test('a refreshing section keeps its old content and says it is refreshing', asy
   const participants = page.getByRole('region', { name: '参与方' })
   await expect(participants.getByText('Kept Participant')).toBeVisible()
   await page.getByRole('button', { name: '催办', exact: true }).click()
+  await expect(page.getByText('服务器已确认催办：已通知 1 人。')).toBeVisible()
+  expect(await page.getByText('activity-1', { exact: false }).count()).toBe(0)
   await expect(participants.getByText('正在刷新')).toBeVisible()
   await expect(participants.getByText('Kept Participant')).toBeVisible()
   await expect(participants.getByText('正在刷新')).toHaveCount(0)

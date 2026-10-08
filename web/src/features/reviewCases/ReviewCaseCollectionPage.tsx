@@ -8,7 +8,7 @@ import { Link, useSearchParams } from 'react-router'
 import { listReviewCases } from '../../api/product'
 import type { ReviewCaseCollectionResponse, ReviewCaseResponse } from '../../api/product'
 import { formatDateTime } from '../../product/format'
-import { scenarioName, scenarioVersionText } from '../../product/terms'
+import { scenarioName } from '../../product/terms'
 import { ButtonLink } from '../../ui/ButtonLink'
 import { InitialLoading } from '../../ui/InitialLoading'
 import { PageHeader } from '../../ui/PageHeader'
@@ -50,14 +50,7 @@ const columns: TableColumnsType<ReviewCaseResponse> = [
   {
     title: '审查场景',
     key: 'scenario',
-    render: (_value: unknown, reviewCase) => (
-      <Flex vertical>
-        <span>{scenarioName(reviewCase.scenario_key)}</span>
-        <Typography.Text type="secondary">
-          {scenarioVersionText(reviewCase.scenario_key, reviewCase.scenario_version)}
-        </Typography.Text>
-      </Flex>
-    ),
+    render: (_value: unknown, reviewCase) => scenarioName(reviewCase.scenario_key),
   },
   {
     title: '计划开始',
