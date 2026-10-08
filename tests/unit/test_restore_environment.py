@@ -38,7 +38,8 @@ case "$args" in
     fail_if STUB_FAIL_APP
     if [ -n "${STUB_READY:-}" ]; then
       touch "$STUB_READY"
-      for _ in $(seq 100); do [ -e "$STUB_READY.release" ] && break; sleep 0.1; done
+      # Only a backstop against a hung test: the test always releases, and the loop ends then.
+      for _ in $(seq 3000); do [ -e "$STUB_READY.release" ] && break; sleep 0.1; done
     fi ;;
   *" up -d --wait gateway"*) fail_if STUB_FAIL_GATEWAY ;;
 esac
@@ -259,16 +260,20 @@ def test_signal_after_entrypoints_started_stops_them(
             "EASYAUDIT_CERTS_DIR": str(sandbox.root / "certs"),
             "STUB_READY": str(ready),
         },
+        # A pytest started as a background job inherits an ignored SIGINT, and a shell cannot trap
+        # a signal that was ignored on entry; the script must see the default disposition.
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
     )
     try:
-        deadline = time.monotonic() + 30
+        # restore.sh starts python3 several times before this point; under heavy load that is slow.
+        deadline = time.monotonic() + 120
         while not ready.exists():
             assert process.poll() is None and time.monotonic() < deadline
             time.sleep(0.05)
         process.send_signal(sig)
         # bash runs the trap once the foreground stub returns; let it return successfully.
         Path(f"{ready}.release").touch()
-        stdout, stderr = process.communicate(timeout=30)
+        stdout, stderr = process.communicate(timeout=120)
     finally:
         process.kill()
 
