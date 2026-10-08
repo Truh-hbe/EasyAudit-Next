@@ -74,16 +74,17 @@ async function login(page: Page, name: string) {
 
 // 用与应用相同的模块实例发出一个会话请求，模拟页面里其它在途请求。
 // 首检/refresh 在途时界面处于 resolving，没有可点击的真实入口能再发请求，
-// 所以这里依赖 Vite dev server 的源码路径（本项目 test:browser 只跑 dev server）。
+// 所以通过 e2e 构建注入的 window.__easyauditE2E（见 tests/e2e/e2eHook.ts）调用。
 function fireSessionRequest(page: Page, path: string) {
-  return page.evaluate(
-    async (p) => {
-      const modulePath = '/src/api/client.ts'
-      const client = (await import(modulePath)) as typeof import('../../src/api/client.js')
-      await client.sessionApiRequest(p).catch(() => undefined)
-    },
-    path,
-  )
+  return page.evaluate(async (p) => {
+    const hook = (
+      globalThis as unknown as {
+        __easyauditE2E?: { sessionApiRequest: (path: string) => Promise<unknown> }
+      }
+    ).__easyauditE2E
+    if (hook === undefined) throw new Error('e2e hook missing: run against `vite build --mode e2e`')
+    await hook.sessionApiRequest(p).catch(() => undefined)
+  }, path)
 }
 
 test('late 401 from a logged-out session does not kick the new session out', async ({ page }) => {
@@ -132,7 +133,7 @@ test('initial /me result after the session was cleared does not restore the old 
   const staleMe = gate()
 
   await page.route('**/api/v1/me', async (route) => {
-    // 首次挂载的会话检查（dev 下 StrictMode 会发两次）：全部挂起，随后返回用户 A
+    // 首次挂载的会话检查：全部挂起，随后返回用户 A
     staleMe.arrive()
     await staleMe.released
     await fulfillJson(route, 200, userA)
