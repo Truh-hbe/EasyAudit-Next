@@ -21,6 +21,7 @@ from easyaudit_next.platform.domain.repositories import (
     PlatformAuditRepository,
     UserRepository,
 )
+from easyaudit_next.rules import RuleCode, RuleViolation
 
 
 def normalize_login_name(login_name: str) -> str:
@@ -43,7 +44,7 @@ class InvalidCurrentPasswordError(ValueError):
     """The authenticated user's current local password did not verify."""
 
 
-class PasswordReuseError(ValueError):
+class PasswordReuseError(RuleViolation):
     """The proposed local password is equivalent to the current password."""
 
 
@@ -231,7 +232,9 @@ class AuthenticationService:
 
         validate_local_password(new_password)
         if self._password_hash.verify(new_password, credential.password_hash):
-            raise PasswordReuseError("New password must differ from current password")
+            raise PasswordReuseError(
+                RuleCode.PASSWORD_REUSED, "New password must differ from current password"
+            )
 
         updated_credential = replace(
             credential,

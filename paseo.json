@@ -22,7 +22,7 @@
   },
   "scripts": {
     "check-backend": {
-      "command": "source .venv/bin/activate && ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py"
+      "command": "source .venv/bin/activate && ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py && python scripts/check_error_codes.py"
     },
     "check-frontend": {
       "command": "cd web && npm run typecheck && npm run lint && npm run test"
@@ -34,7 +34,7 @@
       "command": "cd web && EASYAUDIT_WEB_PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind((\"127.0.0.1\", 0)); print(s.getsockname()[1])') npm run test:browser"
     },
     "check-all": {
-      "command": "source .venv/bin/activate && ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py && EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest && cd web && npm run typecheck && npm run lint && npm run test"
+      "command": "source .venv/bin/activate && ruff check . && mypy && python scripts/check_architecture.py && python scripts/check_openapi.py && python scripts/check_error_codes.py && EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest && cd web && npm run typecheck && npm run lint && npm run test"
     },
     "api": {
       "type": "service",

@@ -18,6 +18,24 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     SubmissionDecisionError,
     WorkflowTransitionError,
 )
+from easyaudit_next.rules import RuleCode
+
+
+@pytest.mark.parametrize(
+    "violation",
+    [
+        ActionItemOperationError(RuleCode.ACTION_MISSING, "invalid action operation"),
+        WorkflowTransitionError(RuleCode.WORKFLOW_UNKNOWN_ACTION, "invalid action transition"),
+        SubmissionDecisionError(RuleCode.SUBMISSION_MISMATCH, "invalid submission"),
+    ],
+)
+def test_rectification_rule_violations_are_left_to_the_coded_422_handler(
+    violation: Exception,
+) -> None:
+    with pytest.raises(type(violation)) as caught:
+        _raise_api_error(violation)
+
+    assert caught.value is violation
 
 
 @pytest.mark.parametrize(
@@ -26,9 +44,6 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
         (ReviewAuthorizationError("forbidden"), 403),
         (LookupError("missing"), 404),
         (ValueError("invalid rectification input"), 422),
-        (ActionItemOperationError("invalid action operation"), 422),
-        (WorkflowTransitionError("invalid action transition"), 422),
-        (SubmissionDecisionError("invalid submission"), 422),
         (ConcurrentActionItemTransitionError("Concurrent ActionItem transition"), 409),
         (ConcurrentCaseTransitionError("Concurrent ReviewCase transition"), 409),
         (ConcurrentFindingTransitionError("Concurrent Finding transition"), 409),

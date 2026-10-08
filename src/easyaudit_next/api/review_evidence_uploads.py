@@ -43,7 +43,6 @@ from easyaudit_next.platform.persistence.repositories import SqlAlchemyUserRepos
 from easyaudit_next.platform.settings import get_settings
 from easyaudit_next.review_core.application.evidence_policy import (
     EvidenceUploadPolicy,
-    InvalidEvidenceFilenameError,
     UnsupportedEvidenceTypeError,
     ValidatedEvidenceFile,
 )
@@ -63,6 +62,7 @@ from easyaudit_next.review_core.application.review_planning import (
 )
 from easyaudit_next.review_core.domain.ids import ActionItemId
 from easyaudit_next.review_core.domain.models import Evidence
+from easyaudit_next.rules import RuleCode, RuleViolation
 
 review_evidence_upload_router = APIRouter(prefix="/api/v1", tags=["review-rectification"])
 
@@ -300,17 +300,11 @@ async def upload_action_evidence(
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
         ) from exc
-    except InvalidEvidenceFilenameError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
-        ) from exc
     declared = _declared_length(request)
     if declared is not None and declared > policy.max_bytes:
         _too_large(policy.max_bytes)
     if declared == 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Evidence file is empty"
-        )
+        raise RuleViolation(RuleCode.EVIDENCE_FILE_EMPTY, "Evidence file is empty")
 
     key = new_storage_key(identity.user.organization_id)
     try:
@@ -336,9 +330,7 @@ async def upload_action_evidence(
 
     if stored.size_bytes == 0:
         await _discard_object(store, key)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Evidence file is empty"
-        )
+        raise RuleViolation(RuleCode.EVIDENCE_FILE_EMPTY, "Evidence file is empty")
     evidence = await _register_and_settle(
         store,
         key,

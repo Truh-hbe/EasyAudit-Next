@@ -11,22 +11,34 @@ from easyaudit_next.review_core.domain.models import (
     ReviewCaseLifecycle,
     SubmissionPurpose,
 )
+from easyaudit_next.rules import RuleCode, RuleViolation
 
 
-class WorkflowTransitionError(ValueError):
+class WorkflowTransitionError(RuleViolation):
     """Raised when a Scenario workflow rejects a requested lifecycle transition."""
 
 
-class SubmissionDecisionError(ValueError):
+class SubmissionDecisionError(RuleViolation):
     """Raised when a formal Submission request is not valid for the Scenario."""
 
 
-class FindingOperationError(ValueError):
+class FindingOperationError(RuleViolation):
     """Raised when Scenario-owned Finding operation invariants are not satisfied."""
 
 
-class ActionItemOperationError(ValueError):
+class ActionItemOperationError(RuleViolation):
     """Raised when Scenario-owned ActionItem operation invariants are not satisfied."""
+
+
+def invalid_transition(
+    label: str, entity: str, lifecycle: StrEnum, action: StrEnum
+) -> WorkflowTransitionError:
+    """`label` is the English entity name for `detail`; `entity` is its stable snake_case key."""
+    return WorkflowTransitionError(
+        RuleCode.WORKFLOW_INVALID_TRANSITION,
+        f"{label} cannot perform {action.value!r} from lifecycle {lifecycle.value!r}",
+        params={"entity": entity, "action": action.value, "lifecycle": lifecycle.value},
+    )
 
 
 class ActorKind(StrEnum):

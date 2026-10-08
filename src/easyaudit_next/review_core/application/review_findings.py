@@ -35,6 +35,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     RoleGrant,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, ScenarioRegistry
+from easyaudit_next.rules import RuleCode, RuleViolation, request_invalid, require_clean_text
 
 VIEW_FINDING_PERMISSION = "view_finding"
 CREATE_FINDING_PERMISSION = "create_finding"
@@ -85,7 +86,7 @@ class FindingLifecycleService:
         self._validate_title(title)
         errors = policy.validate_finding_input(scenario_data)
         if errors:
-            raise ValueError("; ".join(errors))
+            raise request_invalid(errors, RuleViolation)
 
         now = occurred_at or datetime.now(UTC)
         finding = Finding(
@@ -422,9 +423,15 @@ class FindingLifecycleService:
             specification.accepts_grant(grant)
             for specification in policy.finding_participant_role_specs
         ):
-            raise ValueError(
+            raise RuleViolation(
+                RuleCode.ROLE_NOT_ALLOWED_FOR_ACTOR,
                 f"Scenario does not allow FindingParticipant role {role_key!r} "
-                f"for {grant.actor_kind.value}"
+                f"for {grant.actor_kind.value}",
+                params={
+                    "relation": "finding_participant",
+                    "role_key": role_key,
+                    "actor_kind": grant.actor_kind.value,
+                },
             )
 
     def _require_active_participant_actor(
@@ -479,5 +486,4 @@ class FindingLifecycleService:
 
     @staticmethod
     def _validate_title(title: str) -> None:
-        if not title.strip() or title != title.strip():
-            raise ValueError("title must be a non-blank, unpadded string")
+        require_clean_text(title, "title")

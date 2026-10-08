@@ -51,6 +51,7 @@ cd web && npm ci && npm run dev
 ruff check . && mypy
 python scripts/check_architecture.py
 python scripts/check_openapi.py
+python scripts/check_error_codes.py
 EASYAUDIT_RUN_POSTGRES_TESTS=1 pytest
 cd web && npm run typecheck && npm run lint && npm run test && npm run test:browser
 ```

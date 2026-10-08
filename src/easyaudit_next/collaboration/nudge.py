@@ -31,14 +31,18 @@ from easyaudit_next.review_core.persistence.models import (
     FindingRecord,
 )
 from easyaudit_next.review_core.persistence.repositories import SqlAlchemyReviewCoreRepository
+from easyaudit_next.rules import FieldErrorCode, RuleCode, RuleViolation, field_violation
 
 MANAGE_CASE_MEMBERS_PERMISSION = "manage_case_members"
 VIEW_CASE_PERMISSION = "view_case"
 VIEW_FINDING_PERMISSION = "view_finding"
 
 
-class NudgeValidationError(ValueError):
+class NudgeValidationError(RuleViolation):
     """Raised when a visible, authorized nudge has no eligible recipient."""
+
+    def __init__(self) -> None:
+        super().__init__(RuleCode.NUDGE_NO_ELIGIBLE_RECIPIENTS, "No eligible nudge recipients")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +88,7 @@ class ManualNudgeService:
             exclude_user_id=actor.id,
         )
         if not recipients:
-            raise NudgeValidationError("No eligible nudge recipients")
+            raise NudgeValidationError()
 
         now = self._occurred_at(occurred_at)
         activity = Activity(
@@ -142,7 +146,7 @@ class ManualNudgeService:
             exclude_user_id=actor.id,
         )
         if not recipients:
-            raise NudgeValidationError("No eligible nudge recipients")
+            raise NudgeValidationError()
 
         now = self._occurred_at(occurred_at)
         typed_action_id = ActionItemId(action.id)
@@ -223,5 +227,10 @@ class ManualNudgeService:
     def _occurred_at(value: datetime | None) -> datetime:
         occurred_at = value or datetime.now(UTC)
         if occurred_at.utcoffset() is None:
-            raise ValueError("Nudge occurred_at must include UTC offset")
+            raise field_violation(
+                "occurred_at",
+                FieldErrorCode.INVALID_DATETIME,
+                "Nudge occurred_at must include UTC offset",
+                cls=RuleViolation,
+            )
         return occurred_at

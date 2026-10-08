@@ -34,6 +34,14 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     SubmissionPolicy,
     SubmissionRequest,
     WorkflowTransitionError,
+    invalid_transition,
+)
+from easyaudit_next.rules import (
+    FieldError,
+    FieldErrorCode,
+    RuleCode,
+    reason_required,
+    request_invalid,
 )
 
 
@@ -117,27 +125,27 @@ def _has_reason(reason: str | None) -> bool:
     return reason is not None and bool(reason.strip())
 
 
-def _invalid_transition(
-    entity: str,
-    lifecycle: StrEnum,
-    action: StrEnum,
-) -> WorkflowTransitionError:
-    return WorkflowTransitionError(
-        f"{entity} cannot perform {action.value!r} from lifecycle {lifecycle.value!r}"
-    )
-
-
 def _required_text_fields(
     payload: Mapping[str, object],
     fields: tuple[str, ...],
-) -> tuple[str, ...]:
-    errors: list[str] = []
+) -> tuple[FieldError, ...]:
+    errors: list[FieldError] = []
     for name in fields:
         value = payload.get(name)
         if not isinstance(value, str) or not value.strip():
-            errors.append(f"{name} must be a non-blank string")
+            errors.append(
+                FieldError(
+                    name, FieldErrorCode.REQUIRED, message=f"{name} must be a non-blank string"
+                )
+            )
         elif value != value.strip():
-            errors.append(f"{name} must not contain surrounding whitespace")
+            errors.append(
+                FieldError(
+                    name,
+                    FieldErrorCode.PADDED,
+                    message=f"{name} must not contain surrounding whitespace",
+                )
+            )
     return tuple(errors)
 
 
@@ -159,9 +167,9 @@ def _department_member_role_keys(grants: frozenset[RoleGrant]) -> frozenset[str]
     )
 
 
-def _raise_submission_errors(errors: tuple[str, ...]) -> None:
+def _raise_submission_errors(errors: tuple[FieldError, ...]) -> None:
     if errors:
-        raise SubmissionDecisionError("; ".join(errors))
+        raise request_invalid(errors, SubmissionDecisionError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +194,11 @@ class ProcessReviewCaseWorkflow:
         try:
             operation = ProcessReviewCaseAction(action)
         except ValueError as exc:
-            raise WorkflowTransitionError(f"Unknown ReviewCase action: {action!r}") from exc
+            raise WorkflowTransitionError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown ReviewCase action: {action!r}",
+                params={"entity": "review_case", "action": action},
+            ) from exc
 
         if (
             lifecycle is ReviewCaseLifecycle.DRAFT
@@ -208,7 +220,9 @@ class ProcessReviewCaseWorkflow:
             and operation is ProcessReviewCaseAction.REOPEN_FIELDWORK
         ):
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Reopening fieldwork requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Reopening fieldwork requires a reason"
+                )
             return ReviewCaseLifecycle.IN_PROGRESS
         if (
             lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE
@@ -216,7 +230,8 @@ class ProcessReviewCaseWorkflow:
         ):
             if not context.all_findings_terminal:
                 raise WorkflowTransitionError(
-                    "ReviewCase cannot close until every Finding is closed or voided"
+                    RuleCode.CASE_CLOSE_BLOCKED_BY_OPEN_FINDINGS,
+                    "ReviewCase cannot close until every Finding is closed or voided",
                 )
             return ReviewCaseLifecycle.CLOSED
         if operation is ProcessReviewCaseAction.CANCEL and lifecycle in {
@@ -224,9 +239,11 @@ class ProcessReviewCaseWorkflow:
             ReviewCaseLifecycle.SCHEDULED,
         }:
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Cancelling a ReviewCase requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Cancelling a ReviewCase requires a reason"
+                )
             return ReviewCaseLifecycle.CANCELLED
-        raise _invalid_transition("ReviewCase", lifecycle, operation)
+        raise invalid_transition("ReviewCase", "review_case", lifecycle, operation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,13 +257,19 @@ class ProcessReviewFindingWorkflow:
         try:
             operation = ProcessReviewFindingAction(action)
         except ValueError as exc:
-            raise WorkflowTransitionError(f"Unknown Finding action: {action!r}") from exc
+            raise WorkflowTransitionError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Finding action: {action!r}",
+                params={"entity": "finding", "action": action},
+            ) from exc
 
         if lifecycle is FindingLifecycle.OPEN and operation is ProcessReviewFindingAction.ISSUE:
             return FindingLifecycle.RECTIFYING
         if lifecycle is FindingLifecycle.OPEN and operation is ProcessReviewFindingAction.VOID:
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Voiding a Finding requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Voiding a Finding requires a reason"
+                )
             return FindingLifecycle.VOIDED
         if (
             lifecycle is FindingLifecycle.RECTIFYING
@@ -254,11 +277,13 @@ class ProcessReviewFindingWorkflow:
         ):
             if context.non_cancelled_action_count < 1:
                 raise WorkflowTransitionError(
-                    "Finding requires at least one non-cancelled ActionItem before verification"
+                    RuleCode.FINDING_VERIFICATION_REQUIRES_ACTIONS,
+                    "Finding requires at least one non-cancelled ActionItem before verification",
                 )
             if not context.all_non_cancelled_actions_done:
                 raise WorkflowTransitionError(
-                    "Every non-cancelled ActionItem must be done before verification"
+                    RuleCode.FINDING_VERIFICATION_REQUIRES_ACTIONS_DONE,
+                    "Every non-cancelled ActionItem must be done before verification",
                 )
             return FindingLifecycle.VERIFYING
         if (
@@ -271,16 +296,20 @@ class ProcessReviewFindingWorkflow:
             and operation is ProcessReviewFindingAction.REJECT
         ):
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Rejecting a Finding requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Rejecting a Finding requires a reason"
+                )
             return FindingLifecycle.RECTIFYING
         if (
             lifecycle is FindingLifecycle.CLOSED
             and operation is ProcessReviewFindingAction.REOPEN
         ):
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Reopening a Finding requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Reopening a Finding requires a reason"
+                )
             return FindingLifecycle.RECTIFYING
-        raise _invalid_transition("Finding", lifecycle, operation)
+        raise invalid_transition("Finding", "finding", lifecycle, operation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,7 +319,9 @@ class ProcessReviewFindingOperations:
     def validate_create(self, context: FindingOperationContext) -> None:
         if context.case_lifecycle is not ReviewCaseLifecycle.IN_PROGRESS:
             raise FindingOperationError(
-                "Process Review Finding can only be created while ReviewCase is in_progress"
+                RuleCode.FINDING_INVALID_CASE_LIFECYCLE,
+                "Process Review Finding can only be created while ReviewCase is in_progress",
+                params={"operation": "create"},
             )
 
     def validate_participant_management(
@@ -302,14 +333,17 @@ class ProcessReviewFindingOperations:
             ReviewCaseLifecycle.AWAITING_CLOSURE,
         }:
             raise FindingOperationError(
-                "Finding participants can only be managed while ReviewCase is active"
+                RuleCode.FINDING_INVALID_CASE_LIFECYCLE,
+                "Finding participants can only be managed while ReviewCase is active",
+                params={"operation": "manage_participants"},
             )
         if context.current_finding_lifecycle in {
             FindingLifecycle.CLOSED,
             FindingLifecycle.VOIDED,
         }:
             raise FindingOperationError(
-                "Terminal Finding participants cannot be changed by ordinary business operations"
+                RuleCode.FINDING_PARTICIPANTS_LOCKED,
+                "Terminal Finding participants cannot be changed by ordinary business operations",
             )
 
     def validate_transition(
@@ -320,7 +354,11 @@ class ProcessReviewFindingOperations:
         try:
             operation = ProcessReviewFindingAction(action)
         except ValueError as exc:
-            raise FindingOperationError(f"Unknown Finding action: {action!r}") from exc
+            raise FindingOperationError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Finding action: {action!r}",
+                params={"entity": "finding", "action": action},
+            ) from exc
 
         if operation not in {
             ProcessReviewFindingAction.ISSUE,
@@ -328,13 +366,17 @@ class ProcessReviewFindingOperations:
         }:
             return
         if context.current_finding_lifecycle is not FindingLifecycle.OPEN:
-            raise FindingOperationError("Process Review issue/void requires an open Finding")
+            raise FindingOperationError(
+                RuleCode.FINDING_REQUIRES_OPEN, "Process Review issue/void requires an open Finding"
+            )
         if context.case_lifecycle not in {
             ReviewCaseLifecycle.IN_PROGRESS,
             ReviewCaseLifecycle.AWAITING_CLOSURE,
         }:
             raise FindingOperationError(
-                "Process Review Finding cannot be issued or voided in this ReviewCase lifecycle"
+                RuleCode.FINDING_INVALID_CASE_LIFECYCLE,
+                "Process Review Finding cannot be issued or voided in this ReviewCase lifecycle",
+                params={"operation": "transition"},
             )
         if operation is ProcessReviewFindingAction.ISSUE:
             missing = tuple(
@@ -344,8 +386,10 @@ class ProcessReviewFindingOperations:
             )
             if missing:
                 raise FindingOperationError(
+                    RuleCode.FINDING_MISSING_PARTICIPANT_ROLES,
                     "Issuing a Process Review Finding requires participant role(s): "
-                    + ", ".join(missing)
+                    + ", ".join(missing),
+                    params={"roles": missing},
                 )
 
 
@@ -360,7 +404,11 @@ class ProcessReviewActionWorkflow:
         try:
             operation = ProcessReviewActionItemAction(action)
         except ValueError as exc:
-            raise WorkflowTransitionError(f"Unknown ActionItem action: {action!r}") from exc
+            raise WorkflowTransitionError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown ActionItem action: {action!r}",
+                params={"entity": "action_item", "action": action},
+            ) from exc
 
         if (
             lifecycle is ActionItemLifecycle.TODO
@@ -377,14 +425,16 @@ class ProcessReviewActionWorkflow:
             ActionItemLifecycle.IN_PROGRESS,
         }:
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Cancelling an ActionItem requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Cancelling an ActionItem requires a reason"
+                )
             return ActionItemLifecycle.CANCELLED
         if (
             lifecycle is ActionItemLifecycle.DONE
             and operation is ProcessReviewActionItemAction.REOPEN
         ):
             return ActionItemLifecycle.IN_PROGRESS
-        raise _invalid_transition("ActionItem", lifecycle, operation)
+        raise invalid_transition("ActionItem", "action_item", lifecycle, operation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,14 +497,17 @@ class ProcessReviewSubmissionPolicy:
             operation = ProcessReviewSubmissionAction(request.action)
         except ValueError as exc:
             raise SubmissionDecisionError(
-                f"Unknown Process Review submission action: {request.action!r}"
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Process Review submission action: {request.action!r}",
+                params={"entity": "submission", "action": request.action},
             ) from exc
 
         if operation is ProcessReviewSubmissionAction.SUBMIT_PLAN:
             self._require_rectification_stage(request, "plan")
             if request.current_lifecycle is not FindingLifecycle.RECTIFYING:
                 raise SubmissionDecisionError(
-                    "Rectification plan can only be submitted while Finding is rectifying"
+                    RuleCode.SUBMISSION_PLAN_REQUIRES_RECTIFYING,
+                    "Rectification plan can only be submitted while Finding is rectifying",
                 )
             _raise_submission_errors(
                 _required_text_fields(request.payload, ("root_cause",))
@@ -514,11 +567,15 @@ class ProcessReviewSubmissionPolicy:
     ) -> None:
         if request.purpose is not SubmissionPurpose.RECTIFICATION:
             raise SubmissionDecisionError(
-                f"{request.action} requires rectification Submission purpose"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires rectification Submission purpose",
+                params={"action": request.action, "aspect": "purpose"},
             )
         if request.payload.get("stage") != stage:
             raise SubmissionDecisionError(
-                f"{request.action} requires rectification stage {stage!r}"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires rectification stage {stage!r}",
+                params={"action": request.action, "aspect": "stage"},
             )
 
     @staticmethod
@@ -528,11 +585,15 @@ class ProcessReviewSubmissionPolicy:
     ) -> None:
         if request.purpose is not SubmissionPurpose.VERIFICATION:
             raise SubmissionDecisionError(
-                f"{request.action} requires verification Submission purpose"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires verification Submission purpose",
+                params={"action": request.action, "aspect": "purpose"},
             )
         if request.payload.get("result") != result:
             raise SubmissionDecisionError(
-                f"{request.action} requires verification result {result!r}"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires verification result {result!r}",
+                params={"action": request.action, "aspect": "result"},
             )
 
 
@@ -566,8 +627,8 @@ class ProcessReviewV1BasePolicy:
     authorization: AuthorizationPolicy = field(default_factory=ProcessReviewAuthorizationPolicy)
     submission_policy: SubmissionPolicy = field(default_factory=ProcessReviewSubmissionPolicy)
 
-    def validate_case_input(self, payload: Mapping[str, object]) -> tuple[str, ...]:
+    def validate_case_input(self, payload: Mapping[str, object]) -> tuple[FieldError, ...]:
         return _required_text_fields(payload, ("area_code", "review_type"))
 
-    def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[str, ...]:
+    def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[FieldError, ...]:
         return _required_text_fields(payload, ("issue_type", "project_category"))

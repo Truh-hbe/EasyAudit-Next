@@ -65,6 +65,13 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     SubmissionRequest,
 )
 from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, ScenarioRegistry
+from easyaudit_next.rules import (
+    FieldErrorCode,
+    RuleCode,
+    RuleViolation,
+    field_violation,
+    require_clean_text,
+)
 
 VIEW_FINDING_PERMISSION = "view_finding"
 CREATE_ACTION_PERMISSION = "create_action"
@@ -345,9 +352,15 @@ class RectificationService:
             specification.accepts_grant(grant)
             for specification in policy.action_assignee_role_specs
         ):
-            raise ValueError(
+            raise RuleViolation(
+                RuleCode.ROLE_NOT_ALLOWED_FOR_ACTOR,
                 f"Scenario does not allow ActionAssignee role {role.value!r} "
-                f"for {grant.actor_kind.value}"
+                f"for {grant.actor_kind.value}",
+                params={
+                    "relation": "action_assignee",
+                    "role_key": role.value,
+                    "actor_kind": grant.actor_kind.value,
+                },
             )
         self._require_active_assignee_actor(actor, assignee_actor)
 
@@ -564,7 +577,11 @@ class RectificationService:
             specification.accepts_grant(grant)
             for specification in policy.action_assignee_role_specs
         ):
-            raise ValueError("Scenario does not allow a User as ActionAssignee primary")
+            raise RuleViolation(
+                RuleCode.ROLE_NOT_ALLOWED_FOR_ACTOR,
+                "Scenario does not allow a User as ActionAssignee primary",
+                params={"relation": "action_assignee", "role_key": "primary", "actor_kind": "user"},
+            )
 
         now = occurred_at or datetime.now(UTC)
         target = policy.action_workflow.transition(
@@ -697,11 +714,24 @@ class RectificationService:
         if content_type is not None:
             self._validate_text(content_type, "content_type")
         if size_bytes < 0:
-            raise ValueError("size_bytes must be non-negative")
-        if len(sha256) != 64 or any(character not in hexdigits.lower() for character in sha256):
-            raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
-        if sha256 != sha256.lower():
-            raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
+            raise field_violation(
+                "size_bytes",
+                FieldErrorCode.RANGE,
+                "size_bytes must be non-negative",
+                params={"min": 0},
+                cls=RuleViolation,
+            )
+        if (
+            len(sha256) != 64
+            or any(character not in hexdigits.lower() for character in sha256)
+            or sha256 != sha256.lower()
+        ):
+            raise field_violation(
+                "sha256",
+                FieldErrorCode.INVALID,
+                "sha256 must be 64 lowercase hexadecimal characters",
+                cls=RuleViolation,
+            )
 
         now = occurred_at or datetime.now(UTC)
         evidence = Evidence(
@@ -1092,10 +1122,14 @@ class RectificationService:
 
     @staticmethod
     def _validate_text(value: str, field_name: str) -> None:
-        if not value.strip() or value != value.strip():
-            raise ValueError(f"{field_name} must be a non-blank, unpadded string")
+        require_clean_text(value, field_name)
 
     @staticmethod
     def _require_aware_datetime(value: datetime | None, field_name: str) -> None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError(f"{field_name} must include a UTC offset")
+            raise field_violation(
+                field_name,
+                FieldErrorCode.INVALID_DATETIME,
+                f"{field_name} must include a UTC offset",
+                cls=RuleViolation,
+            )

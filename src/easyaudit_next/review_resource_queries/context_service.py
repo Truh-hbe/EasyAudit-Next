@@ -46,6 +46,7 @@ from easyaudit_next.review_core.persistence.models import ActivityRecord
 from easyaudit_next.review_core.persistence.verification_repositories import (
     SqlAlchemyVerificationClosureRepository,
 )
+from easyaudit_next.rules import FieldErrorCode, RuleCode, RuleViolation, field_violation
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,12 +411,22 @@ class ReviewResourceContextQueryService:
     ) -> tuple[AssignmentCandidateView, ...]:
         normalized = search_text.strip()
         if len(normalized) < 2 or len(normalized) > 200:
-            raise ValueError("candidate search requires 2 to 200 non-padding characters")
+            raise field_violation(
+                "q",
+                FieldErrorCode.TOO_SHORT if len(normalized) < 2 else FieldErrorCode.TOO_LONG,
+                "candidate search requires 2 to 200 non-padding characters",
+                params={"min": 2, "max": 200},
+                cls=RuleViolation,
+            )
         if not 1 <= limit <= 20:
-            raise ValueError("candidate search limit must be between 1 and 20")
-        escaped = (
-            normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        )
+            raise field_violation(
+                "limit",
+                FieldErrorCode.RANGE,
+                "candidate search limit must be between 1 and 20",
+                params={"min": 1, "max": 20},
+                cls=RuleViolation,
+            )
+        escaped = normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"
         if actor_kind is ActorKind.USER:
             user_records = tuple(
@@ -472,9 +483,14 @@ class ReviewResourceContextQueryService:
         )
         grant = RoleGrant(role_key, actor_kind, source)
         if not any(specification.accepts_grant(grant) for specification in specifications):
-            raise ValueError(
-                f"Scenario does not allow relationship role {role_key!r} "
-                f"for {actor_kind.value}"
+            raise RuleViolation(
+                RuleCode.ROLE_NOT_ALLOWED_FOR_ACTOR,
+                f"Scenario does not allow relationship role {role_key!r} for {actor_kind.value}",
+                params={
+                    "relation": "relationship",
+                    "role_key": role_key,
+                    "actor_kind": actor_kind.value,
+                },
             )
 
     @staticmethod

@@ -16,6 +16,7 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     RoleSpecification,
     SubmissionPolicy,
 )
+from easyaudit_next.rules import FieldError
 
 
 class ScenarioPolicy(Protocol):
@@ -61,9 +62,9 @@ class ScenarioPolicy(Protocol):
     @property
     def submission_policy(self) -> SubmissionPolicy: ...
 
-    def validate_case_input(self, payload: Mapping[str, object]) -> tuple[str, ...]: ...
+    def validate_case_input(self, payload: Mapping[str, object]) -> tuple[FieldError, ...]: ...
 
-    def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[str, ...]: ...
+    def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[FieldError, ...]: ...
 
 
 @dataclass(slots=True)

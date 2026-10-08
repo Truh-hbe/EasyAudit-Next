@@ -17,6 +17,7 @@ from easyaudit_next.review_core.application.review_planning import (
 )
 from easyaudit_next.review_core.domain.models import FindingSeverity
 from easyaudit_next.review_core.domain.scenario_capabilities import FindingOperationError
+from easyaudit_next.rules import RuleCode
 
 
 @pytest.mark.parametrize(
@@ -25,7 +26,6 @@ from easyaudit_next.review_core.domain.scenario_capabilities import FindingOpera
         (ReviewAuthorizationError("forbidden"), 403),
         (LookupError("missing"), 404),
         (ValueError("invalid scenario data"), 422),
-        (FindingOperationError("invalid finding operation"), 422),
         (ConcurrentCaseTransitionError("Concurrent ReviewCase transition"), 409),
         (ConcurrentFindingTransitionError("Concurrent Finding transition"), 409),
         (IntegrityError("statement", {}, Exception("constraint")), 409),
@@ -36,6 +36,15 @@ def test_finding_api_error_semantics(exc: Exception, expected_status: int) -> No
         _raise_api_error(exc)
 
     assert caught.value.status_code == expected_status
+
+
+def test_finding_rule_violation_is_left_to_the_coded_422_handler() -> None:
+    violation = FindingOperationError(RuleCode.FINDING_REQUIRES_OPEN, "invalid finding operation")
+
+    with pytest.raises(FindingOperationError) as caught:
+        _raise_api_error(violation)
+
+    assert caught.value is violation
 
 
 class _CaseConflictFindingService:

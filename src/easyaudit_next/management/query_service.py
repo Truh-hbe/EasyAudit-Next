@@ -45,6 +45,7 @@ from easyaudit_next.review_core.persistence.models import (
     ScenarioRecord,
     ScenarioVersionRecord,
 )
+from easyaudit_next.rules import FieldErrorCode, RuleCode, RuleViolation, field_violation
 
 MANAGE_CASE_MEMBERS_PERMISSION = "manage_case_members"
 VIEW_CASE_PERMISSION = "view_case"
@@ -60,9 +61,13 @@ _ACTION_DEADLINE_LIFECYCLES = {
 }
 
 
-class ExportRowLimitExceededError(Exception):
+class ExportRowLimitExceededError(RuleViolation):
     def __init__(self, max_rows: int) -> None:
-        super().__init__("Export exceeds the row limit")
+        super().__init__(
+            RuleCode.EXPORT_ROW_LIMIT_EXCEEDED,
+            f"Export exceeds the limit of {max_rows} rows; narrow the filters and retry",
+            params={"max_rows": max_rows},
+        )
         self.max_rows = max_rows
 
 
@@ -86,9 +91,21 @@ class ManagementQueryService:
     ) -> ManagementCaseCollectionResponse:
         captured_at = self._capture_as_of(actor, as_of)
         if limit < 1 or limit > 100:
-            raise ValueError("limit must be between 1 and 100")
+            raise field_violation(
+                "limit",
+                FieldErrorCode.RANGE,
+                "limit must be between 1 and 100",
+                params={"min": 1, "max": 100},
+                cls=RuleViolation,
+            )
         if offset < 0:
-            raise ValueError("offset must be non-negative")
+            raise field_violation(
+                "offset",
+                FieldErrorCode.RANGE,
+                "offset must be non-negative",
+                params={"min": 0},
+                cls=RuleViolation,
+            )
 
         summaries = self._filtered_summaries(
             actor,
@@ -388,7 +405,12 @@ class ManagementQueryService:
             raise PermissionError("Active organization user required")
         captured_at = as_of or datetime.now(UTC)
         if captured_at.utcoffset() is None:
-            raise ValueError("as_of must include UTC offset")
+            raise field_violation(
+                "as_of",
+                FieldErrorCode.INVALID_DATETIME,
+                "as_of must include UTC offset",
+                cls=RuleViolation,
+            )
         return captured_at
 
     def _load_candidate_members(

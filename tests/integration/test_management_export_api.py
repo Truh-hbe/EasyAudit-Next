@@ -438,8 +438,12 @@ def test_export_requires_an_explicit_valid_format(postgres_engine: Engine) -> No
     seed = _seed(postgres_engine)
     client = _client(postgres_engine, seed.organization_id, seed.lead_id)
 
-    assert client.get(EXPORT_URL).status_code == 422
-    assert client.get(f"{EXPORT_URL}?format=pdf").status_code == 422
+    missing = client.get(EXPORT_URL)
+    assert missing.status_code == 422
+    assert missing.json()["errors"] == [{"field": "format", "code": "required", "params": {}}]
+    invalid = client.get(f"{EXPORT_URL}?format=pdf")
+    assert invalid.status_code == 422
+    assert invalid.json()["errors"][0]["field"] == "format"
 
 
 def test_export_metadata_carries_organization_filters_and_timezone(
@@ -481,6 +485,8 @@ def test_export_over_the_row_limit_fails_whole_without_partial_output(
     assert response.status_code == 422
     assert response.headers["content-type"] == "application/json"
     assert "content-disposition" not in response.headers
+    assert response.json()["code"] == "export.row_limit_exceeded"
+    assert response.json()["params"] == {"max_rows": len(CASE_TITLES) - 1}
     assert response.json()["detail"] == (
         f"Export exceeds the limit of {len(CASE_TITLES) - 1} rows; narrow the filters and retry"
     )

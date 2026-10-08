@@ -23,6 +23,8 @@ from easyaudit_next.platform.domain.ids import AuthSessionId, OrganizationId, Us
 from easyaudit_next.platform.domain.models import AuthSession, PlatformRole, User
 from easyaudit_next.review_core.application.evidence_policy import EvidenceUploadPolicy
 from easyaudit_next.review_core.domain.models import Evidence
+from easyaudit_next.review_core.domain.scenario_capabilities import ActionItemOperationError
+from easyaudit_next.rules import RuleCode
 from tests.evidence_support import FakeEvidenceStore
 
 ACTION_ID = uuid4()
@@ -231,6 +233,10 @@ def test_missing_or_unusable_filename_is_rejected(
     bad_encoding = client.post(URL, content=b"data", headers={**PDF, "X-Evidence-Filename": "%FF"})
 
     assert (missing.status_code, unusable.status_code, bad_encoding.status_code) == (422, 422, 422)
+    assert missing.json()["code"] == "request.invalid"
+    assert unusable.json()["code"] == "evidence.filename_invalid"
+    assert unusable.json()["params"] == {"reason": "empty"}
+    assert bad_encoding.json()["params"] == {"reason": "encoding"}
     assert store.put_calls == []
 
 
@@ -257,6 +263,7 @@ def test_empty_upload_is_rejected_and_leaves_nothing(
     chunked = client.post(URL, content=empty_chunked(), headers=PDF)
 
     assert declared.status_code == 422 and chunked.status_code == 422
+    assert declared.json()["code"] == chunked.json()["code"] == "evidence.file_empty"
     assert store.objects == {} and recorder.registered == []
 
 
@@ -264,7 +271,10 @@ def test_register_failure_deletes_the_object_and_returns_the_original_error(
     client: TestClient, store: FakeEvidenceStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def register(*_: object) -> Evidence:
-        raise ValueError("Evidence cannot be registered for a cancelled ActionItem")
+        raise ActionItemOperationError(
+            RuleCode.ACTION_EVIDENCE_ON_CANCELLED,
+            "Evidence cannot be registered for a cancelled ActionItem",
+        )
 
     monkeypatch.setattr(uploads, "_register", register)
 
@@ -272,6 +282,7 @@ def test_register_failure_deletes_the_object_and_returns_the_original_error(
 
     assert response.status_code == 422
     assert "cancelled ActionItem" in response.json()["detail"]
+    assert response.json()["code"] == "action.evidence_on_cancelled"
     assert store.objects == {} and len(store.deleted) == 1
 
 

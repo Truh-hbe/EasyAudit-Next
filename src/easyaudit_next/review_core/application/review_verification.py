@@ -51,6 +51,7 @@ from easyaudit_next.review_core.domain.scenario_registry import ScenarioPolicy, 
 from easyaudit_next.review_core.domain.verification_repositories import (
     VerificationClosureRepository,
 )
+from easyaudit_next.rules import RuleCode, RuleViolation
 
 VIEW_FINDING_PERMISSION = "view_finding"
 REOPEN_FINDING_PERMISSION = "reopen_finding"
@@ -191,7 +192,10 @@ class VerificationClosureService:
             current: AuthorizationContext,
         ) -> SubmissionDecision:
             if current_case.lifecycle is ReviewCaseLifecycle.CLOSED:
-                raise ValueError("Closed ReviewCase cannot accept Finding verification")
+                raise RuleViolation(
+                    RuleCode.VERIFICATION_CASE_CLOSED,
+                    "Closed ReviewCase cannot accept Finding verification",
+                )
             decision = policy.submission_policy.decide(
                 SubmissionRequest(
                     current_lifecycle=current_finding.lifecycle,
@@ -274,7 +278,10 @@ class VerificationClosureService:
         authorize(review_case, context)
         locked_case, context = self._lock_expected_case(actor, review_case, finding, authorize)
         if locked_case.lifecycle is ReviewCaseLifecycle.CLOSED:
-            raise ValueError("Finding cannot be reopened after ReviewCase closure")
+            raise RuleViolation(
+                RuleCode.FINDING_REOPEN_AFTER_CASE_CLOSURE,
+                "Finding cannot be reopened after ReviewCase closure",
+            )
         finding = self._lock_expected_finding(actor, finding)
 
         operation_context = FindingOperationContext(

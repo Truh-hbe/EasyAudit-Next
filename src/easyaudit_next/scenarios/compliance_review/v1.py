@@ -41,6 +41,14 @@ from easyaudit_next.review_core.domain.scenario_capabilities import (
     SubmissionPolicy,
     SubmissionRequest,
     WorkflowTransitionError,
+    invalid_transition,
+)
+from easyaudit_next.rules import (
+    FieldError,
+    FieldErrorCode,
+    RuleCode,
+    reason_required,
+    request_invalid,
 )
 
 
@@ -141,14 +149,24 @@ def _has_reason(reason: str | None) -> bool:
 def _required_text_fields(
     payload: Mapping[str, object],
     fields: tuple[str, ...],
-) -> tuple[str, ...]:
-    errors: list[str] = []
+) -> tuple[FieldError, ...]:
+    errors: list[FieldError] = []
     for name in fields:
         value = payload.get(name)
         if not isinstance(value, str) or not value.strip():
-            errors.append(f"{name} must be a non-blank string")
+            errors.append(
+                FieldError(
+                    name, FieldErrorCode.REQUIRED, message=f"{name} must be a non-blank string"
+                )
+            )
         elif value != value.strip():
-            errors.append(f"{name} must not contain surrounding whitespace")
+            errors.append(
+                FieldError(
+                    name,
+                    FieldErrorCode.PADDED,
+                    message=f"{name} must not contain surrounding whitespace",
+                )
+            )
     return tuple(errors)
 
 
@@ -173,16 +191,20 @@ def _department_member_role_keys(grants: frozenset[RoleGrant]) -> frozenset[str]
 def _finding_type(context: FindingOperationContext) -> ComplianceReviewFindingType:
     raw = context.scenario_data.get("finding_type")
     if not isinstance(raw, str):
-        raise FindingOperationError("Compliance Finding requires a valid finding_type")
+        raise FindingOperationError(
+            RuleCode.FINDING_INVALID_TYPE, "Compliance Finding requires a valid finding_type"
+        )
     try:
         return ComplianceReviewFindingType(raw)
     except ValueError as exc:
-        raise FindingOperationError("Compliance Finding requires a valid finding_type") from exc
+        raise FindingOperationError(
+            RuleCode.FINDING_INVALID_TYPE, "Compliance Finding requires a valid finding_type"
+        ) from exc
 
 
-def _raise_submission_errors(errors: tuple[str, ...]) -> None:
+def _raise_submission_errors(errors: tuple[FieldError, ...]) -> None:
     if errors:
-        raise SubmissionDecisionError("; ".join(errors))
+        raise request_invalid(errors, SubmissionDecisionError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +229,11 @@ class ComplianceReviewCaseWorkflow:
         try:
             operation = ComplianceReviewCaseAction(action)
         except ValueError as exc:
-            raise WorkflowTransitionError(f"Unknown ReviewCase action: {action!r}") from exc
+            raise WorkflowTransitionError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown ReviewCase action: {action!r}",
+                params={"entity": "review_case", "action": action},
+            ) from exc
 
         if (
             lifecycle is ReviewCaseLifecycle.DRAFT
@@ -229,7 +255,9 @@ class ComplianceReviewCaseWorkflow:
             and operation is ComplianceReviewCaseAction.REOPEN_FIELDWORK
         ):
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Reopening fieldwork requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Reopening fieldwork requires a reason"
+                )
             return ReviewCaseLifecycle.IN_PROGRESS
         if (
             lifecycle is ReviewCaseLifecycle.AWAITING_CLOSURE
@@ -237,7 +265,8 @@ class ComplianceReviewCaseWorkflow:
         ):
             if not context.all_findings_terminal:
                 raise WorkflowTransitionError(
-                    "ReviewCase cannot close until every Finding is closed or voided"
+                    RuleCode.CASE_CLOSE_BLOCKED_BY_OPEN_FINDINGS,
+                    "ReviewCase cannot close until every Finding is closed or voided",
                 )
             return ReviewCaseLifecycle.CLOSED
         if operation is ComplianceReviewCaseAction.CANCEL and lifecycle in {
@@ -245,11 +274,11 @@ class ComplianceReviewCaseWorkflow:
             ReviewCaseLifecycle.SCHEDULED,
         }:
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Cancelling a ReviewCase requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Cancelling a ReviewCase requires a reason"
+                )
             return ReviewCaseLifecycle.CANCELLED
-        raise WorkflowTransitionError(
-            f"ReviewCase cannot perform {operation.value!r} from lifecycle {lifecycle.value!r}"
-        )
+        raise invalid_transition("ReviewCase", "review_case", lifecycle, operation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +292,11 @@ class ComplianceReviewFindingWorkflow:
         try:
             operation = ComplianceReviewFindingAction(action)
         except ValueError as exc:
-            raise WorkflowTransitionError(f"Unknown Finding action: {action!r}") from exc
+            raise WorkflowTransitionError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Finding action: {action!r}",
+                params={"entity": "finding", "action": action},
+            ) from exc
 
         if lifecycle is FindingLifecycle.OPEN and operation is ComplianceReviewFindingAction.ISSUE:
             return FindingLifecycle.RECTIFYING
@@ -274,7 +307,9 @@ class ComplianceReviewFindingWorkflow:
             return FindingLifecycle.CLOSED
         if lifecycle is FindingLifecycle.OPEN and operation is ComplianceReviewFindingAction.VOID:
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Voiding a Finding requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Voiding a Finding requires a reason"
+                )
             return FindingLifecycle.VOIDED
         if (
             lifecycle is FindingLifecycle.RECTIFYING
@@ -282,11 +317,13 @@ class ComplianceReviewFindingWorkflow:
         ):
             if context.non_cancelled_action_count < 1:
                 raise WorkflowTransitionError(
-                    "Finding requires at least one non-cancelled ActionItem before verification"
+                    RuleCode.FINDING_VERIFICATION_REQUIRES_ACTIONS,
+                    "Finding requires at least one non-cancelled ActionItem before verification",
                 )
             if not context.all_non_cancelled_actions_done:
                 raise WorkflowTransitionError(
-                    "Every non-cancelled ActionItem must be done before verification"
+                    RuleCode.FINDING_VERIFICATION_REQUIRES_ACTIONS_DONE,
+                    "Every non-cancelled ActionItem must be done before verification",
                 )
             return FindingLifecycle.VERIFYING
         if (
@@ -299,14 +336,18 @@ class ComplianceReviewFindingWorkflow:
             and operation is ComplianceReviewFindingAction.REJECT
         ):
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Rejecting a Finding requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Rejecting a Finding requires a reason"
+                )
             return FindingLifecycle.RECTIFYING
         if (
             lifecycle is FindingLifecycle.CLOSED
             and operation is ComplianceReviewFindingAction.REOPEN
         ):
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Reopening a Finding requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Reopening a Finding requires a reason"
+                )
             # An observation never entered rectification: back to open so it can be
             # accepted again.
             if context.scenario_data.get("finding_type") == (
@@ -314,9 +355,7 @@ class ComplianceReviewFindingWorkflow:
             ):
                 return FindingLifecycle.OPEN
             return FindingLifecycle.RECTIFYING
-        raise WorkflowTransitionError(
-            f"Finding cannot perform {operation.value!r} from lifecycle {lifecycle.value!r}"
-        )
+        raise invalid_transition("Finding", "finding", lifecycle, operation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,27 +363,36 @@ class ComplianceReviewFindingOperations:
     def validate_create(self, context: FindingOperationContext) -> None:
         if context.case_lifecycle is not ReviewCaseLifecycle.IN_PROGRESS:
             raise FindingOperationError(
-                "Compliance Review Finding can only be created while ReviewCase is in_progress"
+                RuleCode.FINDING_INVALID_CASE_LIFECYCLE,
+                "Compliance Review Finding can only be created while ReviewCase is in_progress",
+                params={"operation": "create"},
             )
 
     def validate_participant_management(self, context: FindingOperationContext) -> None:
         if context.case_lifecycle not in _ACTIVE_CASE_LIFECYCLES:
             raise FindingOperationError(
-                "Finding participants can only be managed while ReviewCase is active"
+                RuleCode.FINDING_INVALID_CASE_LIFECYCLE,
+                "Finding participants can only be managed while ReviewCase is active",
+                params={"operation": "manage_participants"},
             )
         if context.current_finding_lifecycle in {
             FindingLifecycle.CLOSED,
             FindingLifecycle.VOIDED,
         }:
             raise FindingOperationError(
-                "Terminal Finding participants cannot be changed by ordinary business operations"
+                RuleCode.FINDING_PARTICIPANTS_LOCKED,
+                "Terminal Finding participants cannot be changed by ordinary business operations",
             )
 
     def validate_transition(self, action: str, context: FindingOperationContext) -> None:
         try:
             operation = ComplianceReviewFindingAction(action)
         except ValueError as exc:
-            raise FindingOperationError(f"Unknown Finding action: {action!r}") from exc
+            raise FindingOperationError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Finding action: {action!r}",
+                params={"entity": "finding", "action": action},
+            ) from exc
         if operation not in {
             ComplianceReviewFindingAction.ISSUE,
             ComplianceReviewFindingAction.ACCEPT_OBSERVATION,
@@ -352,15 +400,23 @@ class ComplianceReviewFindingOperations:
         }:
             return
         if context.current_finding_lifecycle is not FindingLifecycle.OPEN:
-            raise FindingOperationError("Compliance direct transition requires an open Finding")
+            raise FindingOperationError(
+                RuleCode.FINDING_REQUIRES_OPEN,
+                "Compliance direct transition requires an open Finding",
+            )
         if context.case_lifecycle not in _ACTIVE_CASE_LIFECYCLES:
             raise FindingOperationError(
-                "Compliance Finding cannot transition directly in this ReviewCase lifecycle"
+                RuleCode.FINDING_INVALID_CASE_LIFECYCLE,
+                "Compliance Finding cannot transition directly in this ReviewCase lifecycle",
+                params={"operation": "transition"},
             )
         finding_type = _finding_type(context)
         if operation is ComplianceReviewFindingAction.ISSUE:
             if finding_type is not ComplianceReviewFindingType.NONCONFORMITY:
-                raise FindingOperationError("Only a nonconformity can be issued for rectification")
+                raise FindingOperationError(
+                    RuleCode.FINDING_ISSUE_REQUIRES_NONCONFORMITY,
+                    "Only a nonconformity can be issued for rectification",
+                )
             missing = tuple(
                 role_key
                 for role_key in ("responsible_department", "owner")
@@ -368,12 +424,17 @@ class ComplianceReviewFindingOperations:
             )
             if missing:
                 raise FindingOperationError(
+                    RuleCode.FINDING_MISSING_PARTICIPANT_ROLES,
                     "Issuing a compliance nonconformity requires participant role(s): "
-                    + ", ".join(missing)
+                    + ", ".join(missing),
+                    params={"roles": missing},
                 )
         if operation is ComplianceReviewFindingAction.ACCEPT_OBSERVATION:
             if finding_type is not ComplianceReviewFindingType.OBSERVATION:
-                raise FindingOperationError("Only an observation can be accepted directly")
+                raise FindingOperationError(
+                    RuleCode.FINDING_ACCEPT_REQUIRES_OBSERVATION,
+                    "Only an observation can be accepted directly",
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,19 +454,29 @@ class ComplianceReviewDirectFindingTransitions:
         try:
             operation = ComplianceReviewFindingAction(action)
         except ValueError as exc:
-            raise FindingOperationError(f"Unknown Finding action: {action!r}") from exc
+            raise FindingOperationError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Finding action: {action!r}",
+                params={"entity": "finding", "action": action},
+            ) from exc
         if operation not in {
             ComplianceReviewFindingAction.ISSUE,
             ComplianceReviewFindingAction.ACCEPT_OBSERVATION,
             ComplianceReviewFindingAction.VOID,
         }:
             raise FindingOperationError(
-                f"Finding action {action!r} is not a direct compliance transition"
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Finding action {action!r} is not a direct compliance transition",
+                params={"entity": "finding", "action": action},
             )
         self.finding_operations.validate_transition(action, context)
         lifecycle = context.current_finding_lifecycle
         if lifecycle is None:
-            raise FindingOperationError("Finding transition requires a current lifecycle")
+            raise FindingOperationError(
+                RuleCode.WORKFLOW_MISSING_CONTEXT,
+                "Finding transition requires a current lifecycle",
+                params={"entity": "finding"},
+            )
         target = self.finding_workflow.transition(
             lifecycle,
             action,
@@ -437,7 +508,11 @@ class ComplianceReviewActionWorkflow:
         try:
             operation = ComplianceReviewActionItemAction(action)
         except ValueError as exc:
-            raise WorkflowTransitionError(f"Unknown ActionItem action: {action!r}") from exc
+            raise WorkflowTransitionError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown ActionItem action: {action!r}",
+                params={"entity": "action_item", "action": action},
+            ) from exc
         if (
             lifecycle is ActionItemLifecycle.TODO
             and operation is ComplianceReviewActionItemAction.START
@@ -453,16 +528,16 @@ class ComplianceReviewActionWorkflow:
             ActionItemLifecycle.IN_PROGRESS,
         }:
             if not _has_reason(context.reason):
-                raise WorkflowTransitionError("Cancelling an ActionItem requires a reason")
+                raise reason_required(
+                    WorkflowTransitionError, "Cancelling an ActionItem requires a reason"
+                )
             return ActionItemLifecycle.CANCELLED
         if (
             lifecycle is ActionItemLifecycle.DONE
             and operation is ComplianceReviewActionItemAction.REOPEN
         ):
             return ActionItemLifecycle.IN_PROGRESS
-        raise WorkflowTransitionError(
-            f"ActionItem cannot perform {operation.value!r} from lifecycle {lifecycle.value!r}"
-        )
+        raise invalid_transition("ActionItem", "action_item", lifecycle, operation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,16 +545,22 @@ class ComplianceReviewActionOperations:
     @staticmethod
     def _require_active_rectification(context: ActionItemOperationContext) -> None:
         if context.case_lifecycle not in _ACTIVE_CASE_LIFECYCLES:
-            raise ActionItemOperationError("Compliance rectification requires an active ReviewCase")
+            raise ActionItemOperationError(
+                RuleCode.ACTION_REQUIRES_ACTIVE_CASE,
+                "Compliance rectification requires an active ReviewCase",
+            )
         if context.finding_lifecycle is not FindingLifecycle.RECTIFYING:
             raise ActionItemOperationError(
-                "Compliance ActionItem operations require a rectifying Finding"
+                RuleCode.ACTION_REQUIRES_RECTIFYING_FINDING,
+                "Compliance ActionItem operations require a rectifying Finding",
             )
 
     def validate_create(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
         if context.current_action_lifecycle is not None:
-            raise ActionItemOperationError("ActionItem creation requires no current ActionItem")
+            raise ActionItemOperationError(
+                RuleCode.ACTION_ALREADY_EXISTS, "ActionItem creation requires no current ActionItem"
+            )
 
     def validate_assignee_management(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
@@ -488,17 +569,24 @@ class ComplianceReviewActionOperations:
             ActionItemLifecycle.IN_PROGRESS,
         }:
             raise ActionItemOperationError(
-                "ActionItem assignees can only be changed before the ActionItem is terminal"
+                RuleCode.ACTION_ASSIGNEES_LOCKED,
+                "ActionItem assignees can only be changed before the ActionItem is terminal",
             )
 
     def validate_transition(self, action: str, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
         if context.current_action_lifecycle is None:
-            raise ActionItemOperationError("ActionItem transition requires a current ActionItem")
+            raise ActionItemOperationError(
+                RuleCode.ACTION_MISSING, "ActionItem transition requires a current ActionItem"
+            )
         try:
             ComplianceReviewActionItemAction(action)
         except ValueError as exc:
-            raise ActionItemOperationError(f"Unknown ActionItem action: {action!r}") from exc
+            raise ActionItemOperationError(
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown ActionItem action: {action!r}",
+                params={"entity": "action_item", "action": action},
+            ) from exc
 
     def validate_evidence_registration(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
@@ -508,25 +596,29 @@ class ComplianceReviewActionOperations:
             ActionItemLifecycle.DONE,
         }:
             raise ActionItemOperationError(
-                "Evidence cannot be registered for a cancelled ActionItem"
+                RuleCode.ACTION_EVIDENCE_ON_CANCELLED,
+                "Evidence cannot be registered for a cancelled ActionItem",
             )
 
     def validate_transfer_and_reopen_state(self, context: ActionItemOperationContext) -> None:
         self._require_active_rectification(context)
         if context.current_action_lifecycle is not ActionItemLifecycle.DONE:
             raise ActionItemOperationError(
-                "Only a done ActionItem can be transferred and reopened"
+                RuleCode.ACTION_TRANSFER_REQUIRES_DONE,
+                "Only a done ActionItem can be transferred and reopened",
             )
         if context.has_active_assignee:
             raise ActionItemOperationError(
-                "ActionItem still has an active executor, who can reopen it directly"
+                RuleCode.ACTION_EXECUTOR_STILL_ACTIVE,
+                "ActionItem still has an active executor, who can reopen it directly",
             )
 
     def decide_transfer_and_reopen(self, context: ActionItemOperationContext) -> str:
         self.validate_transfer_and_reopen_state(context)
         if context.reason is None or not context.reason.strip():
-            raise ActionItemOperationError(
-                "Transferring and reopening an ActionItem requires a reason"
+            raise reason_required(
+                ActionItemOperationError,
+                "Transferring and reopening an ActionItem requires a reason",
             )
         return ComplianceReviewActionItemAction.REOPEN.value
 
@@ -622,14 +714,17 @@ class ComplianceReviewSubmissionPolicy:
             operation = ComplianceReviewSubmissionAction(request.action)
         except ValueError as exc:
             raise SubmissionDecisionError(
-                f"Unknown Compliance Review submission action: {request.action!r}"
+                RuleCode.WORKFLOW_UNKNOWN_ACTION,
+                f"Unknown Compliance Review submission action: {request.action!r}",
+                params={"entity": "submission", "action": request.action},
             ) from exc
 
         if operation is ComplianceReviewSubmissionAction.SUBMIT_PLAN:
             self._require_rectification_stage(request, "plan")
             if request.current_lifecycle is not FindingLifecycle.RECTIFYING:
                 raise SubmissionDecisionError(
-                    "Rectification plan can only be submitted while Finding is rectifying"
+                    RuleCode.SUBMISSION_PLAN_REQUIRES_RECTIFYING,
+                    "Rectification plan can only be submitted while Finding is rectifying",
                 )
             _raise_submission_errors(_required_text_fields(request.payload, ("root_cause",)))
             return SubmissionDecision(
@@ -684,22 +779,30 @@ class ComplianceReviewSubmissionPolicy:
     def _require_rectification_stage(request: SubmissionRequest, stage: str) -> None:
         if request.purpose is not SubmissionPurpose.RECTIFICATION:
             raise SubmissionDecisionError(
-                f"{request.action} requires rectification Submission purpose"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires rectification Submission purpose",
+                params={"action": request.action, "aspect": "purpose"},
             )
         if request.payload.get("stage") != stage:
             raise SubmissionDecisionError(
-                f"{request.action} requires rectification stage {stage!r}"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires rectification stage {stage!r}",
+                params={"action": request.action, "aspect": "stage"},
             )
 
     @staticmethod
     def _require_verification_result(request: SubmissionRequest, result: str) -> None:
         if request.purpose is not SubmissionPurpose.VERIFICATION:
             raise SubmissionDecisionError(
-                f"{request.action} requires verification Submission purpose"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires verification Submission purpose",
+                params={"action": request.action, "aspect": "purpose"},
             )
         if request.payload.get("result") != result:
             raise SubmissionDecisionError(
-                f"{request.action} requires verification result {result!r}"
+                RuleCode.SUBMISSION_MISMATCH,
+                f"{request.action} requires verification result {result!r}",
+                params={"action": request.action, "aspect": "result"},
             )
 
 
@@ -742,10 +845,10 @@ class ComplianceReviewV1Policy:
     )
     submission_policy: SubmissionPolicy = field(default_factory=ComplianceReviewSubmissionPolicy)
 
-    def validate_case_input(self, payload: Mapping[str, object]) -> tuple[str, ...]:
+    def validate_case_input(self, payload: Mapping[str, object]) -> tuple[FieldError, ...]:
         return _required_text_fields(payload, ("standard_reference", "scope_summary"))
 
-    def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[str, ...]:
+    def validate_finding_input(self, payload: Mapping[str, object]) -> tuple[FieldError, ...]:
         errors = list(_required_text_fields(payload, ("criterion_reference", "finding_type")))
         finding_type = payload.get("finding_type")
         if (
@@ -756,7 +859,14 @@ class ComplianceReviewV1Policy:
             try:
                 ComplianceReviewFindingType(finding_type)
             except ValueError:
-                errors.append("finding_type must be 'nonconformity' or 'observation'")
+                errors.append(
+                    FieldError(
+                        "finding_type",
+                        FieldErrorCode.INVALID_CHOICE,
+                        {"allowed": tuple(item.value for item in ComplianceReviewFindingType)},
+                        "finding_type must be 'nonconformity' or 'observation'",
+                    )
+                )
         return tuple(errors)
 
 

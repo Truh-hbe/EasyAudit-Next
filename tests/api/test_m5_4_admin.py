@@ -18,6 +18,7 @@ from easyaudit_next.platform.application.authentication import LocalCredentialUn
 from easyaudit_next.platform.application.password_policy import PasswordPolicyError
 from easyaudit_next.platform.domain.ids import AuthSessionId, OrganizationId, UserId
 from easyaudit_next.platform.domain.models import AuthSession, PlatformRole, User
+from easyaudit_next.rules import RuleCode
 
 NOW = datetime(2026, 8, 30, tzinfo=UTC)
 
@@ -100,7 +101,7 @@ def _admin_client(monkeypatch: pytest.MonkeyPatch, result: User | BaseException)
     [
         (LookupError("missing"), 404),
         (LocalCredentialUnavailableError("missing credential"), 409),
-        (PasswordPolicyError("secret policy detail"), 422),
+        (PasswordPolicyError(RuleCode.PASSWORD_TOO_SHORT, "secret policy detail"), 422),
     ],
 )
 def test_credential_reset_error_statuses_are_frozen_and_safe(

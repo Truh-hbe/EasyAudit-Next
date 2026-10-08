@@ -290,6 +290,7 @@ def test_action_cancelled_during_the_upload_deletes_the_object_and_returns_422(
 
     assert response.status_code == 422
     assert "cancelled" in response.json()["detail"]
+    assert response.json()["code"] == "action.evidence_on_cancelled"
     assert store.objects == {} and len(store.deleted) == 1
     assert evidence_rows(postgres_engine, seeded) == []
 

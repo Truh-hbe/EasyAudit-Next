@@ -146,6 +146,17 @@ src/easyaudit_next/
 
 `openapi/openapi.json` 是稳定接口的基线，由 `scripts/check_openapi.py` 校验。
 
+### 结构化错误码
+
+所有 422（含 Pydantic 请求校验）和带码的错误（如 400 `password.current_invalid`）共用一个响应体：`{"detail": str, "code": str, "params": {}, "errors": [{"field", "code", "params"}]}`。
+
+- `detail` 是英文，只供日志和排障，**客户端界面不得显示**。`code`、`params`、`errors` 才是契约。
+- `code` 取自 `src/easyaudit_next/rules.py` 的 `RuleCode`（页面级）与 `FieldErrorCode`（字段级，放在 `errors[]`，`field` 是请求体字段名）。命名为 `<实体>.<蛇形原因>`，描述事实而不是界面；发布后只增不改名。`params` 只放键和数值（如 `roles: ["owner"]`、`max: 300`），不放展示文案。
+- 业务规则一律抛 `RuleViolation(code, message, params=…, errors=…)`（场景策略的四个异常类是它的子类）。领域层只带 code，不含展示文案；API 层的全局 handler 序列化。Pydantic 校验错误由 handler 转成同一形状（`request.invalid` + `errors`）。
+- 兜底：路由里遇到没有码的裸 `ValueError` 仍返回 422，`code` 为 `rule.unspecified` 并记 WARNING `unclassified_rule_violation`。它不应出现：`scripts/check_error_codes.py` 禁止业务包 `raise ValueError`，并要求每个 `RuleCode` 都被引用。
+- 场景的 `validate_case_input / validate_finding_input` 返回 `FieldError`（含英文 `message`，只进 `detail`）。
+- 本阶段 409 的 body 仍只有 `detail`；信封允许 409 以后携带 `code`。
+
 ## 读侧
 
 - Workbench（`/me/workbench`）和 Management（`/management/review-cases`）只做查询投影，不持久化 WorkItem、进度快照之类的第二份真相。

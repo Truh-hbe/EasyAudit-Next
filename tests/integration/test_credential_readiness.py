@@ -511,16 +511,20 @@ def test_full_api_credential_remediation_journey(postgres_engine: Engine) -> Non
         json={"current_password": "wrong-password", "new_password": P1},
     )
     assert wrong.status_code == 400
+    assert wrong.json()["code"] == "password.current_invalid"
     short = client_a.post(
         "/api/v1/me/password",
         json={"current_password": P0, "new_password": "short"},
     )
     assert short.status_code == 422
+    assert short.json()["code"] == "password.too_short"
+    assert short.json()["params"] == {"min": 12}
     reused = client_a.post(
         "/api/v1/me/password",
         json={"current_password": P0, "new_password": P0},
     )
     assert reused.status_code == 422
+    assert reused.json()["code"] == "password.reused"
 
     with Session(postgres_engine) as session:
         credential_after_failures = session.get(LocalCredentialRecord, user_id)
