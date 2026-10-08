@@ -3,6 +3,13 @@
 1. Business code that can surface as a 422 must raise `RuleViolation` (which requires a code),
    never a bare `ValueError` or a `ValueError` subclass without a code.
 2. Every `RuleCode` is referenced by production code, so no code is declared and forgotten.
+
+Boundary of check 1: it is syntactic. It sees `raise ValueError(...)`, classes that name
+`ValueError` as a base, and `raise X(...)` where `X` is, by name, a repository class deriving from
+`ValueError` without `RuleViolation` (so imported subclasses are caught). It does not follow
+`raise exc` of a variable, factory functions that return exceptions, or exceptions raised by
+third-party code. Exceptions that are deliberately not request validation errors are listed in
+`ALLOWED` by enclosing function (or class), not by file.
 """
 
 import ast
@@ -12,9 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "src" / "easyaudit_next"
 RULES_MODULE = SOURCE_ROOT / "rules.py"
 
-# Packages whose ValueErrors reach the API as 422.
+# Packages whose ValueErrors can reach the API as 422.
 GUARDED = (
     SOURCE_ROOT / "review_core" / "application",
+    SOURCE_ROOT / "review_core" / "domain",
     SOURCE_ROOT / "scenarios",
     SOURCE_ROOT / "review_resource_queries",
     SOURCE_ROOT / "review_case_queries",
@@ -23,12 +31,31 @@ GUARDED = (
     SOURCE_ROOT / "collaboration" / "nudge.py",
     SOURCE_ROOT / "platform" / "application" / "password_policy.py",
 )
-# Start-up configuration and catalog publishing: never answered as a request validation error.
-ALLOWED = {
-    SOURCE_ROOT / "review_core" / "application" / "evidence_policy.py": {"ValueError"},
-    SOURCE_ROOT / "review_core" / "application" / "scenario_catalog.py": {
-        "ScenarioVersionAlreadyPublishedError"
+
+# Programmer/configuration invariants that are never answered as a validation error, keyed by file
+# then by the enclosing "Class.function" / "function" / "Class" (for class definitions).
+_DOMAIN = SOURCE_ROOT / "review_core" / "domain"
+ALLOWED: dict[Path, set[str]] = {
+    SOURCE_ROOT / "review_core" / "application" / "evidence_policy.py": {
+        "EvidenceUploadPolicy.from_config"  # start-up EVIDENCE_* configuration
     },
+    SOURCE_ROOT / "review_core" / "application" / "scenario_catalog.py": {
+        "ScenarioVersionAlreadyPublishedError",  # catalog publishing, mapped to 409
+        "ScenarioCatalogService.publish",
+    },
+    _DOMAIN / "models.py": {
+        "Scenario.__post_init__",
+        "ScenarioDefinition.__post_init__",
+        "ScenarioVersionPublication.__post_init__",
+    },
+    _DOMAIN / "invariants.py": {
+        "assert_plan_contains_case",
+        "assert_finding_belongs_to_case",
+        "assert_unique_finding_participants",
+        "assert_unique_action_assignees",
+    },
+    _DOMAIN / "scenario_capabilities.py": {"RoleSpecification.__post_init__"},
+    _DOMAIN / "scenario_registry.py": {"ScenarioRegistry.register"},
 }
 
 
@@ -49,20 +76,65 @@ def name_of(node: ast.expr) -> str:
     return ""
 
 
-def uncoded_violations(path: Path) -> list[str]:
+def uncoded_exception_classes() -> set[str]:
+    """Names of repository classes deriving from ValueError but not from RuleViolation."""
+    bases: dict[str, set[str]] = {}
+    for path in SOURCE_ROOT.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ClassDef):
+                bases.setdefault(node.name, set()).update(name_of(base) for base in node.bases)
+
+    def reaches(name: str, target: str, seen: frozenset[str] = frozenset()) -> bool:
+        if name == target:
+            return True
+        if name in seen:
+            return False
+        return any(reaches(base, target, seen | {name}) for base in bases.get(name, ()))
+
+    return {
+        name
+        for name in bases
+        if reaches(name, "ValueError") and not reaches(name, "RuleViolation")
+    }
+
+
+def scoped_nodes(tree: ast.AST) -> list[tuple[str, ast.AST]]:
+    """Every node with its enclosing 'Class.function' scope (class name for a class itself)."""
+    found: list[tuple[str, ast.AST]] = []
+
+    def visit(node: ast.AST, scope: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                found.append((".".join([*scope, child.name]), child))
+                visit(child, [*scope, child.name])
+            elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                visit(child, [*scope, child.name])
+            else:
+                found.append((".".join(scope), child))
+                visit(child, scope)
+
+    visit(tree, [])
+    return found
+
+
+def uncoded_violations(path: Path, uncoded: set[str]) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     allowed = ALLOWED.get(path, set())
     problems: list[str] = []
-    for node in ast.walk(tree):
+    for scope, node in scoped_nodes(tree):
+        if scope in allowed:
+            continue
         if isinstance(node, ast.Raise) and node.exc is not None:
-            if name_of(node.exc) == "ValueError" and "ValueError" not in allowed:
-                problems.append(f"{path.relative_to(ROOT)}:{node.lineno}: raise ValueError")
-        if isinstance(node, ast.ClassDef) and node.name not in allowed:
-            if any(name_of(base) == "ValueError" for base in node.bases):
+            raised = name_of(node.exc)
+            if raised == "ValueError" or raised in uncoded:
                 problems.append(
-                    f"{path.relative_to(ROOT)}:{node.lineno}: {node.name} subclasses ValueError; "
-                    "subclass RuleViolation"
+                    f"{path.relative_to(ROOT)}:{node.lineno}: raise {raised} without a RuleCode"
                 )
+        if isinstance(node, ast.ClassDef) and any(name_of(b) == "ValueError" for b in node.bases):
+            problems.append(
+                f"{path.relative_to(ROOT)}:{node.lineno}: {node.name} subclasses ValueError; "
+                "subclass RuleViolation"
+            )
     return problems
 
 
@@ -96,7 +168,10 @@ def referenced_codes() -> set[str]:
 
 
 def main() -> None:
-    problems = [problem for path in guarded_files() for problem in uncoded_violations(path)]
+    uncoded = uncoded_exception_classes()
+    problems = [
+        problem for path in guarded_files() for problem in uncoded_violations(path, uncoded)
+    ]
     if problems:
         raise SystemExit("Rule violations without a code:\n" + "\n".join(problems))
 

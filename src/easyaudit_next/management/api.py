@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from easyaudit_next.api.dependencies import BusinessIdentity, DatabaseSession
+from easyaudit_next.api.errors import RuleErrorResponse
 from easyaudit_next.composition import build_management_query_service
 from easyaudit_next.infrastructure.database import snapshot_read
 from easyaudit_next.infrastructure.observability import APP_LOGGER
@@ -64,6 +65,7 @@ def list_managed_review_cases(
             },
         },
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": RuleErrorResponse,
             "description": "Invalid request, or the filtered row count exceeds EXPORT_MAX_ROWS."
         },
     },
