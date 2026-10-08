@@ -36,7 +36,7 @@
 | ☐ | 检查 | 怎么确认 | 通过标准 |
 |---|---|---|---|
 | ☐ | 健康检查（仅容器内，网关不转发 `/health/*`） | `$DC exec -T api python -c 'import urllib.request; [print(p, urllib.request.urlopen("http://127.0.0.1:8000/health/"+p, timeout=3).read().decode()) for p in ("live", "ready")]'` | `live`、`ready` 均 200，`ready` 各项 `ok`。注意 `ready` 不校验对象存储凭证和 bucket，需用一次真实 Evidence 上传/下载补验 |
-| ☐ | 结构化日志可查 | `$DC logs --since 1h api`（stdout 一行一个 JSON，含 `request_id`、`route`、`status_code`、`latency_ms`）；用户报错时用响应头 `X-Request-ID` 检索 | 能看到最近请求；近 1 小时 5xx 比例 ____（无持续升高）；无 `evidence_object_missing`、`evidence_object_size_mismatch`、`database_timeout` 之外的新 ERROR 趋势 |
+| ☐ | 结构化日志可查 | `$DC logs --since 1h api`（stdout 一行一个 JSON，含 `request_id`、`route`、`status_code`、`latency_ms`）；用户报错时用响应头 `X-Request-ID` 检索 | 能看到最近请求；近 1 小时 5xx 比例 ____（无持续升高）；无 `evidence_object_missing`、`evidence_object_size_mismatch` 及其他持续出现的 ERROR |
 | ☐ | auth 清理 timer | `systemctl list-timers easyaudit-cleanup-auth.timer`；`systemctl show easyaudit-cleanup-auth.service -p Result` | 已启用，最近一次 `Result=success` |
 | ☐ | 证据孤儿清理 timer | `systemctl show easyaudit-cleanup-evidence-orphans.service -p Result`；首次启用前已跑过 `--dry-run` | 最近一次 `Result=success`（`failed`、`refused`、`deleted_but_registered` 均为 0） |
 | ☐ | 提醒 sweep timer | `systemctl show easyaudit-reminder-sweep.service -p Result`；`journalctl -u easyaudit-reminder-sweep -n 1 --no-pager` | 最近一次 `Result=success`，JSON 的 `failed_count` 为 0 |
