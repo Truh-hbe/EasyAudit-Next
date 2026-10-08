@@ -656,11 +656,11 @@ test.describe('device time zone differs from the display time zone', () => {
 })
 
 test('legacy element styles stay inside legacy page containers and never cross the ui-modern boundary', async ({ page }) => {
-  await stubReadySession(page, 'system_admin')
-  // 选用仍为遗留容器（.surface-page）的页面；每迁移完一页，这里要换成下一个尚未迁移的页面。
-  await page.route('**/api/v1/admin/**', (route) => fulfillJson(route, 500, { detail: 'stop at the error state' }))
-  await page.goto('/admin')
-  await expect(page.getByRole('heading', { name: '管理设置' })).toBeVisible()
+  await stubReadySession(page)
+  await stubEmptyWorkbench(page)
+  // 不依赖具体业务页面：任何页面都已加载全局样式表，边界由注入的 fixture 验证。
+  await page.goto('/me/workbench')
+  await expect(page.getByRole('heading', { name: '我的工作' })).toBeVisible()
 
   const styles = await page.evaluate(() => {
     const browser = globalThis as unknown as {
@@ -674,8 +674,11 @@ test('legacy element styles stay inside legacy page containers and never cross t
       `<form id="${prefix}-form"><label id="${prefix}-label">名称<input id="${prefix}-input" /></label>` +
       `<button id="${prefix}-button" type="button" disabled>提交</button></form>`
     browser.document
-      .querySelector('.surface-page')
-      .insertAdjacentHTML('beforeend', fixture('legacy') + `<div class="ui-modern">${fixture('modern')}</div>`)
+      .querySelector('body')
+      .insertAdjacentHTML(
+        'beforeend',
+        `<div class="surface-page">${fixture('legacy')}<div class="ui-modern">${fixture('modern')}</div></div>`,
+      )
     const read = (id: string) => browser.getComputedStyle(browser.document.getElementById(id))
     const pick = (prefix: string) => ({
       formDisplay: read(`${prefix}-form`).display,
