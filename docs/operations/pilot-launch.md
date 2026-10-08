@@ -8,7 +8,7 @@
 |---|---|---|---|
 | ☐ | 部署的 release 与 main 提交对应 | `git rev-parse HEAD`；`docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$(docker inspect --format '{{.Image}}' "$($DC ps -q api)")"`（`web`、`object-storage` 同理）；`git merge-base --is-ancestor <release> origin/main` | 三个镜像 label 一致，等于 `EASYAUDIT_RELEASE` 和检出 HEAD，且该提交在 `origin/main` 上；工作区干净（`git diff --quiet HEAD`） |
 | ☐ | 数据库迁移到 head | `$DC run --rm --no-deps -T migrate alembic current`；`... alembic heads` | 两者输出同一个 revision |
-| ☐ | 配置与部署入口一致 | 对照 [配置参考](configuration.md)：systemd unit 与手动命令使用同一 `EASYAUDIT_RELEASE`、project、secrets/certs 路径；`APP_ENV` 非 `development` | 无差异；`/health/ready` 的 `migrations` 为 `ok` |
+| ☐ | 配置与部署入口一致 | 对照 [配置参考](configuration.md)：systemd unit 与手动命令使用同一 `EASYAUDIT_RELEASE`、project、secrets/certs 路径；若维护者按配置参考「配置变更与激活」用 override 注入了 `APP_ENV` / `LOG_LEVEL`，所有后续 `$DC` 操作都带同一 override，并确认生效（base compose 不注入，`deploy/.env` 无效） | 无差异；`/health/ready` 的 `configuration`、`migrations` 为 `ok`。`APP_ENV` 保持 base compose 默认值也可接受，是否用 override 由维护者决定 |
 
 记录：release `<sha>`；revision `<rev>`。
 
@@ -27,7 +27,7 @@
 |---|---|---|---|
 | ☐ | 在目标机器、按实际数据量做过一次演练 | 在专用可丢弃 Docker 主机运行 `deploy/backup/drill.sh`（固定 project `easyaudit-drill`，会 `down -v`，绝不能在生产主机运行）；记录 `restore-drill-record.json`（`result`、`actual_rto_seconds`、`backup_timestamp`、`release_sha`） | `result` 通过；`actual_rto_seconds` ≤ `DRILL_RTO_LIMIT_SECONDS`（默认 14400，设计目标 RTO ≤ 4h）；演练使用的 release 即本次上线 release。CI 的 `backup-restore-drill` 记录只代表小数据集，不能代替目标机演练 |
 | ☐ | 对生产备份的恢复演练 | 按 [恢复](../../deploy/README.md#恢复) 在**独立空目标**执行 `deploy/backup/restore.sh environment <备份目录>` | 打印 `RESTORE OK`，退出 0 |
-| ☐ | 演练后证据完整性 | 在演练/恢复目标上 `$DC run --rm --no-deps -T api easyaudit-next verify-evidence`；`... cleanup-evidence-orphans --dry-run` | `verify-evidence` 退出 0、零不一致；dry-run 的 `failed`、`refused` 为 0 |
+| ☐ | 演练后证据完整性 | 在演练/恢复目标上 `$DC run --rm --no-deps -T api easyaudit-next verify-evidence`；`... cleanup-evidence-orphans --dry-run` | `verify-evidence` 退出 0、零不一致；dry-run 的 `failed` 为 0，`refused` 为 0 或 null（未触发时为 null） |
 
 记录：演练日期 ____；耗时 ____ s；结果 ____。
 
@@ -38,8 +38,8 @@
 | ☐ | 健康检查（仅容器内，网关不转发 `/health/*`） | `$DC exec -T api python -c 'import urllib.request; [print(p, urllib.request.urlopen("http://127.0.0.1:8000/health/"+p, timeout=3).read().decode()) for p in ("live", "ready")]'` | `live`、`ready` 均 200，`ready` 各项 `ok`。注意 `ready` 不校验对象存储凭证和 bucket，需用一次真实 Evidence 上传/下载补验 |
 | ☐ | 结构化日志可查 | `$DC logs --since 1h api`（stdout 一行一个 JSON，含 `request_id`、`route`、`status_code`、`latency_ms`）；用户报错时用响应头 `X-Request-ID` 检索 | 能看到最近请求；近 1 小时 5xx 比例 ____（无持续升高）；无 `evidence_object_missing`、`evidence_object_size_mismatch` 及其他持续出现的 ERROR |
 | ☐ | auth 清理 timer | `systemctl list-timers easyaudit-cleanup-auth.timer`；`systemctl show easyaudit-cleanup-auth.service -p Result` | 已启用，最近一次 `Result=success` |
-| ☐ | 证据孤儿清理 timer | `systemctl show easyaudit-cleanup-evidence-orphans.service -p Result`；首次启用前已跑过 `--dry-run` | 最近一次 `Result=success`（`failed`、`refused`、`deleted_but_registered` 均为 0） |
-| ☐ | 提醒 sweep timer | `systemctl show easyaudit-reminder-sweep.service -p Result`；`journalctl -u easyaudit-reminder-sweep -n 1 --no-pager` | 最近一次 `Result=success`，JSON 的 `failed_count` 为 0 |
+| ☐ | 证据孤儿清理 timer | `systemctl show easyaudit-cleanup-evidence-orphans.service -p Result`；首次启用前已跑过 `--dry-run` | 最近一次 `Result=success`（JSON 里 `failed`、`deleted_but_registered` 为 0，`refused` 为 0 或 null） |
+| ☐ | 提醒 sweep timer | `systemctl show easyaudit-reminder-sweep.service -p Result`；`journalctl -u easyaudit-reminder-sweep -n 20 --no-pager`（最后一行常是 systemd 的 `Finished`/`Deactivated`，找最后一条 JSON 行） | 最近一次 `Result=success`，JSON 的 `failed_count` 为 0 |
 | ☐ | 提醒状态 | `$DC run --rm --no-deps -T api easyaudit-next scheduler-status --max-age-hours 26`；`systemctl show easyaudit-reminder-status.service -p Result` | 退出 0（最近一次成功不早于 26 小时）。sweep 至少成功一次后才启用 status timer，否则报 `never_run` |
 | ☐ | 备份新鲜度 timer | `systemctl show easyaudit-backup-freshness.service -p Result` | 最近一次 `Result=success` |
 | ☐ | 磁盘与对象存储余量 | 宿主机 `df -h`（Docker 数据目录、备份目录所在盘）；`docker system df -v`（postgres_data / object_data 卷） | 各盘可用 ≥ ____ %；按当前 Evidence 增长估算能支撑试点周期。仓库没有容量告警，由维护者人工查看 |
@@ -66,11 +66,22 @@
 - `/health/ready` 持续 503，或 5xx 持续升高。
 - `scheduler-status` 持续非零（提醒不再发出）。
 
-暂停操作（均需在已确认的 project 上执行）：
+暂停操作（均需在已确认的 project 上执行）。`backup.sh` 要求 postgres、object-storage、api、web、gateway 都在运行，所以"先备份"与"先下线"不能同时满足，按停止条件类型选顺序：
 
-1. 由维护者手动下线入口：`$DC stop gateway api web`（保留 postgres、object-storage 与全部卷，不使用 `down -v`）。仓库没有维护页，如需通知用户由维护者自行处理。
-2. 停止会写数据的 timer：`sudo systemctl stop easyaudit-reminder-sweep.timer easyaudit-cleanup-auth.timer easyaudit-cleanup-evidence-orphans.timer`；保留 `easyaudit-backup.timer`，必要时先手动跑一次 `backup.sh`。
-3. 保留现场：不删卷，记录日志（`$DC logs api`）、`request_id`、`backup_timestamp`，再按第 5 节决定修复或恢复。
+**A. 数据跨组织/跨权限泄漏迹象：先下线入口，不等备份**
+
+1. 立即由维护者手动下线入口：`$DC stop gateway api web`（保留 postgres、object-storage 与全部卷，不使用 `down -v`）。仓库没有维护页，如需通知用户由维护者自行处理。
+2. 停所有 timer：`sudo systemctl stop easyaudit-reminder-sweep.timer easyaudit-cleanup-auth.timer easyaudit-cleanup-evidence-orphans.timer easyaudit-backup.timer easyaudit-backup-freshness.timer`。
+3. 保留现场：记录日志（`$DC logs api`）、`request_id`、最近一份备份的 `backup_timestamp`。需要留存现场数据时，不在停机状态下跑 `backup.sh`（会 exit 1）；已有最近备份可用，或在维护者确认后恢复服务再备份，或用备份在独立目标恢复后调查。
+
+**B. 其他停止条件（备份失败、完整性失败、5xx、无法登录等）：先停 timer、留存备份，再下线**
+
+1. 停写数据的 timer：`sudo systemctl stop easyaudit-reminder-sweep.timer easyaudit-cleanup-auth.timer easyaudit-cleanup-evidence-orphans.timer`；确认没有正在运行的 oneshot：`systemctl list-units --type=service --state=running 'easyaudit-*'`。
+2. 如需留存现场备份（不适用于备份本身故障的情形）：在五个服务仍运行时跑 `deploy/backup/backup.sh`，确认 exit 0 且 `verify.sh <目录> --bundle-only` 通过；exit 1 或 3 不算有效留存，按失败处理，不要为此无限期推迟下线。
+3. `$DC stop gateway api web` 下线入口，同时 `sudo systemctl stop easyaudit-backup.timer easyaudit-backup-freshness.timer`（停机期间 backup 会 exit 1、freshness 会误报）。
+4. 记录日志与 `request_id`，再按第 5 节决定修复或恢复。
+
+恢复试点时：`$DC up -d --wait gateway`，通过第 4 节健康检查和登录验收后，再 `sudo systemctl start` 上面停掉的 timer，并用 `systemctl list-timers` 核对。
 
 ## 7. 试点范围确认
 
@@ -80,7 +91,7 @@
 | ☐ | 2 个部门、10–20 个用户 | 管理设置 `/admin`；`GET /api/v1/admin/departments`、`/admin/users` 或界面列表 | 部门 2 个，用户 10–20 人，均已设置 primary department |
 | ☐ | 两个场景已发布 | `easyaudit-next publish-scenario --organization-id <org-id> --key process_review --version 1`、`--key compliance_review --version 1`（见 [首次部署](../../deploy/README.md#首次部署到业务-ready)）；核对 `GET /api/v1/admin/scenario-status` | 两个 v1 均 published/ready；创建人的 `GET /api/v1/review-catalog` 返回 `process_review@1` 与 `compliance_review@1`。重复发布会失败，先查状态 |
 | ☐ | 预期 Case 规模 | 与业务方确认 | 10–30 个 Case |
-| ☐ | bootstrap 管理员已改密 | bootstrap 管理员默认**不**要求首次改密：由其本人通过界面（或 `POST /api/v1/me/password`）改密并重新登录；其他用户创建时 `must_change_password` 为 true，首次登录改密 | 初始密码已失效；初始密码未留存于任何聊天、工单或脚本 |
+| ☐ | bootstrap 管理员已改密 | bootstrap 管理员默认不要求首次改密，界面也没有个人改密入口。密码由管理员本人在 `bootstrap-admin` 的 CLI 提示中输入、未经他人之手：无需改密。若由他人代为执行 bootstrap：管理员登录后在 `/admin`「临时凭据重置」选择自己设临时密码（也可调 `POST /api/v1/admin/users/{user_id}/credential-reset`；服务端不禁止重置自己，会撤销其 Session），重新登录后在强制改密页改密（或 `POST /api/v1/me/password`）。其他用户创建时 `must_change_password` 为 true，首次登录改密 | bootstrap 密码仅管理员本人知晓，或代执行时的初始密码已失效；初始/临时密码未留存于任何聊天、工单或脚本 |
 
 ## 8. 签字
 
