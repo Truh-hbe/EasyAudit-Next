@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from sqlalchemy import delete, select, update
 
 from easyaudit_next.platform.domain.ids import DepartmentId, OrganizationId, UserId
@@ -97,6 +99,24 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
         )
         return tuple(self._action_to_domain(record) for record in records)
 
+    def list_action_items_for_findings(
+        self,
+        organization_id: OrganizationId,
+        finding_ids: Sequence[FindingId],
+    ) -> tuple[ActionItem, ...]:
+        if not finding_ids:
+            return ()
+        records = self._session.scalars(
+            select(ActionItemRecord)
+            .where(
+                ActionItemRecord.organization_id == organization_id,
+                ActionItemRecord.finding_id.in_(finding_ids),
+            )
+            .order_by(ActionItemRecord.finding_id, ActionItemRecord.due_at, ActionItemRecord.id)
+            .execution_options(populate_existing=True)
+        )
+        return tuple(self._action_to_domain(record) for record in records)
+
     def update_action_item(
         self,
         action_item: ActionItem,
@@ -132,6 +152,28 @@ class SqlAlchemyRectificationRepository(SqlAlchemyReviewCoreRepository):
                 ActionAssigneeRecord.action_item_id == action_item_id,
             )
             .order_by(ActionAssigneeRecord.assigned_at, ActionAssigneeRecord.role)
+            .execution_options(populate_existing=True)
+        )
+        return tuple(self._assignee_to_domain(record) for record in records)
+
+    def list_action_assignees_for_actions(
+        self,
+        organization_id: OrganizationId,
+        action_item_ids: Sequence[ActionItemId],
+    ) -> tuple[ActionAssignee, ...]:
+        if not action_item_ids:
+            return ()
+        records = self._session.scalars(
+            select(ActionAssigneeRecord)
+            .where(
+                ActionAssigneeRecord.organization_id == organization_id,
+                ActionAssigneeRecord.action_item_id.in_(action_item_ids),
+            )
+            .order_by(
+                ActionAssigneeRecord.action_item_id,
+                ActionAssigneeRecord.assigned_at,
+                ActionAssigneeRecord.role,
+            )
             .execution_options(populate_existing=True)
         )
         return tuple(self._assignee_to_domain(record) for record in records)

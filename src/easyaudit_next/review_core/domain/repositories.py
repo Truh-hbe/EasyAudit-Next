@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Protocol
 
 from easyaudit_next.platform.domain.ids import OrganizationId, UserId
@@ -146,6 +147,12 @@ class ReviewCoreRepository(Protocol):
         finding_id: FindingId,
     ) -> tuple[FindingParticipant, ...]: ...
 
+    def list_finding_participants_for_findings(
+        self,
+        organization_id: OrganizationId,
+        finding_ids: Sequence[FindingId],
+    ) -> tuple[FindingParticipant, ...]: ...
+
     def add_action_item(self, action_item: ActionItem) -> None: ...
 
     def get_action_item(
@@ -188,6 +195,12 @@ class RectificationRepository(ReviewCoreRepository, Protocol):
         finding_id: FindingId,
     ) -> tuple[ActionItem, ...]: ...
 
+    def list_action_items_for_findings(
+        self,
+        organization_id: OrganizationId,
+        finding_ids: Sequence[FindingId],
+    ) -> tuple[ActionItem, ...]: ...
+
     def update_action_item(
         self,
         action_item: ActionItem,
@@ -199,6 +212,12 @@ class RectificationRepository(ReviewCoreRepository, Protocol):
         self,
         organization_id: OrganizationId,
         action_item_id: ActionItemId,
+    ) -> tuple[ActionAssignee, ...]: ...
+
+    def list_action_assignees_for_actions(
+        self,
+        organization_id: OrganizationId,
+        action_item_ids: Sequence[ActionItemId],
     ) -> tuple[ActionAssignee, ...]: ...
 
     def remove_action_assignee(self, assignee: ActionAssignee) -> None: ...

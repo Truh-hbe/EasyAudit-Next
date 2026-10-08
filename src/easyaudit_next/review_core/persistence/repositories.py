@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from uuid import uuid4
 
 from sqlalchemy import delete, select, update
@@ -541,6 +542,28 @@ class SqlAlchemyReviewCoreRepository:
                 FindingParticipantRecord.finding_id == finding_id,
             )
             .order_by(
+                FindingParticipantRecord.assigned_at,
+                FindingParticipantRecord.role_key,
+                FindingParticipantRecord.id,
+            )
+        )
+        return tuple(self._finding_participant_to_domain(record) for record in records)
+
+    def list_finding_participants_for_findings(
+        self,
+        organization_id: OrganizationId,
+        finding_ids: Sequence[FindingId],
+    ) -> tuple[FindingParticipant, ...]:
+        if not finding_ids:
+            return ()
+        records = self._session.scalars(
+            select(FindingParticipantRecord)
+            .where(
+                FindingParticipantRecord.organization_id == organization_id,
+                FindingParticipantRecord.finding_id.in_(finding_ids),
+            )
+            .order_by(
+                FindingParticipantRecord.finding_id,
                 FindingParticipantRecord.assigned_at,
                 FindingParticipantRecord.role_key,
                 FindingParticipantRecord.id,
