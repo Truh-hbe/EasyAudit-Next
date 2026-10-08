@@ -11,8 +11,7 @@
 .activity-list li,
 .subsurface,
 .command-stack,
-.form-grid > *,
-.fact-grid > * {
+.form-grid > * {
   min-width: 0;
 }
 
@@ -20,7 +19,6 @@
 .surface-card,
 .surface-list li,
 .activity-list li,
-.fact-grid dd,
 .app-brand-context,
 .empty-note,
 [role="alert"],

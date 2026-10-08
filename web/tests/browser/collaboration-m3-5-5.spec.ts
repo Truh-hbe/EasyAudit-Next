@@ -279,7 +279,7 @@ test('M3.5.5 narrow product route matrix keeps essential controls inside the doc
   await page.goto('/me/notifications')
   await expect(notificationViewLabel(page, /未读/)).toBeVisible()
   await page.goto('/management')
-  await expect(page.getByLabel('截止情况')).toBeVisible()
+  await expect(page.getByRole('radiogroup', { name: '截止情况' })).toBeVisible()
 })
 
 test('M3.5.5 320px smoke keeps Workbench and dense Management progress free of document overflow', async ({ page }) => {
@@ -375,7 +375,7 @@ test('M3.5.5 management nudge success survives authoritative same-case refetch',
 
   await page.goto(`/management/review-cases/${caseId}`)
   await page.getByRole('button', { name: '催办发现项' }).click()
-  await expect(page.getByText(/已通知 2 人，操作记录 activity-stable-feedback/)).toBeVisible()
+  await expect(page.getByText('服务器已确认催办：已通知 2 人。')).toBeVisible()
   await expect.poll(() => progressReads).toBeGreaterThan(1)
-  await expect(page.getByText(/已通知 2 人，操作记录 activity-stable-feedback/)).toBeVisible()
+  await expect(page.getByText('服务器已确认催办：已通知 2 人。')).toBeVisible()
 })

@@ -656,13 +656,11 @@ test.describe('device time zone differs from the display time zone', () => {
 })
 
 test('legacy element styles stay inside legacy page containers and never cross the ui-modern boundary', async ({ page }) => {
-  await stubReadySession(page)
+  await stubReadySession(page, 'system_admin')
   // 选用仍为遗留容器（.surface-page）的页面；每迁移完一页，这里要换成下一个尚未迁移的页面。
-  await page.route('**/api/v1/management/review-cases/legacy-sample/progress', (route) =>
-    fulfillJson(route, 404, { detail: 'Not found' }),
-  )
-  await page.goto('/management/review-cases/legacy-sample')
-  await expect(page.getByRole('heading', { name: '管理进度不可用' })).toBeVisible()
+  await page.route('**/api/v1/admin/**', (route) => fulfillJson(route, 500, { detail: 'stop at the error state' }))
+  await page.goto('/admin')
+  await expect(page.getByRole('heading', { name: '管理设置' })).toBeVisible()
 
   const styles = await page.evaluate(() => {
     const browser = globalThis as unknown as {
