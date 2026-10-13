@@ -77,12 +77,13 @@ flowchart LR
 |---|---|
 | 表与迁移 | 无 |
 | 后端 | 新增 `review_core/domain/permissions.py` 权限词表，替换 01 B2 中列出的全部权限字面量；`check_architecture.py` 禁止在词表和 `scenarios/` 之外出现权限字面量；删除或修正 `/meta/domain-model`（01 B11）；`EvidenceResponse.storage_key` 标记为弃用（01 B12，P3 删除） |
-| API | OpenAPI 基线补上 17 个缺失的操作（01 B10）；`check_openapi.py` 改为双向检查：运行时存在、基线里缺失的操作也判为失败 |
+| API | 同一个 PR 内**先**更新基线、**再**启用双向检查：①把 17 个缺失的操作（01 B10）写入 `openapi/openapi.json`。条目取自运行时 `create_app().openapi()`，按现有基线的格式只保留 operationId、tags 和承诺的响应码，已有条目不动。②再把 `check_openapi.py` 改为双向检查：运行时存在、但基线里缺失的操作也判为失败 |
 | 前端 | 无 |
 | 文档与 ADR | 不在 P0 修改既有文档；§6 中的修订各自开独立 PR |
 
 **DoD**
-- 单元测试：架构检查的新规则自带正例和反例测试；OpenAPI 双向检查有反例测试，即在运行时多出一个操作时检查失败。
+- 单元测试：架构检查的新规则自带正例和反例测试；OpenAPI 双向检查有反例测试，即运行时多出一个操作时检查失败。
+- 基线与检查在同一个 PR：`python scripts/check_openapi.py` 在本地和 CI（`check` job）中都**立即通过**。PR 描述列出新增到基线的 17 个操作，供 review 核对。
 - API 与集成测试：现有测试**一个都不改**，全部通过。这就是零行为变化的证明。
 - 迁移：不涉及。
 
@@ -139,23 +140,28 @@ flowchart LR
 
 | 维度 | 内容 |
 |---|---|
-| 表与迁移 | **expand**：`action_items.case_id`（可空）；`submissions` 增加 `UNIQUE(id, case_id, organization_id)`；`evidences.case_id`（可空）；`evidences.action_item_id` 改为可空；新增 `evidence_attachments`（先只有 finding、action_item 两条弧）和 `attachment_retractions`（不可变触发器）。**migrate**：回填 `case_id`，然后设为 NOT NULL 并加复合 FK；为每条历史证据回填一条挂载 |
+| 表与迁移 | **expand**：`action_items.case_id`（可空）；`submissions` 增加 `UNIQUE(id, case_id, organization_id)`；`evidences.case_id`（可空）；`evidences.action_item_id` 改为可空；新增 `evidence_attachments`，先支持 finding、action_item 两条弧和以 Case 本身为目标（`target_kind='review_case'`，不需要弧列）；新增 `attachment_retractions`（不可变触发器）。**migrate**：`action_items.case_id` 直接 `UPDATE` 回填（该表没有触发器）。`evidences.case_id` 的回填会被 `evidences_reject_mutation` 拦截，按 [02 §6 第 8 条](02-meta-model.md#6-租户隔离与外键策略) 在迁移内依次执行 `DISABLE TRIGGER` → 回填 → `ENABLE TRIGGER`（取舍见 [02 D8](02-meta-model.md#d8-多态证据)）。两列回填后都设为 NOT NULL，并加复合 FK。最后为每条历史证据 `INSERT` 一条挂载 |
 | 后端 | 三段事务上传管线改为"目标解析器"，按目标决定锁序（[02 §7](02-meta-model.md#7-锁顺序扩展)）；下载授权改为基于挂载判断；存储键规则不变，仍为单桶、按组织前缀；`verify-evidence` 和 `cleanup-evidence-orphans` 语义不变 |
-| API | 新增 `POST /findings/{id}/evidence-uploads`、`POST /{target}/evidence-attachments`（挂载已有文件）、`POST /evidence-attachments/{id}/retractions`、`GET /findings/{id}/evidences`；`EvidenceResponse` 删除 `storage_key` |
-| 前端 | 新增与目标无关的通用 `EvidencePanel`（上传协议沿用 `docs/design.md:255-259`），用于 Finding 和 Action；作废时必须填写原因，并显示作废历史 |
-| 文档与 ADR | ADR-0008；ADR-0005 补充多目标关系的标准写法（§6 A4、A5、A9） |
+| API | 新增 `POST /review-cases/{id}/evidence-uploads`、`POST /findings/{id}/evidence-uploads`、`POST /{target}/evidence-attachments`（挂载已有文件）、`POST /evidence-attachments/{id}/retractions`、`GET /review-cases/{id}/evidences`、`GET /findings/{id}/evidences`；`EvidenceResponse` 删除 `storage_key` |
+| 前端 | 新增与目标无关的通用 `EvidencePanel`（上传协议沿用 `docs/design.md:255-259`），用于 Case 详情、Finding 和 Action；作废时必须填写原因，并显示作废历史 |
+| 文档与 ADR | ADR-0008；ADR-0005 补充多目标关系的标准写法；architecture.md 新增"在 append-only 表上回填"规则（01 §6 的 A4、A5、A9、A15） |
 
 **DoD**
-- 单元测试：目标解析器为每种目标选出的锁序正确。
+- 单元测试：目标解析器为每种目标选出的锁序正确；扫描 `alembic/versions/` 的静态测试确认 `DISABLE TRIGGER` 与 `ENABLE TRIGGER` 成对出现，且只用于允许名单内的触发器。
 - API 测试：
   - 下载的 404 语义：只要能看到任一挂载目标就可以下载，其余情况一律 404，且不访问对象存储；
-  - 跨 Case、跨组织的挂载被 FK 拒绝（直接写库测试）。
+  - 跨 Case、跨组织的挂载被 FK 拒绝（直接写库测试）；
+  - Case 级证据：只持有 Finding 或 Action 授权的人看不到；`cancelled` 的 Case 拒绝挂载；`closed` 的 Case 允许挂载并写入 Activity。
 - PostgreSQL 并发测试：作废与挂载复用并发；上传第 3 段与 Finding 关闭并发（得到 409）。
 - 事务边界：`test_evidence_upload_api.py`、`test_evidence_download_api.py` 中"流式传输期间不持有事务"的断言扩展到新目标。
 - 运维：`deploy/backup/drill.sh` 通过；`verify-evidence`、`cleanup-evidence-orphans` 的测试不变且全部通过。
 - Playwright：在发现项上上传证据、复用证据、作废证据。
 - OpenAPI：新接口进入基线，删除 `storage_key` 的变更写进 PR 描述。
-- 迁移：可以回退。只有每个文件恰好一条挂载、目标是整改项、且没有作废记录时（即新能力尚未被使用），才允许 downgrade；否则拒绝，避免丢失挂载信息。
+- 迁移测试：
+  - 回填后每条 `evidences.case_id` 都等于 `action_item → finding` 推导出的 Case；
+  - `evidences_reject_mutation` 的 `pg_trigger.tgenabled = 'O'`；
+  - 对 `evidences` 执行 `UPDATE`、`DELETE` 仍抛 55000。
+- 回退：只有每个文件恰好一条挂载、目标是整改项、且没有作废记录时（即新能力尚未被使用），才允许 downgrade；否则拒绝，避免丢失挂载信息。
 
 ### P4 底稿层（contract 证据旧列）→ 试点门槛 A
 
@@ -184,7 +190,7 @@ flowchart LR
 - 导入：逐行错误报告、全有或全无、重复导入幂等、zip bomb 防护。
 - Playwright 全旅程：导入模板 → 发布 → 挂载到 Case → 填写（包括超出规格的测量项和"不适用"）→ 合并两项派生发现项 → 整改 → 验证 → `finish_fieldwork` 守卫生效 → 关闭；375px 下无横向溢出。
 - OpenAPI：新接口进入基线。
-- 迁移：可以回退；存在底稿数据时 downgrade 拒绝执行。contract 步骤（删除 `evidences.action_item_id`）单独提一个 PR，其 downgrade 从挂载表回填这一列。
+- 迁移：可以回退；存在底稿数据时 downgrade 拒绝执行。contract 步骤（删除 `evidences.action_item_id`）单独提一个 PR。它的 downgrade 要从挂载表回填这一列，同样按 02 §6 第 8 条暂停并恢复 `evidences_reject_mutation`，并配同样的触发器断言。
 
 ### P5 结构化整改与协作
 
@@ -212,7 +218,7 @@ flowchart LR
 
 | 维度 | 内容 |
 |---|---|
-| 表与迁移 | 新增 `outbound_messages`、`webhook_endpoints`、`user_contact_points`、`user_notification_preferences`；通知种类扩展为"类别 + 事件键"，需同时兼容旧的 `kind` 值 |
+| 表与迁移 | 新增 `outbound_messages`、`webhook_endpoints`、`user_contact_points`、`user_notification_preferences`。"类别 + 事件键"**不改 `notifications` 表**：`kind` 继续作为事件键，旧值保持不变，类别由读侧代码映射，因此不需要回填（`trg_notifications_immutable` 会拒绝回填）。如果需要给 `notifications` 新增列（例如底稿通知的 `worksheet_id` 主体弧），必须在同一个迁移里 `CREATE OR REPLACE` `enforce_notification_immutability()`，把新列加入不可变清单（02 §6 第 8 条） |
 | 后端 | 新增 `EventRouter`，取代命令式调用（01 B9），规则来自场景文档；新增 `infrastructure/smtp.py`、`infrastructure/webhook.py`；新增 CLI `dispatch-outbound`、`outbound-status`、`retry-outbound`；Settings 增加 `SMTP_*`、`OUTBOUND_*`，主密钥通过 `*_FILE` 注入；`check_architecture.py` 禁止 Web 进程 import 分发器 |
 | 部署 | `deploy/` 新增 dispatcher 的 timer 和 service，以及 `outbound` 网络（非 internal，只有 dispatcher 加入） |
 | API | 个人联系方式与偏好的读写接口；管理端 Webhook 的增删改、测试事件、最近投递状态 |
@@ -295,7 +301,7 @@ flowchart LR
 | PR | 内容 | 与哪个阶段一起合入 |
 |---|---|---|
 | docs: ADR-0007 + ADR-0003 状态修订 | A1、A3、A11、A14 | P1 第一个 PR 之前 |
-| docs: ADR-0008 + ADR-0005 补充 | A4、A5、A9 | P3 之前 |
+| docs: ADR-0008 + ADR-0005 补充 + append-only 回填规则 | A4、A5、A9、A15 | P3 之前 |
 | docs: ADR-0010 + domain/architecture 底稿与锁序 | A7、A8、A10 | P4 之前 |
 | docs: ADR-0009 + ADR-0001 修订 | A2、A6 | P6 之前 |
 | docs: design.md 导航与新页面规范 | A13 | P2、P4 前端 PR 之前 |
@@ -309,7 +315,7 @@ flowchart LR
 | R2 | @1 声明式实现与原代码存在细微偏差（错误码、校验顺序） | 中/中 | 穷举差分测试；现有测试不改断言；代码 @1 保留一个发版周期 | 差分网格出现不相等的项 |
 | R3 | Case 锁使同一 Case 内的底稿填写串行 | 中/中 | 短事务；批量保存；压测；必要时再专门评估 | 批量保存 P95 超过 300ms，或出现 55P03 |
 | R4 | 外发通道导致数据外泄或 SSRF | 低/高 | 默认只发薄事件；主机白名单；发送时复核可见性；独立的出网网络 | 安全评审提出意见 |
-| R5 | 证据迁移破坏备份与恢复链路 | 低/高 | expand/contract 分步；恢复演练必须通过 | `drill.sh` 失败 |
+| R5 | 证据迁移破坏备份与恢复链路，或回填后 append-only 触发器没有恢复 | 低/高 | expand/contract 分步；恢复演练必须通过；迁移测试断言触发器已重新启用、且 `UPDATE`/`DELETE` 仍被拒绝；静态测试检查 DISABLE 与 ENABLE 成对出现 | `drill.sh` 失败，或触发器断言失败 |
 | R6 | 范围膨胀，试点一再推迟 | 高/中 | 门槛 A 定义清晰；P5 及以后的阶段按真实反馈排序 | 门槛 A 的工期超出估计 50% |
 | R7 | 修订记录、评论、outbox 的数据持续增长 | 中/低 | 先测量，再并入数据保留设计 | 单表超过百万行 |
 | R8 | 前后端校验器结论不一致 | 中/中 | 共享一致性语料；以服务端结论为准；前端遇未知情况 fail-closed | 语料在 vitest 中失败 |
@@ -328,6 +334,6 @@ flowchart LR
 | Q7 | 是否允许在 `open` 状态下修改处置类型？ | 允许，作为独立命令 `reclassify`，必须填原因，写 Activity | P1 |
 | Q8 | 是否支持多部门隶属，是否把"部门负责人"作为收件人？ | 门槛 A 不做，门槛 B 之前根据试点反馈再定 | P8 |
 | Q9 | 卷宗导出同步还是异步？是否写平台审计？ | 同步流式输出，设大小上限；写平台审计（因为导出内容包含证据文件） | P7 |
-| Q10 | 是否同意修订"明确不做"、ADR-0001、ADR-0003 的措辞？ | 同意，按 01 §6 的建议措辞修订 | P0 之后的文档 PR |
+| Q10 | 是否同意修订"明确不做"、ADR-0001、ADR-0003 的措辞？是否接受"迁移内按名暂停 append-only 触发器再回填"的规则（A15）？ | 都同意，按 01 §6 的建议措辞修订。如果不接受 A15，证据的 Case 归属改用只插入的归属表（02 D8 方案 B） | P0 之后的文档 PR、P3 |
 | Q11 | 能否在 `scheduled` 状态下预填底稿？ | 由场景文档在包络内声明，默认不允许 | P4 |
 | Q12 | 修订记录、评论、outbox 保留多久？撤回评论的原文是否保留在审计导出中？ | 暂不清理，与"数据保留"一起设计 | P5、P6 |

@@ -18,7 +18,7 @@ EasyAudit-Next 是面向跨部门协作的通用审查与合规管理平台。�
 
 | 文档 | 内容 |
 |---|---|
-| [01 代码库现状与断层摸底报告](01-current-state-and-gaps.md) | 对任务书 7 条事实的核实，后端补充发现 B1–B15，前端断层 F1–F7，数据模型耦合缺陷，ADR 与 architecture.md 待修订条目 A1–A14 及建议措辞 |
+| [01 代码库现状与断层摸底报告](01-current-state-and-gaps.md) | 对任务书 7 条事实的核实，后端补充发现 B1–B15，前端断层 F1–F7，数据模型耦合缺陷，ADR 与 architecture.md 待修订条目 A1–A15 及建议措辞 |
 | [02 通用审查元模型与领域模型规范](02-meta-model.md) | 四层模型，ERD（定义层、执行层、证据与协作、投递），不变量，状态机（标注哪些沿用内核），租户隔离与外键策略，锁顺序扩展，权限词表，关键决策 D1–D4、D6–D9、D14 |
 | [03 通用扩展与协作机制设计](03-extension-and-collaboration.md) | 场景文档格式，Schema 语言（D5），守卫库，发布与测试，affordances（D15），结构化整改与评论（D10），通知总线（D11），导入导出（D12），前端（D15、D16），主数据（D13） |
 | [04 分阶段演化路线图与里程碑](04-roadmap-and-dod.md) | 依赖图，通用 DoD，P0–P8 各阶段的改动范围与 DoD，试点价值门槛，后续文档 PR，风险登记，开放问题 |
@@ -34,7 +34,7 @@ EasyAudit-Next 是面向跨部门协作的通用审查与合规管理平台。�
 | D5 | 采用 JSON Schema 受限 profile 加 UI Schema；Python 和 TS 各实现一个校验器，共用一套一致性语料 | 完整 JSON Schema + rjsf（正则方言不一致，与 design.md 冲突）；Pydantic 动态模型 | [03 §1.3](03-extension-and-collaboration.md#13-schema-语言json-schema-受限-profile--ui-schema决策-d5) |
 | D6 | 新增 `findings.disposition_key`，每个处置映射到一条内核轨道（`rectify_and_verify` 或 `acknowledge`） | 新增 Finding 状态；继续存在 `scenario_data`；让处置自由定义可用动作 | [02 D6](02-meta-model.md#d6-处置类型) |
 | D7 | 底稿：模板 → 不可变的模板版本 → Case 下的实例，按项复制快照；填写用 CAS，修订历史 append-only；完成度在读侧计算；派生走既有的 `create_finding` 加 M:N 关联，用唯一索引保证幂等 | 底稿项即 Finding；自动派生；每次填写写一条 Activity；持久化完成度计数 | [02 D7](02-meta-model.md#d7-底稿模型) |
-| D8 | 证据的文件与挂载分离：用一张 `evidence_attachments`，以互斥弧挂到各目标，并加 Case 复合 FK；作废以追加记录表示；存储仍为单桶、按组织前缀 | Generic FK；每种目标一张关联表；在 `evidences` 上直接加弧；原地更新作废列；按组织或业务域分桶 | [02 D8](02-meta-model.md#d8-多态证据) |
+| D8 | 证据的文件与挂载分离：用一张 `evidence_attachments`，以互斥弧挂到各目标（也可以直接挂到 Case 本身），并加 Case 复合 FK；作废以追加记录表示；存储仍为单桶、按组织前缀。`evidences.case_id` 的回填在迁移内按名暂停 append-only 触发器后执行，执行后断言触发器已恢复 | Generic FK；每种目标一张关联表；在 `evidences` 上直接加弧；原地更新作废列；按组织或业务域分桶 | [02 D8](02-meta-model.md#d8-多态证据) |
 | D9 | `action_items` 和 `evidences` 增加 `case_id`，通过回填和复合 FK，在数据库层证明"同属一个 Case" | 用触发器校验（只能兜底） | [02 D9](02-meta-model.md#d9-给-action_items-与-evidences-增加-case_id) |
 | D10 | 评论单独建 append-only 表，可挂到任意目标，不进 Activity、不改变状态；多角色复核作为 `verifying` 内的步骤 Submission | 评论写进 Activity；新增复核状态；富文本 | [03 §2](03-extension-and-collaboration.md#2-结构化整改与协作决策-d10) |
 | D11 | 通知：Activity 作为领域事件；站内通知和 outbox 在同一事务内写入；外部 timer 运行 `dispatch-outbound`（`SKIP LOCKED` 租约、退避、死信可重新入队）；Webhook 用 HMAC 签名，密钥派生、不入库 | 消息中间件；在 Web 进程里起后台线程；按 Activity 游标轮询 | [03 §3](03-extension-and-collaboration.md#3-通知总线决策-d11) |
@@ -66,7 +66,7 @@ EasyAudit-Next 是面向跨部门协作的通用审查与合规管理平台。�
 | Q7 | 能否在 `open` 状态下修改处置类型？ | 允许，作为独立的 `reclassify` 命令，必须填原因，写 Activity |
 | Q8 | 是否支持一人多部门、是否把部门负责人作为收件人？ | 门槛 A 不做 |
 | Q9 | 卷宗导出同步还是异步？是否写平台审计？ | 同步流式，设大小上限；写平台审计 |
-| Q10 | 是否同意按 01 §6 修订"明确不做"、ADR-0001、ADR-0003 的措辞？ | 同意 |
+| Q10 | 是否同意按 01 §6 修订"明确不做"、ADR-0001、ADR-0003 的措辞？是否接受在迁移内暂停 append-only 触发器后回填（A15）？ | 都同意；如不接受 A15，改用只插入的归属表（02 D8 方案 B） |
 | Q11 | 能否在 `scheduled` 状态下预填底稿？ | 由场景文档在包络内声明，默认不允许 |
 | Q12 | 修订记录、评论、outbox 保留多久？ | 暂不清理，并入"数据保留"设计 |
 

@@ -214,6 +214,7 @@ erDiagram
 erDiagram
   REVIEW_CASE ||--o{ EVIDENCE : "文件归属 Case [增列 case_id]"
   EVIDENCE ||--o{ EVIDENCE_ATTACHMENT : "挂载 [新增]"
+  REVIEW_CASE ||--o{ EVIDENCE_ATTACHMENT : "case_id; target_kind=review_case 时即目标"
   EVIDENCE_ATTACHMENT }o--o| FINDING : "弧"
   EVIDENCE_ATTACHMENT }o--o| ACTION_ITEM : "弧"
   EVIDENCE_ATTACHMENT }o--o| WORKSHEET_ITEM : "弧"
@@ -247,7 +248,7 @@ erDiagram
     uuid worksheet_item_id FK "弧"
     uuid comment_id FK "弧"
     uuid submission_id FK "弧"
-    text target_kind "与非空列一致 CHECK"
+    text target_kind "review_case|finding|action_item|worksheet_item|comment|submission"
     uuid attached_by FK
   }
   COMMENT {
@@ -263,7 +264,13 @@ erDiagram
   }
 ```
 
-当评论目标是 Case 本身时，所有弧列都为 NULL，`target_kind='review_case'`。对应的 CHECK 写法：`num_nonnulls(finding_id, action_item_id, worksheet_item_id) = CASE target_kind WHEN 'review_case' THEN 0 ELSE 1 END`，并逐列校验非空列与 `target_kind` 一致。
+**以 Case 本身为目标（证据挂载和评论都支持）。**典型用途是活动级材料，例如范围说明、计划安排、结项归档材料的附件。
+
+- **数据形态**：所有弧列都为 NULL，`target_kind='review_case'`。此时目标就是行上已有的 `case_id`，它已经通过 `(case_id, organization_id)` 复合 FK 指向 `review_cases`，所以不需要新增弧列。
+- **约束**：以挂载为例，CHECK 写作 `num_nonnulls(finding_id, action_item_id, worksheet_item_id, comment_id, submission_id) = CASE target_kind WHEN 'review_case' THEN 0 ELSE 1 END`，再逐列校验非空列与 `target_kind` 一致。评论同理，只是弧列为 finding、action_item、worksheet_item。
+- **授权**：挂载到 Case 需要 `add_case_evidence`（由场景文档映射，例如映射给审查组长、审查员）；查看需要 `view_case`。只持有 Finding 或 Action 授权的人看不到 Case 级证据，这与"上下文按目标构造"的原则一致（§8）。
+- **生命周期**：除 `cancelled` 以外的任何 Case 状态都可以挂载，包括 `closed`（用于归档结项材料）。场景文档可以用守卫 `case_lifecycle_in` 进一步收窄。挂载只追加记录，不改变任何生命周期。
+- **为什么不改用"通过评论挂载"**：Case 级材料是正式证据，要进入卷宗证据清单和"已附证据"统计。如果放在评论里，会和讨论内容混在一起，而且评论撤回与挂载作废的语义也不同。
 
 ### 3.4 投递
 
@@ -329,6 +336,7 @@ erDiagram
 | E1 | 证据文件与它的所有挂载同属一个 Case、一个组织 | 挂载表对文件和目标都使用 `(x_id, case_id, organization_id)` 复合 FK |
 | E2 | 文件、挂载、作废记录都是 append-only；已作废的挂载不计入"已附证据" | 触发器 + 读侧过滤 |
 | E3 | 挂到 Submission 上的挂载只能与该 Submission 在同一事务中创建 | 应用规则 + 测试（Submission 本身不可变） |
+| E4 | 以 Case 本身为目标的挂载，只能在 Case 不处于 `cancelled` 时创建（`closed` 允许，用于归档结项材料） | 在 Case 锁内用守卫检查，并配测试 |
 | C1 | 评论不可修改；撤回以追加记录实现，读侧隐藏正文 | 触发器 |
 | O1 | outbox 行与触发它的 Activity 或 Notification 在同一事务提交；同一目的地对同一来源事件只入队一次 | 唯一约束 `(organization_id, channel, destination_key, origin_key, event_key)` |
 | O2 | 外发投递语义是至少一次，接收方用消息 `id` 去重 | 文档约定 + 签名头携带 id |
@@ -441,7 +449,26 @@ stateDiagram-v2
    4. 加复合 FK `(finding_id, case_id, organization_id) → findings(id, case_id, organization_id)`；
    5. 加 `UNIQUE(id, case_id, organization_id)`。
 
-   downgrade 只需删列。该列可以推导，删除不丢信息。
+   `action_items` 上没有触发器，回填就是普通的 `UPDATE`。升级流程在迁移前已经停止应用（`deploy/README.md:178-181`），所以回填期间没有并发写入。downgrade 只需删列：该列可以推导，删除不丢信息。
+8. **在已有触发器保护的表上增列、回填**。下表逐一核对了现有全部触发器（`alembic/versions/` 中所有 `CREATE TRIGGER`）与本 RFC 计划的变更：
+
+   | 表 | 触发器 | 计划变更 | 是否被拦截 | 做法 |
+   |---|---|---|---|---|
+   | `evidences` | `evidences_reject_mutation`：`BEFORE UPDATE OR DELETE`，无条件 `RAISE`（55000）（`alembic/versions/20260826_0008_m2_4_rectification.py:74-90`） | P3：新增 `case_id` 并回填；P4 contract 的 downgrade：恢复 `action_item_id` 并回填 | **会**：回填是逐行 `UPDATE` | 在迁移内暂停该触发器，规则见下方，取舍见 D8 |
+   | `submissions` | `submissions_reject_mutation`（同上，`:92-108`） | P3：新增 `UNIQUE(id, case_id, organization_id)`，`case_id` 列已存在 | 否：建唯一索引不修改行 | — |
+   | `activities` | `activities_reject_mutation`（`alembic/versions/20260821_0005_m1_4_review_core_persistence.py:428-444`） | P4：新增可空 `worksheet_id` 弧列，替换 `ck_activities_exactly_one_target` | 否：不带默认值的 `ADD COLUMN` 不写行；新 CHECK 只扫描校验 | downgrade 时若存在 `worksheet_id` 非空的行，拒绝执行 |
+   | `notifications` | `trg_notifications_immutable`：按**列清单**拒绝修改（当前版本见 `alembic/versions/20260827_0011_m3_4_notification_origins.py:83-118`）；`trg_notifications_origin_organization` | P6 的"类别 + 事件键"**不新增列**：沿用 `kind` 列作为事件键，类别由读侧代码映射。若要给底稿通知新增 `worksheet_id` 主体弧列，同样不需要回填 | 否：没有回填。**但**新列不在函数的列清单里，会变成可修改 | 凡给 `notifications` 增列的迁移，都必须 `CREATE OR REPLACE` 这个函数，把新列加进不可变清单（0011 加入 `automatic_origin_key` 时就是这样做的），并测试对新列的 `UPDATE` 被拒绝 |
+   | `scenario_versions` | `scenario_versions_reject_mutation`（`alembic/versions/20260821_0004_m1_3_scenario_persistence.py:86-102`） | 无：文档内容放进新表 `scenario_version_documents`（D3） | 不涉及 | 有意不改这张表 |
+   | `platform_audit_events` | `platform_audit_events_reject_mutation` | 无 | 不涉及 | — |
+   | `departments` | `departments_reject_cycle`：只在 `INSERT` 或 `UPDATE OF parent_id, organization_id` 时触发 | P8：新增 `attributes JSONB DEFAULT '{}'` | 否：常量默认值的 `ADD COLUMN` 只改元数据，也不涉及这两列 | — |
+   | `action_items`、`findings`、`review_plans`、`users` | 无 | P3 `action_items.case_id` 回填；P1 `findings.disposition_key` 回填；P2、P5、P8 增列 | 否 | 普通 `UPDATE`（见第 7 条） |
+
+   **迁移内暂停触发器的规则**（只适用于上表"会"被拦截的情况）：
+   - **固定顺序**：同一个迁移函数内依次执行：先取得该表的 `ACCESS EXCLUSIVE` 锁（同一函数里的 `ADD COLUMN` 会拿到这把锁；如果回填与增列不在同一个迁移里，就显式执行 `LOCK TABLE … IN ACCESS EXCLUSIVE MODE`）→ `ALTER TABLE … DISABLE TRIGGER <触发器名>` → 回填 → `ALTER TABLE … ENABLE TRIGGER <触发器名>`。回填只写能从既有不可变事实推导出的新列。
+   - **原子性**：整个 `alembic upgrade` 跑在一个事务里（`alembic/env.py:39-42`，没有开启 `transaction_per_migration`）。PostgreSQL 的 DDL 是事务性的，迁移失败回滚时触发器的启用状态也一起恢复。表上的 `ACCESS EXCLUSIVE` 锁一直持有到提交（`DISABLE TRIGGER` 本身只需要 `SHARE ROW EXCLUSIVE`），这期间其他会话无法读写这张表。
+   - **只停这一个**：按名字只停用这一个触发器。不用 `DISABLE TRIGGER ALL`，它会连同外键的约束触发器一起停掉；也不用 `session_replication_role`，它需要超级用户，而且是作用于整个会话的开关。
+   - **迁移测试**：必须断言三件事：回填结果正确；回填后 `pg_trigger.tgenabled = 'O'`；对该表执行 `UPDATE`、`DELETE` 仍然抛出 55000。
+   - **静态检查**：用单元测试扫描 `alembic/versions/`。凡是出现 `DISABLE TRIGGER x` 的迁移函数，后面必须出现 `ENABLE TRIGGER x`，并且 `x` 在允许名单里。
 
 ## 7. 锁顺序扩展
 
@@ -462,7 +489,7 @@ IdempotencyKey → Organization → ReviewPlan → ReviewCase → User(按 ID �
 | 完成或重开底稿 | `Case → Worksheet(CAS lifecycle)` | 与填写操作通过 Case 锁串行 |
 | 派生发现项 | `Case → Worksheet → Item(CAS) → 插入 Finding → 插入关联` | 新建的 Finding 不需要加锁；以主派生唯一索引作为最终仲裁 |
 | 关联已有发现项 | `Case → Worksheet → Item → Finding(NO KEY UPDATE)` | Worksheet 必须排在 Finding 之前 |
-| 证据上传第 3 段 | 目标为 Action：`Case → Finding → Action`（沿用现状）；目标为 Finding：`Case → Finding`；目标为底稿项：`Case → Worksheet → Item`；目标为评论：`Case` | 三段事务管线不变，只是按目标解析锁序 |
+| 证据上传第 3 段 | 目标为 Action：`Case → Finding → Action`（沿用现状）；目标为 Finding：`Case → Finding`；目标为底稿项：`Case → Worksheet → Item`；目标为评论或 Case 本身：`Case` | 三段事务管线不变，只是按目标解析锁序 |
 | 挂载已有文件、作废挂载 | 与上一行相同的目标锁序 | 只追加记录 |
 | 发表评论、提及 | `Case → 插入 Comment / Mention / Notification` | 授权要求先取 Case 锁（`docs/architecture.md:119-122`） |
 | 多步复核 | `Case → Finding → Submission`（沿用验证路径） | 只有末步通过才 CAS 修改 lifecycle |
@@ -487,14 +514,14 @@ IdempotencyKey → Organization → ReviewPlan → ReviewCase → User(按 ID �
 
 | 已有（17 个） | 新增 |
 |---|---|
-| `create_case`、`view_case`、`view_finding`、`manage_case_members`、`transition_case`、`create_finding`、`issue_finding`、`accept_observation`（别名 `acknowledge_finding`）、`manage_finding_participants`、`create_action`、`manage_action_assignees`、`update_assigned_action`、`add_rectification_evidence`、`transfer_and_reopen_action`、`submit_rectification`、`verify_finding`、`reopen_finding` | `view_worksheet`、`manage_worksheets`、`fill_worksheet`、`complete_worksheet`、`reopen_worksheet`、`derive_finding`、`add_finding_evidence`、`add_worksheet_evidence`、`retract_evidence`、`comment`、`moderate_comments`、`export_case`、`reclassify_finding`（取决于 Q7）、`step:<key>` |
+| `create_case`、`view_case`、`view_finding`、`manage_case_members`、`transition_case`、`create_finding`、`issue_finding`、`accept_observation`（别名 `acknowledge_finding`）、`manage_finding_participants`、`create_action`、`manage_action_assignees`、`update_assigned_action`、`add_rectification_evidence`、`transfer_and_reopen_action`、`submit_rectification`、`verify_finding`、`reopen_finding` | `view_worksheet`、`manage_worksheets`、`fill_worksheet`、`complete_worksheet`、`reopen_worksheet`、`derive_finding`、`add_case_evidence`、`add_finding_evidence`、`add_worksheet_evidence`、`retract_evidence`、`comment`、`moderate_comments`、`export_case`、`reclassify_finding`（取决于 Q7）、`step:<key>` |
 
 **授权表达式（写在文档里）**：形式为 `permission → any_of[选择器]`。选择器为 `{scope: organization|case|finding|action|worksheet, roles: [...], via: direct|department_membership}`；其中 `scope: organization` 只允许取值 `active_user`。选择器与现有的 `RoleGrant(role_key, actor_kind, source)`（`src/easyaudit_next/review_core/domain/scenario_capabilities.py:86-92`）一一对应，所以 `AuthorizationContext` 只需新增一个 `worksheet_role_grants` 字段，旧的代码 Policy 不受影响。
 
 **上下文按目标构造**（延续 `docs/architecture.md:127`）：
 
 - **Worksheet**：父 Case 的授权，加上本 Worksheet 的参与方授权。被指派填写的一方（例如被检查部门）只能看到分给自己的底稿，看不到整个 Case。
-- **挂载**：按挂载目标的上下文判断。下载文件的条件是：执行者能查看该文件的任一挂载目标（已作废的挂载也算，作为历史保留）。不存在、跨组织、无权限三种情况一律返回同一个 404，沿用 `docs/architecture.md:263`。
+- **挂载**：按挂载目标的上下文判断；目标是 Case 本身时，使用 Case 上下文（挂载需要 `add_case_evidence`，查看需要 `view_case`）。下载文件的条件是：执行者能查看该文件的任一挂载目标（已作废的挂载也算，作为历史保留）。不存在、跨组织、无权限三种情况一律返回同一个 404，沿用 `docs/architecture.md:263`。
 - **评论**：按评论目标的上下文判断，并要求 `comment` 权限。撤回自己的评论不需要额外权限；撤回他人的评论需要 `moderate_comments`。
 - **计划**：使用内核固定的计划角色。`owner` 可以管理计划、追加活动、查看进度；`viewer` 只能查看进度。计划不属于任何场景，所以不走场景授权（D14）。
 
@@ -607,15 +634,27 @@ IdempotencyKey → Organization → ReviewPlan → ReviewCase → User(按 ID �
 ### D8 多态证据
 
 - **选择**：
-  - **文件与挂载分离。**`evidences` 记录文件本身：存储键、sha256、大小、名称、类型、上传人。`evidence_attachments` 记录挂载关系，用一张表的互斥弧指向 finding、action_item、worksheet_item、comment 或 submission。两张表都带 `case_id` 复合 FK（见 E1）。
+  - **文件与挂载分离。**`evidences` 记录文件本身：存储键、sha256、大小、名称、类型、上传人。`evidence_attachments` 记录挂载关系，用一张表的互斥弧指向 finding、action_item、worksheet_item、comment 或 submission，也可以直接挂到 Case 本身（`target_kind='review_case'`，见 §3.3）。两张表都带 `case_id` 复合 FK（见 E1）。
   - **同 Case 内一个文件可以挂到多个目标。**例如检查项上的照片，在派生发现项时**直接挂载复用**，不必重新上传。
   - **作废只追加记录。**作废时追加一条 `attachment_retractions`（原因、操作人、时间）。已作废的挂载对有查看权限的人仍然可见，标记为"已作废"，但不计入"已附证据"。业务路径不提供物理删除，删除规则统一放进"数据保留"设计。
   - **存储方式不变。**仍然单桶存储，服务端生成按组织分前缀的存储键 `org/{organization_id}/evidence/{uuid4}`（`src/easyaudit_next/review_core/application/evidence_storage.py:94`），只写一次、不覆盖。挂载关系不影响存储键、备份一致性模型和孤儿判定。
   - **授权**：挂载需要目标对应的 `add_*_evidence` 权限，并且执行者能查看这个文件（通过它的任一现有挂载）；下载授权按 §8 判断。
   - **迁移（expand → migrate → contract）**：
-    - P3：给 `evidences` 增加 `case_id` 并回填；`action_item_id` 改为可空；新建挂载表；为每条历史证据回填一条挂载（目标为原整改项，`attached_by=uploaded_by`，`attached_at=created_at`）；读写全部切换到挂载表。
-    - P4：删除 `evidences.action_item_id`。
-    - `evidences` 的 append-only 触发器不拦截 DDL，回填只往新表 INSERT。
+    - **P3 expand**：给 `evidences` 新增可空列 `case_id`，把 `action_item_id` 改为可空（这两步都是 DDL，不会触发触发器）；新建挂载表和作废表。
+    - **P3 migrate**：沿 `action_items → findings.case_id` 回填 `evidences.case_id`。`evidences_reject_mutation` 会无条件拒绝 `UPDATE`，所以按 §6 第 8 条在迁移内暂停它，完整步骤是：`ADD COLUMN` → `DISABLE TRIGGER evidences_reject_mutation` → `UPDATE` 回填 → `ENABLE TRIGGER evidences_reject_mutation` → `SET NOT NULL` → 加复合 FK 和 `UNIQUE(id, case_id, organization_id)`。之后为每条历史证据 `INSERT` 一条挂载（目标为原整改项，`attached_by=uploaded_by`，`attached_at=created_at`），读写全部切换到挂载表。
+    - **P4 contract**：删除 `evidences.action_item_id`。删列是 DDL，不会触发触发器；但它的 downgrade 要从挂载表把这一列回填回来，同样按 §6 第 8 条先暂停、再恢复触发器。
+  - **为什么选择"迁移内暂停触发器"（方案 A）**：
+    - 回填的 `case_id` 不是对业务事实的修改。它由不可变的 `action_item → finding → case` 链推导而来，在文件上传时就已确定，之后不会再变。
+    - 暂停只发生在迁移事务内部：表被 `ACCESS EXCLUSIVE` 锁住，失败会整体回滚；回填完成后，有测试证明触发器仍然生效。
+  - **备选方案及否决原因**：
+    - **B. 不改 `evidences`，另建只插入的归属表 `evidence_case_bindings(evidence_id PK, case_id, organization_id)`**，挂载表用 `(evidence_id, case_id, organization_id)` 复合 FK 指向它。这样不用碰触发器，但有三个代价：
+      - "每个文件恰好有一条归属"无法从 `evidences` 一侧用 FK 保证，只能靠应用规则或延迟约束触发器；
+      - 文件的一个不可变属性被拆到第二张表；
+      - 所有查询都要多一次连接。
+
+      如果维护者不接受迁移内暂停触发器（Q10），退回方案 B。
+    - **C. 新建 `evidences_v2`，复制数据后改名切换**：约束、触发器、索引都要重建，备份校验和运维命令依赖现有表结构，风险和改动都远大于方案 A。
+    - **D. 不在数据库层证明"文件与挂载属于同一 Case"，只做应用层校验**：跨 Case 复用文件会让一个 Case 的证据进入另一个 Case 的可见范围和卷宗，这必须由约束挡住。
 - **理由**：一个证据文件被多处复用是常态，文件与挂载分离就能支持，与是否采用互斥弧无关。单表互斥弧只需一套授权与查询逻辑；Case 复合 FK 在数据库层保证文件和目标属于同一 Case。
 - **被否决**：
   - ①Generic FK：违反 ADR-0005。
@@ -629,6 +668,7 @@ IdempotencyKey → Organization → ReviewPlan → ReviewCase → User(按 ID �
 - **选择**：见 §6 第 7 条。
 - **理由**：只有这样，挂载、评论、关联的"同 Case"约束才能完全由 FK 证明。对内核表只是增加列，不改变状态机，也不改变内核 API。
 - **被否决**：用触发器校验。触发器读的是事务快照，在并发下只能兜底（`docs/architecture.md:48` 对部门环检测的结论同样适用）。
+- **迁移做法**：`action_items` 没有触发器，直接 `UPDATE` 回填（§6 第 7 条）。`evidences` 受 append-only 触发器保护，回填按 §6 第 8 条在迁移内暂停该触发器，取舍与备选方案见 D8。
 
 ### D14 计划作为一等公民
 

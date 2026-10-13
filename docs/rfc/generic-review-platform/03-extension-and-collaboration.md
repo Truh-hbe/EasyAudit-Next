@@ -249,7 +249,7 @@ systemd timer（每分钟）→ 一次性容器 `easyaudit-next dispatch-outboun
 - **路由规则分两层**：
   - **场景文档**的 `notifications` 定义业务语义：什么事件通知谁。它和收件人意图在同一层，随版本冻结。
   - **组织配置**定义送达方式：通道、偏好、端点。
-  - 现有 4 种站内通知作为 @1 文档里的规则保留。`NotificationKind` 扩展为"类别 + 事件键"；中文文案仍在读侧按事件键映射，不写进通知行（`docs/architecture.md:186`）。
+  - 现有 4 种站内通知作为 @1 文档里的规则保留。`NotificationKind` 扩展为"类别 + 事件键"：`notifications.kind` 列继续存事件键，旧值不变，类别由读侧代码映射，不改表结构，也不需要回填（通知行受不可变触发器保护，见 [02 §6 第 8 条](02-meta-model.md#6-租户隔离与外键策略)）；中文文案仍在读侧按事件键映射，不写进通知行（`docs/architecture.md:186`）。
 - **联系方式与偏好**：
   - `user_contact_points`：固定字段。管理员录入的邮箱视为已验证；用户自助修改需要验证码，留到后续再做。
   - `user_notification_preferences(category, channel, enabled)`：类别有 `needs_my_action`、`assignment`、`reminder`、`mention`、`fyi`。站内通知始终开启；邮件默认只对 `needs_my_action` 和 `mention` 开启。

@@ -76,17 +76,18 @@
 | A1 | 新增 ADR-0007《声明式场景定义与内核包络》；ADR-0003 状态改为"部分被 ADR-0007 取代" | `docs/adr/0003-scenario-extension.md:8,16-20`：只能注册代码 Policy；"M0 不引入万能低代码或数据库动态状态机" | ADR-0003 状态行追加："由代码注册 Policy 的方式已被 ADR-0007 取代：Policy 也可以是不可变的声明式场景文档，由随代码版本化的引擎解释。状态集合、迁移包络和内核强制守卫仍由内核代码定义，所以这不是数据库动态状态机。" |
 | A2 | ADR-0001 后果第 1 条；`docs/architecture.md:303` | "不在 M0 引入微服务、事件总线或分布式事务"；"明确不做：…消息总线…" | ADR-0001 改为："不引入微服务、消息中间件或分布式事务。跨通道投递使用库内 outbox 表，由 Web 进程之外的定时任务分发（见 ADR-0009）。" architecture.md 中"消息总线"改为"消息中间件（库内 outbox 不在此列）" |
 | A3 | `docs/architecture.md:303` | "通用表单构建器、运行时实体设计器、BPMN 或流程设计器" | 改为"可视化表单或流程设计器、运行时实体设计器、BPMN。在内核包络内、按字段 profile 编写的声明式场景文档与检查模板不在此列（见 ADR-0007）" |
-| A4 | ADR-0005 后果第 2、4 条 | "可选类型化可空外键 + Check，或按目标建关联表"；"仅非关键辅助关系可…采用通用引用" | 追加一节"多目标关系的标准做法"："凡是属于某个 Case 的多目标关系（证据挂载、评论、底稿项与发现项的关联），一律用互斥弧（类型化可空 FK + `num_nonnulls` CHECK + `target_kind` 一致性 CHECK），并通过 `(x_id, case_id, organization_id)` 复合 FK 指向父表。父表提供 `UNIQUE(id, case_id, organization_id)`。Generic FK 仍然禁止。" |
+| A4 | ADR-0005 后果第 2、4 条 | "可选类型化可空外键 + Check，或按目标建关联表"；"仅非关键辅助关系可…采用通用引用" | 追加一节"多目标关系的标准做法"，分两种情况。①**一行只指向一种目标、但目标有多种类型**的关系，例如证据挂载、评论：使用互斥弧，即类型化可空 FK + `num_nonnulls` CHECK + `target_kind` 一致性 CHECK；以 Case 本身为目标时，各弧列全为 NULL，由 `case_id` 指向目标。②**两类对象之间的多对多关系**，例如底稿项与发现项的关联：使用关联表，两端各有一条 FK。两种情况都通过 `(x_id, case_id, organization_id)` 复合 FK 指向父表，父表提供 `UNIQUE(id, case_id, organization_id)`。Generic FK 仍然禁止。" |
 | A5 | 新增 ADR-0008《证据文件与挂载分离》 | `docs/domain.md:30` 写"挂在 ActionItem 上的不可变证据元数据" | domain.md 改为："Evidence 是 Case 内不可变的文件元数据；EvidenceAttachment 把文件挂到发现项、整改项、底稿项、评论或提交上；作废只能追加记录。" |
 | A6 | 新增 ADR-0009《outbox 与外发通道》 | `docs/architecture.md:179-201` 只有站内通知和提醒 | 在"通知与提醒"一节追加："外部通道（邮件、Webhook）在业务事务中写入 `outbound_messages`，由 systemd timer 运行 `easyaudit-next dispatch-outbound` 分发；Web 进程不得 import 分发器（`check_architecture.py` 强制）。投递至少一次，以消息 id 去重。" |
 | A7 | 新增 ADR-0010《执行底稿层》 | `docs/domain.md:150-154`"暂不建模" | domain.md 增加 Worksheet、WorksheetItem、结果类别、派生关联等概念与不变量（见 02 §4） |
 | A8 | `docs/architecture.md:40-46,121` 锁顺序 | 没有 Plan、Worksheet、Comment | 全局锁序改为 `IdempotencyKey → Organization → ReviewPlan → ReviewCase → User → Worksheet → WorksheetItem → Finding → ActionItem → {Submission/Evidence/Attachment/Comment}`，并逐条列出新路径（见 02 §7） |
-| A9 | `docs/architecture.md:245` | "`POST …/action-items/{id}/evidence-uploads` 是登记 Evidence 的**唯一**入口" | 改为"按目标划分的上传入口（整改项、发现项、底稿项、评论）共用同一条三段事务管线，这是登记 Evidence 的唯一方式" |
+| A9 | `docs/architecture.md:245` | "`POST …/action-items/{id}/evidence-uploads` 是登记 Evidence 的**唯一**入口" | 改为"按目标划分的上传入口（Case 本身、整改项、发现项、底稿项、评论）共用同一条三段事务管线，这是登记 Evidence 的唯一方式" |
 | A10 | `docs/architecture.md:158` | "本阶段 409 的 body 仍只有 `detail`" | 改为"409 可以携带 `code`（如 `worksheet_item.revision_conflict`、`worksheet_item.already_derived`），前端按码细分；没有码的 409 仍按通用冲突处理" |
 | A11 | `docs/architecture.md:28-34` 架构检查清单 | 没有权限词表约束 | 追加："权限键只能在 `review_core/domain/permissions.py` 和场景文档中出现，`check_architecture.py` 禁止其他模块出现权限字面量" |
 | A12 | ADR-0002 | 业务角色只存在于 Case/Finding/Action 关系中 | 只有在 Q1 选择引入组织级"模板管理"角色时才修订，否则不动 |
 | A13 | `docs/design.md:80,114` | 一级导航只有四项；"当前没有独立的计划列表" | 新增一级导航"审查计划"（`ScheduleOutlined`），并补充底稿页、动态表单、结果类别配色规范（见 03 §5） |
 | A14 | `docs/domain.md:48-55,126,136` | 场景机制写的是代码；`scenario_data` 字段列在文档里 | 场景机制改为引用 ADR-0007；具体字段以对应版本的场景文档为准，domain.md 不再罗列 |
+| A15 | `docs/architecture.md`"事务与并发"或"部署"一节（新增条目） | 没有相关规则；现有 append-only 触发器会无条件拒绝 `UPDATE`，例如 `alembic/versions/20260826_0008_m2_4_rectification.py:74-90` | 新增"在 append-only 表上回填"："需要给 append-only 表新增可推导列并回填时，只允许在同一个迁移函数里按顺序执行：取得该表的 `ACCESS EXCLUSIVE`（通过 `ADD COLUMN` 或显式 `LOCK TABLE`）→ `DISABLE TRIGGER <名>` → 回填 → `ENABLE TRIGGER <名>`。不得使用 `DISABLE TRIGGER ALL` 或 `session_replication_role`。迁移测试必须断言回填后触发器已重新启用，且 `UPDATE`、`DELETE` 仍被拒绝。单元测试扫描 `alembic/versions/`，强制 DISABLE 与 ENABLE 成对出现，并且只能用于允许名单内的触发器。给按列清单判断不可变的表（如 `notifications`）新增列时，必须同时把新列加入不可变清单。" |
 
 ## 7. 必须保留、不得退化的资产
 
